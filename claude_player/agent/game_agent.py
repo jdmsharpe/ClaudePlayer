@@ -277,6 +277,16 @@ class GameAgent:
         party_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT:
             party_data = extract_party_context(self.pyboy)
+            # Store latest party summary for the summary generator
+            if party_data and party_data.get("party"):
+                health = party_data.get("health", {})
+                names = ", ".join(
+                    f"{m['name']} Lv{m['level']} HP:{m['hp']}/{m['max_hp']}"
+                    for m in party_data["party"]
+                )
+                self.game_state.party_summary = (
+                    f"{names} — {health.get('total_hp_pct', '?')}% HP"
+                )
 
         # Extract bag/inventory context
         bag_data = None

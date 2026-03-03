@@ -98,6 +98,7 @@ ITEMS ON TABLES: Pokeballs, items on tables/desks are NOT shown on the grid (the
         team_info = """
 <team_and_inventory>
 PARTY STATUS (injected when HP/status changes or periodically): Shows each Pokemon's level, HP, status, and moves with PP.
+PARTY STATUS is AUTHORITATIVE (real-time from RAM) — always trust it over any HP/status claims in the summary.
 If HEAL line appears, prioritize visiting a Pokemon Center. Lead fainted = switch or heal immediately.
 
 INVENTORY (injected when items change or periodically): Shows badges, money, key items, balls, medicine.

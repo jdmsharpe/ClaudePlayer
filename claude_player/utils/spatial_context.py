@@ -43,6 +43,16 @@ _ADDR_NUM_SPRITES = 0xD4E1     # Number of map sprites (excl. player)
 _ADDR_SPRITE_STATE1 = 0xC100   # 16 bytes/sprite; offset 0x00 = picture ID
 _ADDR_SPRITE_STATE2 = 0xC200   # 16 bytes/sprite; offset 0x04 = map Y, 0x05 = map X
 
+# Sprite facing direction (offset 0x09 within SPRITESTATEDATA1, 16-byte stride)
+# Values from pret/pokered: $00=DOWN, $04=UP, $08=LEFT, $0C=RIGHT
+_FACING_OFFSET = 0x09
+_FACING_MAP: Dict[int, str] = {
+    0x00: "DOWN",
+    0x04: "UP",
+    0x08: "LEFT",
+    0x0C: "RIGHT",
+}
+
 # Game state detection addresses (from pret/pokered disassembly)
 _ADDR_TEXT_BOX_ID    = 0xD125   # wTextBoxID – non-zero = text box active
 _ADDR_IS_IN_BATTLE   = 0xD057   # wIsInBattle – 0=overworld, 1=wild, 2=trainer
@@ -69,14 +79,29 @@ _LEDGE_TILES: Dict[int, str] = {
 
 _WATER_TILE_VRAM = 0x14 + 0x100  # Primary water tile
 
-# Cuttable tree tiles (from pret/pokered engine/overworld/cut.asm)
-_CUT_TREE_TILES = {
-    0x3D + 0x100,  # Overworld cuttable tree
-    0x52 + 0x100,  # Grass/jungle cuttable
-    0x50 + 0x100,  # Gym tileset cuttable tree
-}
+# Cuttable tree BLOCK IDs (metatile-level, from pret/pokered data/tilesets/cut_tree_blocks.asm)
+# Block IDs are unique per metatile, unlike VRAM sub-tiles which are shared
+# between cuttable and decorative trees.
+_CUT_TREE_BLOCKS_OVERWORLD = {0x32, 0x33, 0x34, 0x35, 0x60}  # Standard + variant
+_CUT_GRASS_BLOCKS_OVERWORLD = {0x0B}                          # Cuttable tall grass
+
+# RAM addresses for block map reading
+_ADDR_MAP_TILESET       = 0xD367   # wCurMapTileset (0=OVERWORLD, 7=GYM, etc.)
+_ADDR_VIEW_BLOCK_PTR    = 0xD35F   # wCurrentTileBlockMapViewPointer (2 bytes LE)
+_ADDR_Y_BLOCK_COORD     = 0xD363   # wYBlockCoord: 0 or 1, sub-block offset
+_ADDR_X_BLOCK_COORD     = 0xD364   # wXBlockCoord: 0 or 1, sub-block offset
+_ADDR_OVERWORLD_MAP     = 0xC6E8   # wOverworldMap: block map buffer (1300 bytes)
 
 _BOULDER_SPRITE_ID = 0x3F  # SPRITE_BOULDER — pushable with Strength
+
+# Missable sprite detection — the engine's HideSprite/ShowSprite system.
+# image_index == 0xFF is NOT reliable for ghost detection: off-screen sprites
+# also get 0xFF since the Game Boy only writes image data for on-screen sprites.
+# The correct approach: check wMissableObjectFlags, a packed bitfield where each
+# bit corresponds to a global missable index.  wMissableObjectList maps
+# (sprite_slot → missable_index) for the current map.
+_ADDR_MISSABLE_FLAGS = 0xD5A6    # 32 bytes = 256 bits, one per missable object
+_ADDR_MISSABLE_LIST  = 0xD5CE    # Pairs: (sprite_slot, missable_index), terminated by 0xFF
 
 # Sprite picture ID → readable name (from pret/pokered sprite_constants.asm)
 _SPRITE_NAMES = {
@@ -146,6 +171,7 @@ _SPRITE_NAMES = {
     0x42: "Clipboard",
     0x43: "Snorlax",
     0x45: "Old Amber",
+    0x48: "Old Man (asleep)",  # Viridian coffee old man; pret calls it SPRITE_GAMBLER_ASLEEP
 }
 _ITEM_SPRITE_ID = 0x3D  # SPRITE_POKE_BALL
 
@@ -498,7 +524,7 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
     Returns a 9x10 (height x width) grid of single-char terrain markers:
         '.' = normal walkable
         '#' = blocked (wall/tree/etc.)
-        '~' = tall grass (walkable, triggers encounters)
+        'w' = tall grass (walkable, triggers wild encounters)
         'v' = south-facing ledge (one-way jump down)
         '>' = east-facing ledge (one-way jump right)
         '<' = west-facing ledge (one-way jump left)
@@ -563,13 +589,11 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
             for mx in range(grid_w):
                 tid = metatile_ids[my][mx]
                 if grass_tile_vram is not None and tid == grass_tile_vram:
-                    row.append('~')
-                elif tid in _LEDGE_TILES:
+                    row.append('w')
+                elif tileset_type > 0 and tid in _LEDGE_TILES:
                     row.append(_LEDGE_TILES[tid])
-                elif tid == _WATER_TILE_VRAM:
+                elif tileset_type > 0 and tid == _WATER_TILE_VRAM:
                     row.append('=')
-                elif tid in _CUT_TREE_TILES:
-                    row.append('T')
                 elif tid in walkable_set:
                     row.append('.')
                 else:
@@ -579,6 +603,52 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
         return terrain
     except Exception as e:
         logger.debug(f"Terrain data unavailable: {e}")
+        return None
+
+
+def _extract_cut_tree_positions(pyboy: PyBoy) -> Optional[set]:
+    """Detect cuttable trees by reading block IDs from the map block buffer.
+
+    Returns a set of (grid_x, grid_y) positions where cuttable trees exist,
+    or None if not in a relevant tileset.  Block IDs are unique per metatile
+    so this avoids the false positives from VRAM sub-tile matching.
+    """
+    try:
+        tileset = pyboy.memory[_ADDR_MAP_TILESET]
+        if tileset == 0:  # OVERWORLD
+            cuttable = _CUT_TREE_BLOCKS_OVERWORLD | _CUT_GRASS_BLOCKS_OVERWORLD
+        else:
+            return None
+
+        view_ptr_lo = pyboy.memory[_ADDR_VIEW_BLOCK_PTR]
+        view_ptr_hi = pyboy.memory[_ADDR_VIEW_BLOCK_PTR + 1]
+        view_ptr = view_ptr_lo | (view_ptr_hi << 8)
+
+        map_width = pyboy.memory[_ADDR_MAP_WIDTH]
+        stride = map_width + 6  # 3-block border on each side
+
+        # Sub-block offset: which metatile within the top-left block
+        # aligns with grid position (0,0)
+        x_off = pyboy.memory[_ADDR_X_BLOCK_COORD]
+        y_off = pyboy.memory[_ADDR_Y_BLOCK_COORD]
+
+        positions = set()
+        # Read 6x6 blocks to cover the full 10x9 metatile grid + margin
+        for by in range(6):
+            for bx in range(6):
+                addr = view_ptr + by * stride + bx
+                block_id = pyboy.memory[addr]
+                if block_id in cuttable:
+                    # Each block covers a 2x2 metatile area in the grid
+                    base_gx = bx * 2 - x_off
+                    base_gy = by * 2 - y_off
+                    for dy in range(2):
+                        for dx in range(2):
+                            positions.add((base_gx + dx, base_gy + dy))
+
+        return positions if positions else None
+    except Exception as e:
+        logger.debug(f"Cut tree detection unavailable: {e}")
         return None
 
 
@@ -596,6 +666,44 @@ def _extract_sprites(pyboy: PyBoy) -> List[Dict[str, Any]]:
             })
     return sprites
 
+
+def _extract_player_facing(pyboy: PyBoy) -> Optional[str]:
+    """Read the player sprite's facing direction from RAM.
+
+    Returns "UP", "DOWN", "LEFT", "RIGHT", or None if unavailable.
+    """
+    try:
+        raw = pyboy.memory[_ADDR_SPRITE_STATE1 + _FACING_OFFSET]
+        return _FACING_MAP.get(raw)
+    except Exception:
+        return None
+
+
+def _check_missable_hidden(pyboy: PyBoy, sprite_slot: int) -> bool:
+    """Check if a sprite is hidden via wMissableObjectFlags.
+
+    The engine's HideSprite command sets a bit in wMissableObjectFlags.
+    wMissableObjectList maps sprite slots to global missable indices
+    for the current map.
+
+    Returns True if the sprite's missable flag is set (truly hidden).
+    Returns False if the sprite is not missable or its flag is not set.
+    """
+    try:
+        # Scan wMissableObjectList: pairs of (sprite_slot, missable_index)
+        for i in range(0, 64, 2):  # max 32 entries
+            slot = pyboy.memory[_ADDR_MISSABLE_LIST + i]
+            if slot == 0xFF:
+                break  # end of list
+            if slot == sprite_slot:
+                missable_index = pyboy.memory[_ADDR_MISSABLE_LIST + i + 1]
+                byte_offset = missable_index // 8
+                bit_offset = missable_index % 8
+                flags_byte = pyboy.memory[_ADDR_MISSABLE_FLAGS + byte_offset]
+                return bool(flags_byte & (1 << bit_offset))
+        return False  # Not in missable list = always visible
+    except Exception:
+        return False  # On error, assume visible
 
 
 def _detect_player_movement(
@@ -761,14 +869,19 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
             if pic_id == 0:
                 continue  # empty slot
 
-            # Ghost detection — two independent checks:
-            # 1. Movement status (C1x0+1): 0 = uninitialized (pre-trigger sprites)
-            # 2. Image index (C1x0+2): 0xFF = not rendered (loaded but hidden,
-            #    e.g. Oak in Pallet Town after Route 1 — STAY sprite, non-zero
-            #    movement_status, but game doesn't display him)
+            # Ghost detection via wMissableObjectFlags — the engine's actual
+            # HideSprite/ShowSprite system.  image_index == 0xFF is NOT reliable:
+            # off-screen sprites also get 0xFF since the Game Boy only writes
+            # image data for sprites within the 160x144 viewport.  This caused
+            # Prof. Oak (at the top of his lab, off-viewport) to be ghost-filtered
+            # even though he's fully interactable.
             movement_status = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10 + 0x01]
             image_index = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10 + 0x02]
-            is_ghost = movement_status == 0 or image_index == 0xFF
+            is_ghost = _check_missable_hidden(pyboy, n)
+
+            # Facing direction (offset 0x09): $00=DOWN, $04=UP, $08=LEFT, $0C=RIGHT
+            facing_raw = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10 + _FACING_OFFSET]
+            facing = _FACING_MAP.get(facing_raw)
 
             raw_y = pyboy.memory[_ADDR_SPRITE_STATE2 + n * 0x10 + 0x04]
             raw_x = pyboy.memory[_ADDR_SPRITE_STATE2 + n * 0x10 + 0x05]
@@ -778,10 +891,10 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
             dx = npc_x - player_x
             name = _SPRITE_NAMES.get(pic_id, "NPC")
 
-            logger.debug(
+            logger.info(
                 f"Sprite {n}: {name} (pic=0x{pic_id:02X}) "
                 f"raw=({raw_x},{raw_y}) map=({npc_x},{npc_y}) "
-                f"rel=({dx},{dy}) img=0x{image_index:02X}{' [ghost]' if is_ghost else ''}"
+                f"rel=({dx},{dy}) facing={facing} img=0x{image_index:02X} mvst=0x{movement_status:02X}{' [ghost]' if is_ghost else ''}"
             )
 
             npcs.append({
@@ -792,9 +905,10 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
                 "is_item": pic_id == _ITEM_SPRITE_ID,
                 "is_object": pic_id in _OBJECT_SPRITE_IDS,
                 "is_ghost": is_ghost,
+                "facing": facing,
             })
 
-        logger.debug(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
+        logger.info(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
         return npcs if npcs else None
     except Exception as e:
         logger.warning(f"NPC data extraction failed: {e}", exc_info=True)
@@ -855,7 +969,7 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
             return {
                 "state": "dialogue",
                 "details": "Text/menu box active",
-                "input_hint": "Press A to advance/select, B to cancel. If menu visible, use Up/Down to navigate",
+                "input_hint": "Press A to advance/select, B to cancel. If menu visible, use Up/Down to navigate. For multi-line dialogue, send A A A A A to advance quickly.",
             }
 
         # Fallback: Window layer visible means a text box or menu is on screen.
@@ -866,7 +980,7 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
             return {
                 "state": "dialogue",
                 "details": "Text/menu visible (Window layer active)",
-                "input_hint": "Press A to advance/select, B to cancel. Arrows to navigate menus.",
+                "input_hint": "Press A to advance/select, B to cancel. Arrows to navigate menus. For multi-line dialogue, send A A A A A to advance quickly.",
             }
 
         # Player sprite not initialised — likely a map script is controlling
@@ -926,32 +1040,41 @@ def _format_warp_text(
     can_pathfind = grid is not None and player_pos is not None
 
     def _edge_opening_hint(direction: str) -> str:
-        """Scan grid edge for nearest walkable cell and return a directional hint."""
+        """Scan grid edge for nearest walkable cell and return a directional hint.
+
+        Only gives directional advice when A* can verify a path to the opening.
+        Otherwise tells the agent to explore freely toward the direction.
+        """
         if not grid or not player_pos:
             return ""
         gh, gw = len(grid), len(grid[0])
         px, py = player_pos
-        openings = []
+
+        # Collect openings on the target edge
+        openings: list = []
         if direction in ("NORTH", "SOUTH"):
             row = 0 if direction == "NORTH" else gh - 1
             for x in range(gw):
                 if grid[row][x] not in DEFAULT_BLOCKED:
-                    openings.append(x)
-            if openings:
-                nearest = min(openings, key=lambda x: abs(x - px))
-                lr = "RIGHT" if nearest > px else "LEFT"
-                dist = abs(nearest - px)
-                return f"  [edge blocked — move {lr} ~{dist} tiles to opening at col {nearest}, then {direction}]"
+                    openings.append((x, row))
         elif direction in ("EAST", "WEST"):
             col = gw - 1 if direction == "EAST" else 0
             for y in range(gh):
                 if grid[y][col] not in DEFAULT_BLOCKED:
-                    openings.append(y)
-            if openings:
-                nearest = min(openings, key=lambda y: abs(y - py))
-                ud = "DOWN" if nearest > py else "UP"
-                dist = abs(nearest - py)
-                return f"  [edge blocked — move {ud} ~{dist} tiles to opening at row {nearest}, then {direction}]"
+                    openings.append((col, y))
+
+        if openings:
+            # Sort by Manhattan distance to player
+            openings.sort(key=lambda pos: abs(pos[0] - px) + abs(pos[1] - py))
+            # Try A* to closest openings — only trust hint if path exists
+            for ox, oy in openings[:3]:
+                path = find_path(grid, player_pos, (ox, oy))
+                if path:
+                    buttons = path_to_buttons(path)
+                    return f"  [path to edge opening: {buttons}]" if buttons else ""
+            # A* failed for all openings — don't give misleading directional hint
+            return f"  [no reachable path to {direction} edge on current screen — explore or scroll view toward {direction}]"
+
         perp = {"NORTH": "EAST or WEST", "SOUTH": "EAST or WEST",
                 "EAST": "NORTH or SOUTH", "WEST": "NORTH or SOUTH"}
         return f"  [edge fully blocked — move {perp.get(direction, 'sideways')} to scroll view]"
@@ -1094,6 +1217,7 @@ def _format_npc_text(
     npc_data: Optional[List[Dict[str, Any]]],
     grid: Optional[List[List[str]]] = None,
     player_pos: Optional[Tuple[int, int]] = None,
+    player_facing: Optional[str] = None,
 ) -> str:
     """Format NPC/item data with A*-computed paths when available."""
     if not npc_data:
@@ -1112,6 +1236,8 @@ def _format_npc_text(
 
     # Direction → face command (sub-16-frame press = turn without moving)
     _face_cmd = {(0, -1): "U2", (0, 1): "D2", (-1, 0): "L2", (1, 0): "R2"}
+    # Delta → facing name for comparison with player_facing
+    _face_dir_name = {(0, -1): "UP", (0, 1): "DOWN", (-1, 0): "LEFT", (1, 0): "RIGHT"}
 
     def _dir_line(marker, entity):
         dy, dx = entity["dy"], entity["dx"]
@@ -1162,14 +1288,27 @@ def _format_npc_text(
 
                     if best_path is not None and best_adj is not None:
                         buttons = path_to_buttons(best_path)
-                        # Append facing command toward the NPC
+                        # Append facing command toward the NPC (skip if already facing)
                         face_dx = tx - best_adj[0]
                         face_dy = ty - best_adj[1]
-                        face = _face_cmd.get((face_dx, face_dy), "")
-                        if face:
-                            buttons = f"{buttons} {face} A".strip()
-                        else:
+                        needed_facing = _face_dir_name.get((face_dx, face_dy))
+                        already_facing = False
+                        if len(best_path) >= 2:
+                            # After walking, player faces the last step direction
+                            last_dx = best_path[-1][0] - best_path[-2][0]
+                            last_dy = best_path[-1][1] - best_path[-2][1]
+                            already_facing = (last_dx, last_dy) == (face_dx, face_dy)
+                        elif player_facing and needed_facing == player_facing:
+                            # Standing still — use RAM-read facing
+                            already_facing = True
+                        if already_facing:
                             buttons = f"{buttons} A".strip()
+                        else:
+                            face = _face_cmd.get((face_dx, face_dy), "")
+                            if face:
+                                buttons = f"{buttons} {face} A".strip()
+                            else:
+                                buttons = f"{buttons} A".strip()
                         hint = f"  [path: {buttons}]" if buttons else "  [already here]"
                     else:
                         hint = "  [no path found]"
@@ -1231,6 +1370,8 @@ def _format_spatial_text(
     game_state_info: Optional[Dict[str, str]] = None,
     story_progress: Optional[Dict[str, Any]] = None,
     terrain: Optional[List[List[str]]] = None,
+    cut_tree_positions: Optional[set] = None,
+    player_facing: Optional[str] = None,
 ) -> str:
     """Build simplified spatial context for continuous mode.
 
@@ -1247,8 +1388,36 @@ def _format_spatial_text(
     grid_width = src_width // 2
 
     grid = []
-    if terrain is not None:
-        # Use pre-classified terrain grid (already at metatile resolution)
+    if terrain is not None and has_collision:
+        # Use collision as walkability ground truth, overlay terrain types.
+        # The terrain VRAM sampling can misclassify walkability (e.g. fence
+        # tiles whose IDs appear in the collision pointer's walkable list),
+        # but terrain accurately identifies grass/water/ledge tile types.
+        grid_height = len(terrain)
+        grid_width = len(terrain[0]) if terrain else 0
+        for y in range(grid_height):
+            row = []
+            for x in range(grid_width):
+                terrain_type = terrain[y][x]
+                cy, cx = y * 2, x * 2
+                if cy + 1 < src_height and cx + 1 < src_width:
+                    coll_walkable = all(
+                        collision[cy + dy][cx + dx] != 0
+                        for dy in range(2) for dx in range(2)
+                    )
+                else:
+                    coll_walkable = terrain_type not in ('#',)
+                # Preserve special terrain markers (grass, water, ledge);
+                # for plain walkable/blocked, defer to collision data.
+                if terrain_type in ('w', '=', 'v', '>', '<'):
+                    row.append(terrain_type)
+                elif coll_walkable:
+                    row.append('.')
+                else:
+                    row.append('#')
+            grid.append(row)
+    elif terrain is not None:
+        # No collision data — use terrain classification as-is
         grid = [row[:] for row in terrain]
         grid_height = len(grid)
         grid_width = len(grid[0]) if grid else 0
@@ -1270,6 +1439,13 @@ def _format_spatial_text(
             for x in range(grid_width):
                 row.append(tile_to_char.get(visible[y * 2][x * 2], "?"))
             grid.append(row)
+
+    # Overlay cuttable trees: mark blocked cells whose block IDs are cuttable
+    if cut_tree_positions:
+        for y in range(grid_height):
+            for x in range(grid_width):
+                if grid[y][x] == '#' and (x, y) in cut_tree_positions:
+                    grid[y][x] = 'T'
 
     # Player screen position from OAM sprite 0
     # Pokemon uses 8x16 sprites — the OAM Y is the sprite top, but we need
@@ -1313,7 +1489,8 @@ def _format_spatial_text(
 
     # Player grid position (viewport-relative, matches the grid below)
     if player_screen_pos:
-        lines.append(f"Player @ is at grid column {player_screen_pos[0]}, row {player_screen_pos[1]}")
+        facing_str = f", facing {player_facing}" if player_facing else ""
+        lines.append(f"Player @ is at grid column {player_screen_pos[0]}, row {player_screen_pos[1]}{facing_str}")
 
     # Player movement status (directional, no raw map coords)
     if player_movement_text:
@@ -1326,11 +1503,11 @@ def _format_spatial_text(
 
     # Brief legend
     if has_collision or terrain is not None:
-        lines.append(". = walkable  # = blocked  ~ = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
+        lines.append(". = walkable  # = blocked  w = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
 
     # NPC/item text with A* paths
     has_grid = has_collision or terrain is not None
-    npc_text = _format_npc_text(npc_data, grid if has_grid else None, player_screen_pos)
+    npc_text = _format_npc_text(npc_data, grid if has_grid else None, player_screen_pos, player_facing)
     if npc_text:
         lines.append(npc_text)
 
@@ -1364,7 +1541,10 @@ def _overlay_warps_on_grid(
         gx = px + w["dx"] * scale
         gy = py + w["dy"] * scale
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
-            grid[gy][gx] = "W"
+            # Only overlay W on walkable tiles — some warps sit on wall tiles
+            # (e.g. gate buildings with wider warp zones than walkable exits)
+            if grid[gy][gx] not in ('#', 'T', 'B', '='):
+                grid[gy][gx] = "W"
 
 
 def extract_spatial_context(
@@ -1388,6 +1568,7 @@ def extract_spatial_context(
         sprites = _extract_sprites(pyboy)
         collision = _extract_collision_data(pyboy)
         terrain = _extract_terrain_data(pyboy)
+        cut_tree_pos = _extract_cut_tree_positions(pyboy)
         warp_data = _extract_warp_data(pyboy)
         npc_data = _extract_npc_data(pyboy)
         from claude_player.utils.event_flags import check_story_progress
@@ -1420,6 +1601,7 @@ def extract_spatial_context(
             player_map_pos = (warp_data["player_x"], warp_data["player_y"])
         game_state_info = _detect_game_state(pyboy)
         player_movement_text = _detect_player_movement(player_map_pos, previous_player_pos, game_state_info)
+        player_facing = _extract_player_facing(pyboy)
 
         text = _format_spatial_text(
             collision=collision,
@@ -1432,6 +1614,8 @@ def extract_spatial_context(
             game_state_info=game_state_info,
             story_progress=story_progress,
             terrain=terrain,
+            cut_tree_positions=cut_tree_pos,
+            player_facing=player_facing,
         )
 
         return {

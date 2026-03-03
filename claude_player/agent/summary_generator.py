@@ -95,6 +95,13 @@ GAME STATE line is RAM-derived and may be stale after transitions. Only describe
                 "text": f"AUTHORITATIVE STORY PROGRESS (from RAM event flags — use these exact counts, do NOT invent different numbers):\n{self.game_state.story_progress['progress_summary']}"
             })
 
+        # Inject real-time party data so the summary doesn't report stale HP
+        if self.game_state.party_summary:
+            messages[-1]["content"].append({
+                "type": "text",
+                "text": f"AUTHORITATIVE PARTY STATUS (real-time from RAM — use these exact HP values):\n{self.game_state.party_summary}"
+            })
+
         system_prompt = initial_summary_system_prompt if self.game_state.turn_count == 1 else system_prompt
 
         try:

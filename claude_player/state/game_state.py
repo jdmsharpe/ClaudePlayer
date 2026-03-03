@@ -15,6 +15,7 @@ class GameState:
         self.complete_message_history = []  # Store ALL messages without truncation
         self.runtime_thinking_enabled = True  # Store the runtime thinking state
         self.story_progress = None   # Updated each turn from event flags
+        self.party_summary: Optional[str] = None  # Latest 1-line party status from RAM
         self.auto_goal_enabled = True
 
         # Valid memory categories

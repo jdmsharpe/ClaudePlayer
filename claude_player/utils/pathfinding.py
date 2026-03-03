@@ -16,6 +16,14 @@ DEFAULT_BLOCKED: FrozenSet[str] = frozenset(
     {'#', 'W', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'n', 'i', '=', 'T', 'B'}
 )
 
+# Ledge tiles are one-way: passable only when entering from the correct direction.
+# Maps ledge char → the (dx, dy) movement that is ALLOWED to enter it.
+_LEDGE_ALLOWED_DIR: Dict[str, Tuple[int, int]] = {
+    'v': (0, 1),    # south ledge: can enter moving DOWN (from north)
+    '>': (1, 0),    # east ledge: can enter moving RIGHT (from west)
+    '<': (-1, 0),   # west ledge: can enter moving LEFT (from east)
+}
+
 # Direction deltas → button letters
 _DIRECTION_MAP: Dict[Tuple[int, int], str] = {
     (0, -1): 'U',
@@ -57,10 +65,13 @@ def find_path(
     if start == goal:
         return [start]
 
-    def _passable(x: int, y: int) -> bool:
+    def _passable(x: int, y: int, dx: int = 0, dy: int = 0) -> bool:
         if (x, y) == goal:
             return True
-        return grid[y][x] not in blocked_chars
+        cell = grid[y][x]
+        if cell in _LEDGE_ALLOWED_DIR:
+            return (dx, dy) == _LEDGE_ALLOWED_DIR[cell]
+        return cell not in blocked_chars
 
     if not _passable(sx, sy):
         return None
@@ -97,7 +108,7 @@ def find_path(
                 continue
             if (nx, ny) in closed:
                 continue
-            if not _passable(nx, ny):
+            if not _passable(nx, ny, dx, dy):
                 continue
             tentative_g = g_cur + 1
             if tentative_g < g_score.get((nx, ny), float('inf')):
@@ -151,10 +162,13 @@ def find_path_to_edge(
     if not goals:
         return None
 
-    def _passable(x: int, y: int) -> bool:
+    def _passable(x: int, y: int, dx: int = 0, dy: int = 0) -> bool:
         if (x, y) in goals:
             return True
-        return grid[y][x] not in blocked_chars
+        cell = grid[y][x]
+        if cell in _LEDGE_ALLOWED_DIR:
+            return (dx, dy) == _LEDGE_ALLOWED_DIR[cell]
+        return cell not in blocked_chars
 
     if not _passable(sx, sy):
         return None
@@ -202,7 +216,7 @@ def find_path_to_edge(
                 continue
             if (nx, ny) in closed:
                 continue
-            if not _passable(nx, ny):
+            if not _passable(nx, ny, dx, dy):
                 continue
             tentative_g = g_cur + 1
             if tentative_g < g_score.get((nx, ny), float('inf')):

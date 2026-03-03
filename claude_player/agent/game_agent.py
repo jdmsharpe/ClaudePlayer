@@ -210,7 +210,7 @@ class GameAgent:
                     for x in range(min(len(current_tilemap[y]), len(old_tilemap[y])))
                     if current_tilemap[y][x] != old_tilemap[y][x]
                 )
-                screen_changed = changes > 20  # text box = ~120 tiles, idle anim = ~2-4
+                screen_changed = changes > 8  # text scroll = 20+ tiles, idle anim = ~2-4
 
             current_pos = spatial_data.get("player_pos")
             detected_state = spatial_data.get("game_state")

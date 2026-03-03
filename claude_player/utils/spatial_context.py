@@ -49,6 +49,7 @@ _ADDR_IS_IN_BATTLE   = 0xD057   # wIsInBattle – 0=overworld, 1=wild, 2=trainer
 _ADDR_WALK_COUNTER   = 0xCFC5   # wWalkCounter – non-zero = mid-step animation
 _ADDR_JOY_IGNORE     = 0xCC6B   # wJoyIgnore – button ignore bitmask (retained for reference; stale like wTextBoxID)
 _ADDR_STATUS_FLAGS5  = 0xD730   # bit5=joypad disabled, bit7=scripted movement
+_ADDR_WINDOW_Y       = 0xFF4A   # WY register – Window layer Y position (144 = off-screen)
 
 # Sprite picture ID → readable name (from pokered sprite_constants.asm)
 _SPRITE_NAMES = {
@@ -337,6 +338,7 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
         num_sprites = pyboy.memory[_ADDR_NUM_SPRITES]
 
         if num_sprites == 0 or num_sprites > 15:
+            logger.debug(f"NPC skip: num_sprites={num_sprites}")
             return None
 
         # Calibrate offset: sprite-state coords include a map-border offset
@@ -372,9 +374,10 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
                 "is_item": pic_id == _ITEM_SPRITE_ID,
             })
 
+        logger.info(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
         return npcs if npcs else None
     except Exception as e:
-        logger.debug(f"NPC data unavailable: {e}")
+        logger.warning(f"NPC data extraction failed: {e}", exc_info=True)
         return None
 
 
@@ -423,6 +426,18 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
                 "details": "Text/menu box active",
                 "input_hint": "Press A to advance/select, B to cancel. If menu visible, use Up/Down to navigate",
             }
+
+        # Fallback: Window layer visible means a text box or menu is on screen.
+        # Some dialogues (e.g. Oak's Route 1 speech) don't set wStatusFlags5 bit 0
+        # but still display via the Window layer.  WY < 144 = window is on screen.
+        wy = pyboy.memory[_ADDR_WINDOW_Y]
+        if wy < 144:
+            return {
+                "state": "dialogue",
+                "details": "Text/menu visible (Window layer active)",
+                "input_hint": "Press A to advance/select, B to cancel. Arrows to navigate menus.",
+            }
+
         if walk != 0:
             return {
                 "state": "overworld",
@@ -486,10 +501,11 @@ def _format_warp_text(
                         buttons = extra
                     hint = f"  [path: {buttons}]" if buttons else ""
                 else:
-                    # Path blocked on visible grid — give direction hint so
-                    # the agent knows to move toward the edge and scroll.
-                    dir_hint = _extra_step.get(conn["direction"], "")
-                    hint = f"  [blocked on screen — move {conn['direction']} to reveal path]"
+                    # Path blocked on visible grid — suggest perpendicular
+                    # movement to scroll the view and reveal a gap.
+                    perp = {"NORTH": "EAST or WEST", "SOUTH": "EAST or WEST",
+                            "EAST": "NORTH or SOUTH", "WEST": "NORTH or SOUTH"}
+                    hint = f"  [path blocked on screen — move {perp.get(conn['direction'], 'sideways')} to find a way around]"
             lines.append(f"  {conn['direction']} edge → {conn['dest_name']}{hint}")
 
     # Warp tiles — doors, stairs, cave entrances (step onto W tile)
@@ -888,9 +904,9 @@ def extract_spatial_context(
                 if abs(npc["dy"]) <= map_h and abs(npc["dx"]) <= map_w
             ]
             if len(npc_data) < before:
-                logger.debug(
+                logger.info(
                     f"Filtered {before - len(npc_data)} out-of-bounds sprites "
-                    f"(map {map_w}x{map_h})"
+                    f"(map {map_w}x{map_h}, kept {len(npc_data)})"
                 )
             npc_data = npc_data or None
 

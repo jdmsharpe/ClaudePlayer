@@ -56,9 +56,11 @@ If [no path found], try 1-tile exploratory moves in different directions.
 For long paths (5+ tiles), execute the first 3-4 tiles then re-check spatial context after screen scrolls.
 If "Player didn't move" — you hit a wall, try different direction.
 If GAME STATE says dialogue/menu but no text/menu is visible, treat it as stale and try movement.
-NAME ENTRY: On "YOUR NAME?" / "RIVAL'S NAME?" keyboard screens, A selects letters (can cause loops). Use START to finalize current name quickly, or choose a preset name menu option then A.
+NAME ENTRY: On "YOUR NAME?" / "RIVAL'S NAME?" keyboard screens when an alphabet is visible, A selects letters (can cause loops). Use START to finalize current name quickly, or choose a preset name menu option then A.
 DOORS: Walk ONTO W tiles (no A press). To exit houses: walk DOWN (D16) onto door-mat W tile.
 On a W tile but didn't warp? Move UP first, then D16 back onto it.
+ITEMS ON TABLES: Pokeballs, items on tables/desks are NOT shown on the grid (they're background tiles, not sprites). Walk next to the table and press A while facing it to interact. In Oak's Lab, the 3 starter Pokeballs are on a table — walk to an adjacent tile and press A.
+NPCs: Walk to an adjacent tile (shown as 1-9 on grid) and press A while facing them. If an NPC blocks your path, they are a wall — go around them.
 </spatial_context>
 """
 

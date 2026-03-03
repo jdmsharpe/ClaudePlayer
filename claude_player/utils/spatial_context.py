@@ -396,14 +396,14 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
             if pic_id == 0:
                 continue  # empty slot
 
-            # Movement status at C1x0+1: 0 = uninitialized (ghost sprite).
-            # Pokemon Red pre-loads all map sprites into RAM, but sprites
-            # that haven't spawned yet (e.g. Oak before Route 1 trigger)
-            # have movement_status == 0.
+            # Ghost detection — two independent checks:
+            # 1. Movement status (C1x0+1): 0 = uninitialized (pre-trigger sprites)
+            # 2. Image index (C1x0+2): 0xFF = not rendered (loaded but hidden,
+            #    e.g. Oak in Pallet Town after Route 1 — STAY sprite, non-zero
+            #    movement_status, but game doesn't display him)
             movement_status = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10 + 0x01]
-            if movement_status == 0:
-                logger.debug(f"Sprite {n}: pic=0x{pic_id:02X} skipped (not spawned)")
-                continue
+            image_index = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10 + 0x02]
+            is_ghost = movement_status == 0 or image_index == 0xFF
 
             raw_y = pyboy.memory[_ADDR_SPRITE_STATE2 + n * 0x10 + 0x04]
             raw_x = pyboy.memory[_ADDR_SPRITE_STATE2 + n * 0x10 + 0x05]
@@ -416,7 +416,7 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
             logger.debug(
                 f"Sprite {n}: {name} (pic=0x{pic_id:02X}) "
                 f"raw=({raw_x},{raw_y}) map=({npc_x},{npc_y}) "
-                f"rel=({dx},{dy})"
+                f"rel=({dx},{dy}) img=0x{image_index:02X}{' [ghost]' if is_ghost else ''}"
             )
 
             npcs.append({
@@ -426,6 +426,7 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
                 "pic_id": pic_id,
                 "is_item": pic_id == _ITEM_SPRITE_ID,
                 "is_object": pic_id in _OBJECT_SPRITE_IDS,
+                "is_ghost": is_ghost,
             })
 
         logger.debug(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
@@ -683,7 +684,9 @@ def _overlay_npcs_on_grid(
         gx = px + npc["dx"] * scale
         gy = py + npc["dy"] * scale
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
-            if npc["is_item"]:
+            if npc.get("is_ghost"):
+                grid[gy][gx] = "g"
+            elif npc["is_item"]:
                 grid[gy][gx] = "i"
             elif npc.get("is_object"):
                 grid[gy][gx] = "o"
@@ -705,9 +708,11 @@ def _format_npc_text(
 
     can_pathfind = grid is not None and player_pos is not None
 
-    npcs = [n for n in npc_data if not n["is_item"] and not n.get("is_object")]
-    objects = [n for n in npc_data if n.get("is_object")]
-    items = [n for n in npc_data if n["is_item"]]
+    # Exclude ghosts from agent text — they show on grid as 'g' but aren't interactable
+    active = [n for n in npc_data if not n.get("is_ghost")]
+    npcs = [n for n in active if not n["is_item"] and not n.get("is_object")]
+    objects = [n for n in active if n.get("is_object")]
+    items = [n for n in active if n["is_item"]]
     lines = []
 
     # Direction → face command (sub-16-frame press = turn without moving)
@@ -920,7 +925,7 @@ def _format_spatial_text(
 
     # Brief legend
     if has_collision:
-        lines.append(". = walkable  # = blocked  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
+        lines.append(". = walkable  # = blocked  W = exit  @ = player  1-9 = NPC  i = item  o = object  g = ghost  (1 cell = 16 frames)")
 
     # NPC/item text with A* paths
     npc_text = _format_npc_text(npc_data, grid if has_collision else None, player_screen_pos)

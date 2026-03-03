@@ -24,6 +24,8 @@ class TerminalDisplay:
         self.last_response = ""
         self.last_thinking = ""
         self.spatial_grid = ""
+        self.party_summary = ""
+        self.bag_summary = ""
         self.status = "Starting..."
         self.analysis_duration = 0.0
         self.error_count = 0
@@ -129,6 +131,12 @@ class TerminalDisplay:
                 for grid_line in self.spatial_grid.split("\n"):
                     padded = f" {grid_line} "
                     lines.append(f"│{padded:<{w}}│")
+            if self.party_summary or self.bag_summary:
+                lines.append(f"├{sep}┤")
+                if self.party_summary:
+                    lines.extend(wrap_rows("Party", self.party_summary))
+                if self.bag_summary:
+                    lines.extend(wrap_rows("Bag", self.bag_summary))
             lines.append(f"└{sep}┘")
 
             # Clear screen and draw from top

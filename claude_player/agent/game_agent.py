@@ -15,6 +15,9 @@ from claude_player.agent.summary_generator import SummaryGenerator
 from claude_player.utils.message_utils import MessageUtils
 from claude_player.utils.game_utils import take_screenshot
 from claude_player.utils.spatial_context import extract_spatial_context
+from claude_player.utils.battle_context import extract_battle_context
+from claude_player.utils.party_context import extract_party_context
+from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.terminal_display import TerminalDisplay
 
 # Error strings that indicate non-recoverable failures (no point retrying)
@@ -79,6 +82,19 @@ class GameAgent:
         # Track recent actions for loop detection
         self._action_history = []  # List of (turn, action_string) tuples
         self._max_action_history = 8
+
+        # Current context mode — drives which system prompt block to include
+        self._in_battle = False
+
+        # Party context: only inject when meaningful changes occur or periodically
+        self._last_party_snapshot = None  # (hp, status) tuples for change detection
+        self._last_party_inject_turn = 0  # Turn when party text was last injected
+        self._party_refresh_interval = 10  # Inject every N turns even if unchanged
+
+        # Bag context: inject on item change, post-battle, warnings, or periodically
+        self._last_bag_snapshot = None       # (item_id, qty) tuples for change detection
+        self._last_bag_inject_turn = 0
+        self._bag_refresh_interval = 15     # Less frequent than party (bag changes rarely)
         
         # Initialize game state
         self.game_state = GameState()
@@ -233,9 +249,29 @@ class GameAgent:
                         self.game_state.current_goal = new_goal
             if spatial_data.get("text"):
                 logging.debug(f"Spatial context:\n{spatial_data['text']}")
+
+        # Extract battle context when in battle (replaces spatial grid)
+        battle_data = None
+        if self.config.ENABLE_SPATIAL_CONTEXT and spatial_data:
+            if spatial_data.get("game_state", {}).get("state") == "battle":
+                battle_data = extract_battle_context(self.pyboy)
+
+        # Extract party context (always available — overworld and battle)
+        party_data = None
+        if self.config.ENABLE_SPATIAL_CONTEXT:
+            party_data = extract_party_context(self.pyboy)
+
+        # Extract bag/inventory context
+        bag_data = None
+        if self.config.ENABLE_SPATIAL_CONTEXT:
+            bag_data = extract_bag_context(self.pyboy)
+
         return {
             "screenshot": screenshot,
             "spatial_data": spatial_data,
+            "battle_data": battle_data,
+            "party_data": party_data,
+            "bag_data": bag_data,
             "cartridge_title": self.pyboy.cartridge_title,
         }
 
@@ -254,10 +290,19 @@ class GameAgent:
         logging.info(f"======= NEW TURN: {current_time_str} =======")
         self.game_state.log_state()
 
-        # Extract grid for terminal display from spatial context
+        # Extract display text for terminal
         spatial_grid = ""
         spatial_data = captured_state.get("spatial_data")
-        if spatial_data and spatial_data["text"]:
+        battle_data = captured_state.get("battle_data")
+
+        self._was_in_battle = self._in_battle
+        self._in_battle = bool(battle_data and battle_data.get("text"))
+
+        if self._in_battle:
+            # In battle: show battle context in terminal
+            spatial_grid = battle_data["text"]
+        elif spatial_data and spatial_data["text"]:
+            # Overworld: extract grid lines for terminal
             grid_lines = []
             for line in spatial_data["text"].split("\n"):
                 stripped = line.lstrip()
@@ -268,6 +313,37 @@ class GameAgent:
                     grid_lines.append(line)
             spatial_grid = "\n".join(grid_lines)
 
+        # Build compact one-line summaries for terminal display
+        party_data = captured_state.get("party_data")
+        bag_data = captured_state.get("bag_data")
+
+        party_summary = ""
+        if party_data and party_data.get("party"):
+            mons = []
+            for m in party_data["party"]:
+                status = f" [{m['status']}]" if m["status"] != "OK" else ""
+                mons.append(f"{m['name']} Lv{m['level']} {m['hp']}/{m['max_hp']}{status}")
+            health = party_data.get("health", {})
+            team = f"HP:{health.get('total_hp_pct', '?')}%"
+            if health.get("recommendation"):
+                team += f" — {health['recommendation']}"
+            party_summary = " | ".join(mons) + f" [{team}]"
+
+        bag_summary = ""
+        if bag_data and bag_data.get("assessment"):
+            a = bag_data["assessment"]
+            parts = [
+                f"{a['badge_count']} badges",
+                f"${a['money']}",
+            ]
+            if a["pokeballs"]:
+                parts.append(f"Balls:{a['pokeballs']}")
+            if a["healing_items"]:
+                parts.append(f"Medicine:{a['healing_items']}")
+            if a["key_items"]:
+                parts.append(f"Key: {', '.join(a['key_items'][:3])}")
+            bag_summary = " | ".join(parts)
+
         # Update terminal display
         self.display.update(
             turn=self.game_state.turn_count,
@@ -275,13 +351,55 @@ class GameAgent:
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
             goal=self.game_state.current_goal or "",
             spatial_grid=spatial_grid,
+            party_summary=party_summary,
+            bag_summary=bag_summary,
         )
 
         # Build user content from pre-captured data
         screenshot = captured_state["screenshot"]
         user_content = [screenshot]
-        if spatial_data and spatial_data["text"]:
+        if battle_data and battle_data.get("text"):
+            # In battle: use battle context instead of spatial grid
+            user_content.append({"type": "text", "text": battle_data["text"]})
+        elif spatial_data and spatial_data["text"]:
             user_content.append({"type": "text", "text": spatial_data["text"]})
+
+        # Party status: inject only on meaningful changes or periodically
+        if party_data and party_data.get("text"):
+            # Snapshot: tuple of (hp, status) per mon for cheap comparison
+            current_snapshot = tuple(
+                (m["hp"], m["status"]) for m in party_data["party"]
+            )
+            turns_since_inject = self.game_state.turn_count - self._last_party_inject_turn
+            just_left_battle = self._was_in_battle and not self._in_battle
+            party_changed = current_snapshot != self._last_party_snapshot
+            needs_healing = party_data.get("health", {}).get("needs_healing", False)
+            periodic = turns_since_inject >= self._party_refresh_interval
+
+            if party_changed or just_left_battle or needs_healing or periodic:
+                user_content.append({"type": "text", "text": party_data["text"]})
+                self._last_party_inject_turn = self.game_state.turn_count
+                if party_changed:
+                    logging.debug("Party context injected: state changed")
+
+            self._last_party_snapshot = current_snapshot
+
+        # Bag/inventory: inject on item change, post-battle, warnings, or periodically
+        if bag_data and bag_data.get("text"):
+            current_bag_snapshot = bag_data.get("snapshot")
+            bag_turns_since = self.game_state.turn_count - self._last_bag_inject_turn
+            just_left_battle = self._was_in_battle and not self._in_battle
+            bag_changed = current_bag_snapshot != self._last_bag_snapshot
+            has_warnings = bool(bag_data.get("assessment", {}).get("warnings"))
+            bag_periodic = bag_turns_since >= self._bag_refresh_interval
+
+            if bag_changed or just_left_battle or has_warnings or bag_periodic:
+                user_content.append({"type": "text", "text": bag_data["text"]})
+                self._last_bag_inject_turn = self.game_state.turn_count
+                if bag_changed:
+                    logging.debug("Bag context injected: inventory changed")
+
+            self._last_bag_snapshot = current_bag_snapshot
 
         # Stuck detection: escalating intervention when player hasn't moved
         if self._stuck_count >= 2:
@@ -378,8 +496,8 @@ class GameAgent:
 
         for attempt in range(max_retries + 1):
             try:
-                # Generate system prompt
-                system_prompt = self.claude.generate_system_prompt()
+                # Generate system prompt with context-appropriate guidance block
+                system_prompt = self.claude.generate_system_prompt(in_battle=self._in_battle)
 
                 # Get tools
                 tools = self.tool_registry.get_tools()

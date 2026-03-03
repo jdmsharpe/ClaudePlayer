@@ -26,8 +26,12 @@ class ClaudeInterface:
         self.config = config  # Store the config object
         self._logged_config = False
     
-    def generate_system_prompt(self) -> str:
-        """Generate the system prompt for Claude."""
+    def generate_system_prompt(self, in_battle: bool = False) -> str:
+        """Generate the system prompt for Claude.
+
+        Args:
+            in_battle: When True, include battle guidance instead of spatial.
+        """
 
         # Dynamic thinking control
         thinking_info = ""
@@ -38,10 +42,31 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
 </thinking_control>
 """
 
-        # Spatial context guidance
-        spatial_info = ""
+        # Context guidance — only include the block relevant to current state
+        context_info = ""
         if self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False):
-            spatial_info = """
+            if in_battle:
+                context_info = """
+<battle_context>
+During battles, BATTLE CONTEXT replaces the spatial grid. It shows:
+- Both Pokemon: name, level, HP (exact from RAM), status condition
+- Your moves: name, type, power, remaining PP. power=0 means STATUS move (no damage!)
+- Current menu + cursor position, and a TIP with recommended action
+
+BATTLE FLOW: Main menu (FIGHT/ITEM/PKMN/RUN) → select FIGHT → move menu appears → select a move → attacks execute → repeat.
+During attack animations or text messages, press A to advance.
+
+FIGHT MENU is 2x2:
+  Move1(0)  Move2(1)
+  Move3(2)  Move4(3)
+U/D = row, L/R = column, A = confirm, B = back to main menu.
+
+STRATEGY: Always prefer damaging moves (power > 0) over status moves in wild battles.
+Follow the TIP line — it tells you exactly which buttons to press.
+</battle_context>
+"""
+            else:
+                context_info = """
 <spatial_context>
 Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
 1 cell = 1 tile = 16 frames (3 cells right = R48). GAME STATE line is RAM-derived and can be stale after transitions.
@@ -63,6 +88,19 @@ NPCs/ITEMS: Walk to an adjacent tile and press A while facing them. Follow [path
 </spatial_context>
 """
 
+        # Party & inventory guidance — always included (these context blocks
+        # are injected conditionally into user messages, not every turn)
+        team_info = """
+<team_and_inventory>
+PARTY STATUS (injected when HP/status changes or periodically): Shows each Pokemon's level, HP, status, and moves with PP.
+If HEAL line appears, prioritize visiting a Pokemon Center. Lead fainted = switch or heal immediately.
+
+INVENTORY (injected when items change or periodically): Shows badges, money, key items, balls, medicine.
+HM usability: ✓ = can use in field, "(need Badge)" = have HM but lack the badge. Plan routes around HM access.
+WARNING lines = progression blockers (missing HMs, no Poke Balls, etc.) — address before continuing main goal.
+</team_and_inventory>
+""" if self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False) else ""
+
         # Custom instructions from config
         custom_instructions = ""
         if self.config and hasattr(self.config, 'CUSTOM_INSTRUCTIONS') and self.config.CUSTOM_INSTRUCTIONS:
@@ -74,7 +112,8 @@ NPCs/ITEMS: Walk to an adjacent tile and press A while facing them. Follow [path
 {button_rules}
 </notation>
 {thinking_info}
-{spatial_info}
+{context_info}
+{team_info}
 {custom_instructions}
 Always use the tools provided to you to interact with the game.
 """

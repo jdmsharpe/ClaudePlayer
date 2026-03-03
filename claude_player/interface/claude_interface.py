@@ -69,10 +69,10 @@ CATCHING: In wild battles, the TIP may suggest catching with Poke Balls via the 
             else:
                 context_info = """
 <spatial_context>
-Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, ~ = grass, = = water, v/>/< = ledge, T = cut tree, B = boulder, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
+Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, , = grass, = = water, v/>/< = ledge, T = cut tree, B = boulder, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
 1 cell = 1 tile = 16 frames (3 cells right = R48). GAME STATE line is RAM-derived and can be stale after transitions.
 PROGRESS line shows milestones and auto-sets your current_goal.
-TERRAIN: ~ = tall grass (random wild battles — avoid if HP low). = = water (blocked, need Surf HM+badge). v/>/< = ledge (one-way jump in arrow direction ONLY, cannot climb back — plan routes carefully!). T = cuttable tree (blocked, need Cut HM+badge). B = boulder (blocked, need Strength HM+badge to push).
+TERRAIN: , = tall grass (random wild battles — avoid if HP low). = = water (blocked, need Surf HM+badge). v/>/< = ledge (one-way jump in arrow direction ONLY, cannot climb back — plan routes carefully!). T = cuttable tree (blocked, need Cut HM+badge). B = boulder (blocked, need Strength HM+badge to push).
 
 MAP EDGES vs DOORS: There are TWO ways to change maps:
 - "Map edges" = walk off the edge of the current map (e.g. walk UP off Pallet Town to reach Route 1). No warp tile needed — just keep walking in that direction.

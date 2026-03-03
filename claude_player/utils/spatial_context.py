@@ -524,7 +524,7 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
     Returns a 9x10 (height x width) grid of single-char terrain markers:
         '.' = normal walkable
         '#' = blocked (wall/tree/etc.)
-        'w' = tall grass (walkable, triggers wild encounters)
+        ',' = tall grass (walkable, triggers wild encounters)
         'v' = south-facing ledge (one-way jump down)
         '>' = east-facing ledge (one-way jump right)
         '<' = west-facing ledge (one-way jump left)
@@ -589,7 +589,7 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
             for mx in range(grid_w):
                 tid = metatile_ids[my][mx]
                 if grass_tile_vram is not None and tid == grass_tile_vram:
-                    row.append('w')
+                    row.append(',')
                 elif tileset_type > 0 and tid in _LEDGE_TILES:
                     row.append(_LEDGE_TILES[tid])
                 elif tileset_type > 0 and tid == _WATER_TILE_VRAM:
@@ -1409,7 +1409,7 @@ def _format_spatial_text(
                     coll_walkable = terrain_type not in ('#',)
                 # Preserve special terrain markers (grass, water, ledge);
                 # for plain walkable/blocked, defer to collision data.
-                if terrain_type in ('w', '=', 'v', '>', '<'):
+                if terrain_type in (',', '=', 'v', '>', '<'):
                     row.append(terrain_type)
                 elif coll_walkable:
                     row.append('.')
@@ -1492,6 +1492,50 @@ def _format_spatial_text(
         facing_str = f", facing {player_facing}" if player_facing else ""
         lines.append(f"Player @ is at grid column {player_screen_pos[0]}, row {player_screen_pos[1]}{facing_str}")
 
+    # Absolute map position + compass for off-screen exits
+    if warp_data:
+        px_abs = warp_data["player_x"]
+        py_abs = warp_data["player_y"]
+        mw = warp_data["map_width"]
+        mh = warp_data["map_height"]
+        lines.append(f"Map position: ({px_abs}, {py_abs}) of {mw}x{mh}")
+
+        # Compass bearings to warps/connections that are far off-screen
+        viewport_half_w = grid_width // 2  # ~5
+        viewport_half_h = grid_height // 2  # ~4
+        compass_lines: list = []
+        for w in warp_data.get("warps", []):
+            if abs(w["dy"]) > viewport_half_h or abs(w["dx"]) > viewport_half_w:
+                parts = []
+                if w["dy"] < 0:
+                    parts.append(f"~{abs(w['dy'])} blocks UP")
+                elif w["dy"] > 0:
+                    parts.append(f"~{w['dy']} blocks DOWN")
+                if w["dx"] < 0:
+                    parts.append(f"~{abs(w['dx'])} blocks LEFT")
+                elif w["dx"] > 0:
+                    parts.append(f"~{w['dx']} blocks RIGHT")
+                if parts:
+                    compass_lines.append(f"  {w['dest_name']}: {', '.join(parts)}")
+        for conn in warp_data.get("connections", []):
+            d = conn["direction"]
+            if d == "NORTH":
+                dist = py_abs
+            elif d == "SOUTH":
+                dist = mh - 1 - py_abs
+            elif d == "WEST":
+                dist = px_abs
+            elif d == "EAST":
+                dist = mw - 1 - px_abs
+            else:
+                continue
+            threshold = viewport_half_h if d in ("NORTH", "SOUTH") else viewport_half_w
+            if dist > threshold:
+                compass_lines.append(f"  {conn['dest_name']}: ~{dist} blocks {d}")
+        if compass_lines:
+            lines.append("COMPASS (off-screen exits):")
+            lines.extend(compass_lines)
+
     # Player movement status (directional, no raw map coords)
     if player_movement_text:
         lines.append(player_movement_text)
@@ -1503,7 +1547,7 @@ def _format_spatial_text(
 
     # Brief legend
     if has_collision or terrain is not None:
-        lines.append(". = walkable  # = blocked  w = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
+        lines.append(". = walkable  # = blocked  , = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
 
     # NPC/item text with A* paths
     has_grid = has_collision or terrain is not None

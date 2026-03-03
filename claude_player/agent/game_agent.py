@@ -3,6 +3,7 @@ import sys
 import logging
 import time
 import threading
+import collections
 from datetime import datetime
 from pyboy import PyBoy
 
@@ -80,6 +81,7 @@ class GameAgent:
         # Store previous tilemap and player position for spatial context
         self._previous_visible_tilemap = None
         self._previous_player_pos = None
+        self._visited_positions: collections.deque = collections.deque(maxlen=50)
 
         # Track consecutive thinking-only responses for recovery
         self._consecutive_thinking_only = 0
@@ -113,6 +115,10 @@ class GameAgent:
         # Initialize game state
         self.game_state = GameState()
         self.game_state.cartridge_title = self.pyboy.cartridge_title
+        # Auto-set game identity from cartridge title so Claude doesn't waste
+        # a tool call on set_game (and the log doesn't say "Not identified")
+        if not self.game_state.identified_game and self.pyboy.cartridge_title:
+            self.game_state.identified_game = self.pyboy.cartridge_title
         self.game_state.runtime_thinking_enabled = self.config.ACTION.get("THINKING", True)
         
         # Initialize tool registry
@@ -255,6 +261,53 @@ class GameAgent:
             elif current_pos is not None:
                 self._stuck_count = 0
             self._previous_player_pos = current_pos
+            # Track visited positions for exploration analysis
+            if current_pos is not None:
+                # Clear history on map change (large position jump)
+                if (self._visited_positions
+                        and abs(current_pos[0] - self._visited_positions[-1][0])
+                        + abs(current_pos[1] - self._visited_positions[-1][1]) > 10):
+                    self._visited_positions.clear()
+                self._visited_positions.append(current_pos)
+
+            # Exploration hint: analyze visited positions to suggest new directions
+            if (len(self._visited_positions) >= 10
+                    and current_pos is not None
+                    and spatial_data.get("text")):
+                cx, cy = current_pos
+                xs = [p[0] for p in self._visited_positions]
+                ys = [p[1] for p in self._visited_positions]
+                avg_x = sum(xs) / len(xs)
+                avg_y = sum(ys) / len(ys)
+                # Centroid relative to current pos: where we've BEEN
+                dx_c = avg_x - cx
+                dy_c = avg_y - cy
+                # Suggest opposite of where we've been clustering
+                suggestions = []
+                if dy_c > 1.0:
+                    suggestions.append("NORTH")
+                elif dy_c < -1.0:
+                    suggestions.append("SOUTH")
+                if dx_c > 1.0:
+                    suggestions.append("WEST")
+                elif dx_c < -1.0:
+                    suggestions.append("EAST")
+                if suggestions:
+                    been_dirs = []
+                    if dy_c > 1.0:
+                        been_dirs.append("SOUTH")
+                    elif dy_c < -1.0:
+                        been_dirs.append("NORTH")
+                    if dx_c > 1.0:
+                        been_dirs.append("EAST")
+                    elif dx_c < -1.0:
+                        been_dirs.append("WEST")
+                    spatial_data["text"] += (
+                        f"\nEXPLORATION: Recent movement clustered "
+                        f"{'/'.join(been_dirs)}"
+                        f" — try {' or '.join(suggestions)} for new areas"
+                    )
+
             # Auto-set goal from event flags
             story_progress = spatial_data.get("story_progress")
             if story_progress:

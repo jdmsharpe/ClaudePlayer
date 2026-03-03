@@ -1,27 +1,29 @@
-import time
 import logging
 import base64
 from io import BytesIO
 from pyboy import PyBoy
-from pyboy import WindowEvent
+from pyboy.utils import WindowEvent
 
 # Define button rules documentation
-button_rules = """Use the following notation for Game Boy buttons: A (A button), B (B button), U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), E (SELECT).
-You can combine multiple button presses with their duration in this format: A5 (press A for 5 frames) U10 (hold UP for 10 frames).
-Separate each input with spaces: "A2 B2 R5 L2 U2".
-For quick taps, use inputs like: "A1 B1" or just "A B".
-For discrete presses e.g. navigating menus, use inputs like: "R1 R1" to move right twice in a row.
-For long holds, specify the number of frames: "U10" (hold UP for 10 frames).
-Careful! Very long durations may result in missing other important events.
+button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), E (SELECT).
+Format: BUTTON + FRAMES. Separate with spaces. Bare letter = 1 frame.
+Examples: A5 = A for 5 frames. U16 = up 1 tile. "D1 D1 A1" = cursor down twice, confirm.
+
+MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16.
+  U16 = 1 tile up, R32 = 2 tiles right, D48 = 3 tiles down.
+CRITICAL: Counts under 16 (e.g. D10) will NOT complete a tile move. Always use multiples of 16.
 """
 
-def press_and_release_buttons(pyboy: PyBoy, input_string: str):
+def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: int = 0):
     """
     Parse a button input string and execute the button presses.
-    
+
     Args:
         pyboy: The PyBoy instance
         input_string: String of button inputs in the format "A5 B2 R3 L1"
+        settle_frames: Extra frames to tick after all inputs, letting
+                       animations (dialog boxes, screen fades) finish
+                       before a screenshot is captured.
     """
     if not input_string.strip():
         logging.warning("Received empty input string")
@@ -76,38 +78,39 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str):
             
             # Press the button
             pyboy.send_input(button_map[button])
-            
+
             # Hold for the specified duration
             for _ in range(duration):
                 # Tick the emulator for each frame of hold time
                 pyboy.tick()
-            
-            # Release the button
+
+            # Release the button and tick once so the game sees
+            # the released state before any subsequent press
             pyboy.send_input(release_map[button])
+            pyboy.tick()
             
+        # Tick extra frames so animations settle before the next screenshot
+        for _ in range(settle_frames):
+            pyboy.tick()
+
     except Exception as e:
         logging.error(f"Error executing button inputs: {str(e)}")
 
 def take_screenshot(pyboy: PyBoy, as_claude_content: bool = False) -> dict:
     """
     Take a screenshot of the current PyBoy screen.
-    
+
     Args:
         pyboy: The PyBoy instance
         as_claude_content: Whether to format as Claude content block
-        
+
     Returns:
         Screenshot as image data or Claude content block
     """
     try:
-        # Updated for PyBoy 1.6.7 - the screen is now directly accessible via pyboy.botsupport_manager().screen()
-        from pyboy.botsupport import BotSupportManager
-        bot_support: BotSupportManager = pyboy.botsupport_manager()
-        screen = bot_support.screen()
-        
-        # Get the screen image as a PIL image
-        screen_image = screen.screen_image()
-        
+        # PyBoy v2 - screen.image returns a PIL Image directly (160x144)
+        screen_image = pyboy.screen.image
+
         # Convert to proper PNG with PIL and encode as base64
         buffer = BytesIO()
         screen_image.save(buffer, format="PNG")

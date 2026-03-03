@@ -1,20 +1,17 @@
-import time
-from pyboy import PyBoy, WindowEvent
-from PIL import Image
-import numpy as np
+"""Utility to manually run the emulator for creating/updating save states."""
+import sys
+from pyboy import PyBoy
 
-# Initialize PyBoy with the path to your ROM
-pyboy = PyBoy('gold.gbc', game_wrapper=True)
+ROM_PATH = sys.argv[1] if len(sys.argv) > 1 else "gold.gbc"
+STATE_PATH = sys.argv[2] if len(sys.argv) > 2 else None
 
+pyboy = PyBoy(ROM_PATH)
 print(pyboy.cartridge_title())
 
-pokemon = pyboy.game_wrapper()
+if STATE_PATH:
+    with open(STATE_PATH, "rb") as f:
+        pyboy.load_state(f)
 
-file = open("gold.gbc.state", "rb")
-pyboy.load_state(file)
-
-# Start the game
 while not pyboy.tick():
-    # simple file to run the emu to setup a state
     pass
 

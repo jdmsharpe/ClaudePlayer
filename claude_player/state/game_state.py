@@ -7,33 +7,31 @@ class GameState:
     
     def __init__(self):
         self.identified_game = None
+        self.cartridge_title = ""
         self.current_goal = None
         self.memory_items = []
         self.turn_count = 0
         self.summary = ""
         self.complete_message_history = []  # Store ALL messages without truncation
         self.runtime_thinking_enabled = True  # Store the runtime thinking state
+        self.story_progress = None   # Updated each turn from event flags
+        self.auto_goal_enabled = True
 
-        # New memory management attributes
+        # Valid memory categories
         self.memory_categories = {
-            'items': {'schema': {'name': str, 'location': str, 'obtained': bool}},
-            'npcs': {'schema': {'name': str, 'location': str, 'dialog': list}},
-            'locations': {'schema': {'name': str, 'visited': bool, 'connections': list}},
-            'quests': {'schema': {'name': str, 'status': str, 'requirements': list}},
-            'game_mechanics': {'schema': {'name': str, 'description': str}},
-            'stats': {'schema': {'name': str, 'value': any}}
+            'items', 'npcs', 'locations', 'quests', 'game_mechanics', 'stats'
         }
         
         # Initialize structured memory storage
         self.structured_memory = {
-            category: [] for category in self.memory_categories.keys()
+            category: [] for category in self.memory_categories
         }
         
         # Memory metadata
         self.memory_metadata = {
             'last_consolidated': 0,
             'total_items': 0,
-            'category_counts': {cat: 0 for cat in self.memory_categories.keys()}
+            'category_counts': {cat: 0 for cat in self.memory_categories}
         }
 
     def add_memory_item(self, item: str, category: str = None, metadata: dict = None) -> dict:
@@ -65,15 +63,9 @@ class GameState:
             'source': metadata.get('source', 'direct') if metadata else 'direct'
         }
         
-        # Validate against category schema if provided
-        if category and category in self.memory_categories:
-            schema = self.memory_categories[category]['schema']
-            try:
-                # Basic schema validation could be enhanced
-                if not all(isinstance(memory_item.get(k), v) for k, v in schema.items()):
-                    logging.warning(f"Memory item doesn't match schema for category {category}")
-            except Exception as e:
-                logging.error(f"Schema validation error: {str(e)}")
+        # Validate category is known
+        if category and category not in self.memory_categories:
+            logging.warning(f"Unknown memory category '{category}', storing as uncategorized")
         
         # Store in both flat and structured storage
         self.memory_items.append(memory_item)
@@ -238,39 +230,52 @@ class GameState:
             else:
                 uncategorized.append(item)
         
-        # Format categorized items
+        # Format categorized items — compact: only show metadata when notable
         for category, items in categorized.items():
             memory_section += f"\n[{category.upper()}]\n"
             for item in sorted(items, key=lambda x: (-x['priority'], -x['confidence'])):
                 memory_section += f"[{item['id']}] {item['item']}"
-                if item['priority'] > 0 or item['confidence'] < 1.0:
-                    memory_section += f" (priority: {item['priority']}, confidence: {item['confidence']:.1f})"
+                if item['priority'] >= 5:
+                    memory_section += f" (P{item['priority']})"
+                if item['confidence'] < 0.8:
+                    memory_section += f" (?{item['confidence']:.0%})"
                 memory_section += "\n"
-        
-        # Format uncategorized items
+
         if uncategorized:
-            memory_section += "\n[UNCATEGORIZED]\n"
+            memory_section += "\n[OTHER]\n"
             for item in sorted(uncategorized, key=lambda x: (-x['priority'], -x['confidence'])):
                 memory_section += f"[{item['id']}] {item['item']}\n"
         
         return memory_section
     
-    def get_current_state_summary(self) -> str:
-        """Get a summary of the current game state."""
-        state_summary = f"Current game: {self.identified_game or 'Not identified'}\nCurrent goal: {self.current_goal or 'Not set'}\n{self.format_memory_for_prompt()}"
-        
-        # Include the AI-generated summary if available
+    def get_current_state_summary(self, compact: bool = False) -> str:
+        """Get a summary of the current game state.
+
+        Args:
+            compact: If True, omit game/goal lines (spatial context already
+                     provides GAME STATE and PROGRESS lines).
+        """
+        parts = []
+        if not compact:
+            parts.append(f"Current game: {self.identified_game or 'Not identified'}")
+            parts.append(f"Current goal: {self.current_goal or 'Not set'}")
+
+        memory = self.format_memory_for_prompt()
+        if memory:
+            parts.append(memory)
+
         if self.summary:
-            state_summary += "\n\n=== GAME PROGRESS SUMMARY ===\n" + self.summary
-            
-        return state_summary
+            parts.append("=== GAME PROGRESS SUMMARY ===\n" + self.summary)
+
+        return "\n".join(parts)
     
     def log_state(self):
         """Log the current game state."""
         logging.info(f"GAME: {self.identified_game or 'Not identified'}")
         logging.info(f"GOAL: {self.current_goal or 'Not set'}")
         logging.info(f"TURN: {self.turn_count}")
-        logging.info(f"SUMMARY: {self.summary}")
+        summary_preview = self.summary[:200] + "..." if len(self.summary) > 200 else self.summary
+        logging.info(f"SUMMARY: {summary_preview}")
         
         if self.memory_items:
             logging.info("MEMORY ITEMS:")
@@ -291,5 +296,9 @@ class GameState:
         self.summary = summary
 
     def add_to_complete_history(self, message):
-        """Add a message to the complete history archive."""
-        self.complete_message_history.append(message) 
+        """Add a message to the complete history archive, capping at 120 messages."""
+        self.complete_message_history.append(message)
+        # Cap history to prevent unbounded RAM growth (summary generator uses last 60)
+        max_complete_history = 120
+        if len(self.complete_message_history) > max_complete_history:
+            self.complete_message_history = self.complete_message_history[-max_complete_history:] 

@@ -1,0 +1,103 @@
+"""Pokemon Red event flag reader and story progression tracker.
+
+Event flags are stored as a bit array at wEventFlags (0xD747), spanning
+320 bytes (2560 bits).  Flag N lives at byte 0xD747 + (N // 8), bit N % 8.
+A set bit means the event has occurred.
+
+Flag numbers are derived from the pokered disassembly event_constants.asm.
+"""
+
+import logging
+from typing import Callable, Dict, List, Optional, Tuple, Any
+
+logger = logging.getLogger(__name__)
+
+# Base RAM address for the event flags bit array
+_ADDR_EVENT_FLAGS = 0xD747
+
+# Ordered story progression milestones.
+# Each entry: (flag_number, milestone_name, goal_text)
+# Order follows the intended game flow — the first uncompleted flag
+# determines the agent's auto-goal.
+STORY_PROGRESSION: List[Tuple[int, str, str]] = [
+    # Flag numbers from pret/pokered event_constants.asm (parsed 2026-03-02)
+    (0x00D, "Oak appeared in Pallet",       "Start a new game (press A through intro/naming). Then go downstairs, exit house, walk NORTH into Route 1 tall grass to trigger Oak"),
+    (0x008, "Got starter Pokemon",          "Go to Oak's Lab and choose a starter Pokemon"),
+    (0x009, "Battled rival in Oak's Lab",   "Battle your rival in Oak's Lab"),
+    (0x00B, "Got Pokedex",                  "Deliver Oak's Parcel from Viridian Mart, then get the Pokedex"),
+    (0x06C, "Beat Brock",                   "Travel through Viridian Forest to Pewter City and defeat Brock"),
+    (0x09D, "Beat Misty",                   "Go through Mt. Moon to Cerulean City and defeat Misty"),
+    (0x159, "Beat Lt. Surge",               "Get to Vermilion City via Route 5/6 and defeat Lt. Surge (need HM01 Cut from S.S. Anne captain)"),
+    (0x103, "Got Poke Flute",               "Clear Pokemon Tower in Lavender Town to get the Poke Flute (need Silph Scope from Rocket Hideout in Celadon Game Corner basement)"),
+    (0x186, "Beat Erika",                   "Go to Celadon City and defeat Erika"),
+    (0x23D, "Beat Koga",                    "Go to Fuchsia City and defeat Koga (Cycling Road needs Bicycle from Cerulean Bike Shop, or take Routes 12-15)"),
+    (0x34A, "Beat Sabrina",                 "Go to Saffron City and defeat Sabrina (buy a drink from Celadon Dept. Store rooftop vending machine to pass Saffron guards; must clear Silph Co. before gym opens)"),
+    (0x27B, "Beat Blaine",                  "Go to Cinnabar Island and defeat Blaine (need HM03 Surf from Safari Zone warden in Fuchsia City)"),
+    (0x02D, "Beat Giovanni (Viridian Gym)", "Return to Viridian City Gym and defeat Giovanni"),
+    (0x8E7, "Beat Lance (Elite Four)",      "Defeat all Elite Four members at Indigo Plateau"),
+    (0x8E9, "Beat Champion",                "Travel Victory Road to Indigo Plateau and defeat Blue to become Champion (need HM04 Strength)"),
+    (0x8C0, "Caught Mewtwo",                "Go to Cerulean Cave (unlocked after becoming Champion) and catch Mewtwo (need HM03 Surf)"),
+]
+
+
+def is_event_set(memory_read_func: Callable[[int], int], flag_number: int) -> bool:
+    """Check whether a specific event flag is set in RAM.
+
+    Args:
+        memory_read_func: Callable that reads a byte from a RAM address
+                          (e.g. pyboy.memory.__getitem__).
+        flag_number: The event flag number to check.
+
+    Returns:
+        True if the flag bit is set.
+    """
+    byte_addr = _ADDR_EVENT_FLAGS + (flag_number // 8)
+    bit_index = flag_number % 8
+    byte_val = memory_read_func(byte_addr)
+    return bool(byte_val & (1 << bit_index))
+
+
+def check_story_progress(memory_read_func: Callable[[int], int]) -> Dict[str, Any]:
+    """Check overall story progression by scanning all milestone flags.
+
+    Args:
+        memory_read_func: Callable that reads a byte from a RAM address.
+
+    Returns:
+        Dict with keys:
+            completed: list of (flag, name, goal) for completed milestones
+            next: (flag, name, goal) tuple for the first uncompleted milestone, or None
+            next_goal: goal text string for the next milestone, or None
+            progress_summary: human-readable one-line summary
+    """
+    completed: List[Tuple[int, str, str]] = []
+    next_milestone: Optional[Tuple[int, str, str]] = None
+
+    for flag, name, goal in STORY_PROGRESSION:
+        try:
+            if is_event_set(memory_read_func, flag):
+                completed.append((flag, name, goal))
+            elif next_milestone is None:
+                next_milestone = (flag, name, goal)
+        except Exception as e:
+            logger.debug(f"Error reading flag 0x{flag:03X} ({name}): {e}")
+            if next_milestone is None:
+                next_milestone = (flag, name, goal)
+
+    total = len(STORY_PROGRESSION)
+    done = len(completed)
+
+    if next_milestone:
+        last_name = completed[-1][1] if completed else "none"
+        summary = f"{done}/{total} milestones (last: {last_name}) | NEXT: {next_milestone[2]}"
+    elif done == total:
+        summary = f"{done}/{total} milestones — game complete!"
+    else:
+        summary = f"{done}/{total} milestones"
+
+    return {
+        "completed": completed,
+        "next": next_milestone,
+        "next_goal": next_milestone[2] if next_milestone else None,
+        "progress_summary": summary,
+    }

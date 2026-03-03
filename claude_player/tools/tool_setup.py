@@ -1,12 +1,13 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pyboy import PyBoy
 from claude_player.state.game_state import GameState
 from claude_player.tools.tool_registry import ToolRegistry
-from claude_player.utils.game_utils import press_and_release_buttons, take_screenshot
-from claude_player.config.config_loader import Config    
+from claude_player.utils.game_utils import press_and_release_buttons
+from claude_player.config.config_class import ConfigClass
 
-def setup_tool_registry(pyboy: PyBoy, game_state: GameState) -> ToolRegistry:
+
+def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[ConfigClass] = None) -> ToolRegistry:
     """Set up the tool registry with all available tools."""
     registry = ToolRegistry(pyboy, game_state)
     
@@ -29,12 +30,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState) -> ToolRegistry:
         inputs = tool_input["inputs"]
         logging.info(f"EXECUTING INPUTS: {inputs}")
         press_and_release_buttons(self.pyboy, inputs)
-        # Capture new screenshot after applying inputs
-        new_screenshot = take_screenshot(self.pyboy, True)
-        return [
-            {"type": "text", "text": "Inputs sent successfully"},
-            new_screenshot
-        ]
+        return [{"type": "text", "text": "Inputs sent successfully"}]
     
     # Register set_game tool
     @registry.register(
@@ -59,7 +55,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState) -> ToolRegistry:
     # Register set_current_goal tool
     @registry.register(
         name="set_current_goal",
-        description="Set the current goal in the game. Use this tool to update your objective as you progress through the game, such as 'reach the next level' or 'defeat the boss'.",
+        description="Set the current goal in the game. Note: goals are automatically set based on story progress milestones. Only use this to override the auto-goal with a specific sub-task (e.g., 'buy Pokeballs' or 'heal at Pokemon Center').",
         input_schema={
             "type": "object",
             "properties": {
@@ -213,18 +209,18 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState) -> ToolRegistry:
                     "description": "Additional context to merge with existing context"
                 }
             },
-            "required": ["memory_id", "new_item"]
+            "required": ["memory_id"]
         }
     )
     def handle_update_memory_item(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
         memory_id = tool_input["memory_id"]
         
-        # Prepare update data
-        update_data = {
-            'item': tool_input['new_item']
-        }
-        
-        # Add optional fields if provided
+        # Prepare update data — only include fields that were provided
+        update_data = {}
+
+        if 'new_item' in tool_input:
+            update_data['item'] = tool_input['new_item']
+
         for field in ['category', 'priority', 'confidence']:
             if field in tool_input:
                 update_data[field] = tool_input[field]
@@ -232,7 +228,10 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState) -> ToolRegistry:
         # Handle context separately (merge instead of replace)
         if 'context' in tool_input:
             update_data['context'] = tool_input['context']
-        
+
+        if not update_data:
+            return [{"type": "text", "text": f"Error: No fields to update. Provide at least one of: new_item, category, priority, confidence, context."}]
+
         # Update the item
         updated_item = self.game_state.update_memory_item(memory_id, update_data)
         
@@ -307,7 +306,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState) -> ToolRegistry:
         return [{"type": "text", "text": response}]
     
     # Only register toggle_thinking tool if both THINKING and DYNAMIC_THINKING are enabled
-    if Config and Config.MODEL_DEFAULTS.get("DYNAMIC_THINKING", False):
+    if config and config.MODEL_DEFAULTS.get("DYNAMIC_THINKING", False):
         @registry.register(
             name="toggle_thinking",
             description="Toggle the thinking capability on or off. Use this to control whether you want to use your thinking capabilities.",

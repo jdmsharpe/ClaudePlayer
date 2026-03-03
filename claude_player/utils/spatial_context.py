@@ -128,6 +128,7 @@ _MAP_NAMES = {
     0x2F: "Viridian Forest",
     0x3B: "Pokemon Center (Pewter)",
     0x3C: "Pewter Gym",
+    0xFF: "outside (last map)",
 }
 
 
@@ -485,7 +486,10 @@ def _format_warp_text(
                         buttons = extra
                     hint = f"  [path: {buttons}]" if buttons else ""
                 else:
-                    hint = "  [no path found]"
+                    # Path blocked on visible grid — give direction hint so
+                    # the agent knows to move toward the edge and scroll.
+                    dir_hint = _extra_step.get(conn["direction"], "")
+                    hint = f"  [blocked on screen — move {conn['direction']} to reveal path]"
             lines.append(f"  {conn['direction']} edge → {conn['dest_name']}{hint}")
 
     # Warp tiles — doors, stairs, cave entrances (step onto W tile)
@@ -524,7 +528,7 @@ def _format_warp_text(
                     else:
                         hint = "  [no path found]"
                 else:
-                    # Warp is off the visible grid
+                    # Warp is off the visible grid — give straight-line estimate
                     cmds = []
                     if dy < 0:
                         cmds.append(f"U{abs(dy) * 16}")
@@ -534,7 +538,7 @@ def _format_warp_text(
                         cmds.append(f"L{abs(dx) * 16}")
                     elif dx > 0:
                         cmds.append(f"R{dx * 16}")
-                    hint = f"  [off screen: {' '.join(cmds)}]" if cmds else ""
+                    hint = f"  [not on screen, est. {' '.join(cmds)}]" if cmds else ""
             else:
                 # Fallback: straight-line when no collision grid available
                 cmds = []

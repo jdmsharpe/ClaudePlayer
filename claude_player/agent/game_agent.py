@@ -194,14 +194,28 @@ class GameAgent:
                 self._previous_visible_tilemap,
                 previous_player_pos=self._previous_player_pos,
             )
-            self._previous_visible_tilemap = spatial_data.get("visible_tilemap")
-            # Stuck detection: only count when in overworld (player CAN move
-            # but didn't).  Don't count dialogue/battle/menu/cutscene turns.
+            # Stuck detection: only count when in overworld AND screen is static.
+            # Some scripted dialogue (e.g. "Wild POKEMON live in tall grass!")
+            # doesn't set wStatusFlags5 bit 0, so RAM-based game state misses it.
+            # Comparing tilemaps catches these: if the screen changed, something
+            # is happening (text box, animation, cutscene) and the player isn't stuck.
+            current_tilemap = spatial_data.get("visible_tilemap")
+            old_tilemap = self._previous_visible_tilemap
+            self._previous_visible_tilemap = current_tilemap
+
+            screen_changed = False
+            if current_tilemap and old_tilemap:
+                changes = sum(
+                    1 for y in range(min(len(current_tilemap), len(old_tilemap)))
+                    for x in range(min(len(current_tilemap[y]), len(old_tilemap[y])))
+                    if current_tilemap[y][x] != old_tilemap[y][x]
+                )
+                screen_changed = changes > 20  # text box = ~120 tiles, idle anim = ~2-4
+
             current_pos = spatial_data.get("player_pos")
             detected_state = spatial_data.get("game_state")
             in_overworld = detected_state and detected_state.get("state") == "overworld"
-            if not in_overworld:
-                # Player can't move during dialogue/battle/cutscene — reset stuck counter
+            if not in_overworld or screen_changed:
                 self._stuck_count = 0
             elif self._previous_player_pos is not None and current_pos == self._previous_player_pos:
                 self._stuck_count += 1
@@ -267,7 +281,12 @@ class GameAgent:
                     "type": "text",
                     "text": (
                         f"STUCK {self._stuck_count} turns! Failed actions:\n{history_text}\n"
-                        "Single-tile moves only: D16, L16, R16, U16 (untried direction), or A1. Do NOT repeat above."
+                        "Try ONE of these (do NOT repeat failed actions above):\n"
+                        "- D16, L16, R16, U16 (untried direction)\n"
+                        "- A1 (confirm/advance dialogue)\n"
+                        "- B1 (cancel/back out of menu)\n"
+                        "- S (open/close start menu)\n"
+                        "If in a YES/NO menu, use U16/D16 to move cursor then A1 to confirm."
                     )
                 })
                 logging.warning(f"STUCK DETECTION (CRITICAL): {self._stuck_count} turns, forcing single-step mode")
@@ -276,7 +295,7 @@ class GameAgent:
                     "type": "text",
                     "text": (
                         f"STALLED {self._stuck_count} turns. Recent actions:\n{history_text}\n"
-                        "Try: untried direction (1 tile = 16 frames), or A1 for hidden dialogue."
+                        "Try: untried direction (1 tile = 16 frames), A1 for dialogue, or B1 to cancel menu."
                     )
                 })
                 logging.warning(f"STUCK DETECTION: Player at same position for {self._stuck_count} turns")

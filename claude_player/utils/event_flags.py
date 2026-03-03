@@ -20,23 +20,23 @@ _ADDR_EVENT_FLAGS = 0xD747
 # Order follows the intended game flow — the first uncompleted flag
 # determines the agent's auto-goal.
 STORY_PROGRESSION: List[Tuple[int, str, str]] = [
-    # Flag numbers from pret/pokered event_constants.asm (parsed 2026-03-02)
-    (0x00D, "Oak appeared in Pallet",       "Start a new game (press A through intro/naming). Then go downstairs, exit house, walk NORTH into Route 1 tall grass to trigger Oak"),
-    (0x008, "Got starter Pokemon",          "Go to Oak's Lab and choose a starter Pokemon"),
-    (0x009, "Battled rival in Oak's Lab",   "Battle your rival in Oak's Lab"),
-    (0x00B, "Got Pokedex",                  "Deliver Oak's Parcel from Viridian Mart, then get the Pokedex"),
-    (0x06C, "Beat Brock",                   "Travel through Viridian Forest to Pewter City and defeat Brock"),
-    (0x09D, "Beat Misty",                   "Go through Mt. Moon to Cerulean City and defeat Misty"),
-    (0x159, "Beat Lt. Surge",               "Get to Vermilion City via Route 5/6 and defeat Lt. Surge (need HM01 Cut from S.S. Anne captain)"),
-    (0x103, "Got Poke Flute",               "Clear Pokemon Tower in Lavender Town to get the Poke Flute (need Silph Scope from Rocket Hideout in Celadon Game Corner basement)"),
-    (0x186, "Beat Erika",                   "Go to Celadon City and defeat Erika"),
-    (0x23D, "Beat Koga",                    "Go to Fuchsia City and defeat Koga (Cycling Road needs Bicycle from Cerulean Bike Shop, or take Routes 12-15)"),
-    (0x34A, "Beat Sabrina",                 "Go to Saffron City and defeat Sabrina (buy a drink from Celadon Dept. Store rooftop vending machine to pass Saffron guards; must clear Silph Co. before gym opens)"),
-    (0x27B, "Beat Blaine",                  "Go to Cinnabar Island and defeat Blaine (need HM03 Surf from Safari Zone warden in Fuchsia City)"),
-    (0x02D, "Beat Giovanni (Viridian Gym)", "Return to Viridian City Gym and defeat Giovanni"),
-    (0x8E7, "Beat Lance (Elite Four)",      "Defeat all Elite Four members at Indigo Plateau"),
-    (0x8E9, "Beat Champion",                "Travel Victory Road to Indigo Plateau and defeat Blue to become Champion (need HM04 Strength)"),
-    (0x8C0, "Caught Mewtwo",                "Go to Cerulean Cave (unlocked after becoming Champion) and catch Mewtwo (need HM03 Surf)"),
+    # Flag numbers parsed from pret/pokered event_constants.asm via const_def/const_skip tracing
+    (0x027, "Oak appeared in Pallet",       "Start a new game (press A through intro/naming). Then go downstairs, exit house, walk NORTH into Route 1 tall grass to trigger Oak"),
+    (0x022, "Got starter Pokemon",          "Go to Oak's Lab and choose a starter Pokemon"),
+    (0x023, "Battled rival in Oak's Lab",   "Battle your rival in Oak's Lab"),
+    (0x025, "Got Pokedex",                  "Deliver Oak's Parcel from Viridian Mart, then get the Pokedex"),
+    (0x077, "Beat Brock",                   "Travel through Viridian Forest to Pewter City and defeat Brock"),
+    (0x0BF, "Beat Misty",                   "Go through Mt. Moon to Cerulean City and defeat Misty"),
+    (0x167, "Beat Lt. Surge",               "Get to Vermilion City via Route 5/6 and defeat Lt. Surge (need HM01 Cut from S.S. Anne captain)"),
+    (0x128, "Got Poke Flute",               "Clear Pokemon Tower in Lavender Town to get the Poke Flute (need Silph Scope from Rocket Hideout in Celadon Game Corner basement)"),
+    (0x1A9, "Beat Erika",                   "Go to Celadon City and defeat Erika"),
+    (0x259, "Beat Koga",                    "Go to Fuchsia City and defeat Koga (Cycling Road needs Bicycle from Cerulean Bike Shop, or take Routes 12-15)"),
+    (0x361, "Beat Sabrina",                 "Go to Saffron City and defeat Sabrina (buy a drink from Celadon Dept. Store rooftop vending machine to pass Saffron guards; must clear Silph Co. before gym opens)"),
+    (0x299, "Beat Blaine",                  "Go to Cinnabar Island and defeat Blaine (need HM03 Surf from Safari Zone warden in Fuchsia City)"),
+    (0x051, "Beat Giovanni (Viridian Gym)", "Return to Viridian City Gym and defeat Giovanni"),
+    (0x8FE, "Beat Lance (Elite Four)",      "Defeat all Elite Four members at Indigo Plateau"),
+    (0x901, "Beat Champion",                "Travel Victory Road to Indigo Plateau and defeat Blue to become Champion (need HM04 Strength)"),
+    (0x8C1, "Caught Mewtwo",               "Go to Cerulean Cave (unlocked after becoming Champion) and catch Mewtwo (need HM03 Surf)"),
 ]
 
 

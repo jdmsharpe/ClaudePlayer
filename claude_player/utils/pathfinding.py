@@ -13,7 +13,7 @@ from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 # Characters treated as impassable by default.
 # The goal tile is ALWAYS passable regardless of this set.
 DEFAULT_BLOCKED: FrozenSet[str] = frozenset(
-    {'#', 'W', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'n', 'i'}
+    {'#', 'W', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'n', 'i', '=', 'T', 'B'}
 )
 
 # Direction deltas → button letters

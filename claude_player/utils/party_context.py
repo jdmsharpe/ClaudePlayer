@@ -16,6 +16,7 @@ from pyboy import PyBoy
 from claude_player.utils.battle_context import (
     _POKEMON_NAMES,
     _MOVE_DATA,
+    _HM_MOVE_IDS,
     _decode_status,
     _read_word,
 )
@@ -156,6 +157,7 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
 
     # Read moves and PP
     moves: List[Dict[str, Any]] = []
+    hm_moves: List[str] = []
     for i in range(4):
         move_id = pyboy.memory[base + _OFF_MOVES + i]
         if move_id == 0:
@@ -165,6 +167,9 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
         move_name, move_type, move_power, base_pp = _MOVE_DATA.get(
             move_id, (f"Move#{move_id}", "???", 0, 0)
         )
+        is_hm = move_id in _HM_MOVE_IDS
+        if is_hm:
+            hm_moves.append(_HM_MOVE_IDS[move_id])
         moves.append(
             {
                 "name": move_name,
@@ -172,6 +177,7 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
                 "power": move_power,
                 "pp": pp,
                 "base_pp": base_pp,
+                "is_hm": is_hm,
             }
         )
 
@@ -191,6 +197,7 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
         "speed": speed,
         "special": special,
         "moves": moves,
+        "hm_moves": hm_moves,
     }
 
 
@@ -246,20 +253,22 @@ def assess_party_health(party: List[Dict[str, Any]]) -> Dict[str, Any]:
     recommendation = None
     needs_healing = False
 
+    heal_where = "Heal at Pokemon Center (or Mom in Pallet Town)"
+
     if alive == 0:
-        recommendation = "CRITICAL: All Pokemon fainted! Heal immediately!"
+        recommendation = f"CRITICAL: All Pokemon fainted! {heal_where}!"
         needs_healing = True
     elif total_hp_pct < 25 or (fainted >= 2 and alive == 1):
-        recommendation = "URGENT: Heal at Pokemon Center!"
+        recommendation = f"URGENT: {heal_where}!"
         needs_healing = True
     elif lead_fainted:
-        recommendation = "Lead fainted — heal at Pokemon Center or switch lead"
+        recommendation = f"Lead fainted — {heal_where} or switch lead"
         needs_healing = True
     elif total_hp_pct < 50 or fainted >= 2:
-        recommendation = "Heal at Pokemon Center soon"
+        recommendation = f"{heal_where} soon"
         needs_healing = True
     elif lead_no_pp:
-        recommendation = "Lead has no PP for damage moves — switch or heal"
+        recommendation = f"Lead has no PP for damage moves — switch or {heal_where.lower()}"
         needs_healing = True
     elif poisoned > 0:
         # Gen 1: poison drains 1 HP every 4 steps in the overworld
@@ -371,14 +380,28 @@ def _format_party_text(
         type_str = "/".join(mon["types"])
         status_str = f" [{mon['status']}]" if mon["status"] != "OK" else ""
 
-        # Compact move summary: name and PP
-        move_parts = [f"{m['name']}:{m['pp']}pp" for m in mon["moves"]]
+        # Compact move summary: name, PP, and HM tag
+        move_parts = []
+        for m in mon["moves"]:
+            hm_tag = "[HM]" if m.get("is_hm") else ""
+            move_parts.append(f"{m['name']}:{m['pp']}pp{hm_tag}")
+
+        # Stats line
+        stats_str = (
+            f"Atk:{mon['attack']} Def:{mon['defense']} "
+            f"Spd:{mon['speed']} Spc:{mon['special']}"
+        )
 
         lines.append(
             f"  {mon['slot']+1}. {mon['name']} Lv{mon['level']} "
             f"({type_str}) HP:{mon['hp']}/{mon['max_hp']}"
             f"{status_str} — {', '.join(move_parts)}"
         )
+        lines.append(f"     {stats_str}")
+
+        # HM summary for this mon
+        if mon.get("hm_moves"):
+            lines.append(f"     HMs: {', '.join(mon['hm_moves'])}")
 
     # Team summary
     parts = [

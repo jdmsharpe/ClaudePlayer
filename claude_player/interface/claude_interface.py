@@ -63,14 +63,16 @@ U/D = row, L/R = column, A = confirm, B = back to main menu.
 
 STRATEGY: Always prefer damaging moves (power > 0) over status moves in wild battles.
 Follow the TIP line — it tells you exactly which buttons to press.
+CATCHING: In wild battles, the TIP may suggest catching with Poke Balls via the ITEM menu. Lower enemy HP first for better catch rate. Never waste balls on trainer battles (impossible to catch).
 </battle_context>
 """
             else:
                 context_info = """
 <spatial_context>
-Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
+Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, ~ = grass, = = water, v/>/< = ledge, T = cut tree, B = boulder, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
 1 cell = 1 tile = 16 frames (3 cells right = R48). GAME STATE line is RAM-derived and can be stale after transitions.
 PROGRESS line shows milestones and auto-sets your current_goal.
+TERRAIN: ~ = tall grass (random wild battles — avoid if HP low). = = water (blocked, need Surf HM+badge). v/>/< = ledge (one-way jump in arrow direction ONLY, cannot climb back — plan routes carefully!). T = cuttable tree (blocked, need Cut HM+badge). B = boulder (blocked, need Strength HM+badge to push).
 
 MAP EDGES vs DOORS: There are TWO ways to change maps:
 - "Map edges" = walk off the edge of the current map (e.g. walk UP off Pallet Town to reach Route 1). No warp tile needed — just keep walking in that direction.
@@ -79,12 +81,15 @@ To reach a route or city listed under "Map edges", walk toward that edge of the 
 NAVIGATION: Follow [path: ...] suggestions — they route around walls and avoid accidental warps.
 If [no path found], try 1-tile exploratory moves in different directions.
 For long paths (5+ tiles), execute the first 3-4 tiles then re-check spatial context after screen scrolls.
+MOVEMENT: Max 4 tiles (64 frames) per direction token. Chain shorter moves: "R64 U64" not "R128". Always check the grid for walls before choosing a direction.
 If "Player didn't move" — you hit a wall, try different direction.
 If GAME STATE says dialogue/menu but no text/menu is visible, treat it as stale and try movement.
 NAME ENTRY: On "YOUR NAME?" / "RIVAL'S NAME?" keyboard screens when an alphabet is visible, A selects letters (can cause loops). Use START to finalize current name quickly, or choose a preset name menu option then A.
 DOORS: Walk ONTO W tiles (no A press). To exit houses: walk DOWN (D16) onto door-mat W tile.
 On a W tile but didn't warp? Move UP first, then D16 back onto it.
 NPCs/ITEMS: Walk to an adjacent tile and press A while facing them. Follow [path: ...] hints which include the face+interact step. If an NPC blocks your path, go around them.
+PICKUP ITEMS: Always pick up ground items (i tiles) — they contain TMs, Poke Balls, potions, and other useful rewards. Follow the [path:] hint to walk onto the item tile. Prioritize nearby items before continuing your route.
+ITEMS ON TABLES: Pokeballs, items on tables/desks are NOT shown on the grid (they're background tiles, not sprites). Walk next to the table and press A while facing it to interact. In Oak's Lab, the 3 starter Pokeballs are on a table — walk to an adjacent tile and press A. After choosing your starter, do NOT go back for the remaining Pokeballs on Oak's table.
 </spatial_context>
 """
 

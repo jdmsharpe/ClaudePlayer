@@ -136,9 +136,11 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (0x077, 0x0C): "Continue NORTH to Viridian City.",
     (0x077, 0x01): "Head NORTH toward Route 2 and Viridian Forest.",
     (0x077, 0x0D): "Enter the gatehouse to reach Viridian Forest.",
-    (0x077, 0x2F): "Navigate NORTH through the forest to the exit.",
+    (0x077, 0x32): "Walk NORTH through the gate to enter Viridian Forest.",
+    (0x077, 0x33): "Navigate NORTH through the forest to the exit.",
+    (0x077, 0x2F): "Exit NORTH to reach Route 2 near Pewter City.",
     (0x077, 0x02): "Enter Pewter Gym and defeat Brock.",
-    (0x077, 0x3C): "Battle the trainers and defeat Brock at the back of the gym.",
+    (0x077, 0x36): "Battle the trainers and defeat Brock at the back of the gym.",
 }
 
 

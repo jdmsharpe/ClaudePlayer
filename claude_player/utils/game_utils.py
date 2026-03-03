@@ -74,7 +74,11 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                 except ValueError:
                     logging.warning(f"Invalid button input: {button_input}, using duration of 1")
                     duration = 1
-            
+
+            # Cap directional inputs to 4 tiles to force re-evaluation
+            if button in ('U', 'D', 'L', 'R') and duration > 64:
+                duration = 64
+
             # Verify the button is valid
             if button not in button_map:
                 logging.warning(f"Unknown button: {button}, skipping")

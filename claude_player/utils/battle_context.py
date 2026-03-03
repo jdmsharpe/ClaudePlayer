@@ -29,6 +29,10 @@ _ADDR_PLAYER_STATUS  = 0xD018
 _ADDR_PLAYER_MOVES   = 0xD01C  # 4 bytes (move IDs)
 _ADDR_PLAYER_LEVEL   = 0xD022
 _ADDR_PLAYER_MAX_HP  = 0xD023  # 2 bytes, big-endian
+_ADDR_PLAYER_ATK     = 0xD025  # 2 bytes, big-endian (in-battle stat)
+_ADDR_PLAYER_DEF     = 0xD027
+_ADDR_PLAYER_SPD     = 0xD029
+_ADDR_PLAYER_SPC     = 0xD02B
 _ADDR_PLAYER_PP      = 0xD02D  # 4 bytes (PP per move slot)
 
 # Enemy's active Pokemon (wEnemyMon)
@@ -38,12 +42,32 @@ _ADDR_ENEMY_STATUS   = 0xCFE9
 _ADDR_ENEMY_MOVES    = 0xCFED  # 4 bytes
 _ADDR_ENEMY_LEVEL    = 0xCFF3
 _ADDR_ENEMY_MAX_HP   = 0xCFF4  # 2 bytes, big-endian
+_ADDR_ENEMY_ATK      = 0xCFF6
+_ADDR_ENEMY_DEF      = 0xCFF8
+_ADDR_ENEMY_SPD      = 0xCFFA
+_ADDR_ENEMY_SPC      = 0xCFFC
 _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
 # Menu cursor
 _ADDR_MENU_ITEM      = 0xCC26  # wCurrentMenuItem (0-based)
 _ADDR_MENU_TOP_Y     = 0xCC24  # wTopMenuItemY (screen tile row)
 _ADDR_MENU_TOP_X     = 0xCC25  # wTopMenuItemX (screen tile col)
+
+# Bag / party — lightweight reads for catch suggestions
+_ADDR_NUM_BAG_ITEMS  = 0xD31D  # wNumBagItems
+_ADDR_BAG_ITEMS      = 0xD31E  # wBagItems (item_id, qty pairs)
+_BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
+_ADDR_PARTY_COUNT    = 0xD163  # wPartyCount
+
+# Main battle menu nav: column-major layout
+#   FIGHT(0)  PKMN(2)
+#   ITEM(1)   RUN(3)
+_NAV_TO_ITEM: Dict[int, str] = {
+    0: "D",      # FIGHT → ITEM
+    1: "",       # already on ITEM
+    2: "L D",    # PKMN → ITEM
+    3: "L",      # RUN → ITEM
+}
 
 # ---------------------------------------------------------------------------
 # Gen 1 internal Pokemon ID → display name
@@ -279,6 +303,15 @@ _MOVE_DATA: Dict[int, Tuple[str, str, int, int]] = {
 }
 
 
+# HM move IDs → display label (shared with party_context via import)
+_HM_MOVE_IDS: Dict[int, str] = {
+    0x0F: "HM01 Cut",
+    0x13: "HM02 Fly",
+    0x39: "HM03 Surf",
+    0x46: "HM04 Strength",
+    0x94: "HM05 Flash",
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -314,6 +347,10 @@ def _read_pokemon(
     level_addr: int,
     max_hp_addr: int,
     pp_addr: int,
+    atk_addr: int = 0,
+    def_addr: int = 0,
+    spd_addr: int = 0,
+    spc_addr: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """Read a battle Pokemon's data from RAM."""
     species_id = pyboy.memory[species_addr]
@@ -326,7 +363,18 @@ def _read_pokemon(
     level = pyboy.memory[level_addr]
     status = _decode_status(pyboy.memory[status_addr])
 
+    # Stats (in-battle values, already modified by stat stages)
+    stats = {}
+    if atk_addr:
+        stats = {
+            "atk": _read_word(pyboy, atk_addr),
+            "def": _read_word(pyboy, def_addr),
+            "spd": _read_word(pyboy, spd_addr),
+            "spc": _read_word(pyboy, spc_addr),
+        }
+
     moves: List[Dict[str, Any]] = []
+    hm_moves: List[str] = []
     for i in range(4):
         move_id = pyboy.memory[moves_addr + i]
         if move_id == 0:
@@ -335,6 +383,9 @@ def _read_pokemon(
         move_name, move_type, move_power, base_pp = _MOVE_DATA.get(
             move_id, (f"Move#{move_id}", "???", 0, 0)
         )
+        is_hm = move_id in _HM_MOVE_IDS
+        if is_hm:
+            hm_moves.append(_HM_MOVE_IDS[move_id])
         moves.append({
             "name": move_name,
             "type": move_type,
@@ -342,6 +393,7 @@ def _read_pokemon(
             "pp": pp,
             "base_pp": base_pp,
             "slot": i,
+            "is_hm": is_hm,
         })
 
     return {
@@ -351,7 +403,9 @@ def _read_pokemon(
         "max_hp": max_hp,
         "level": level,
         "status": status,
+        "stats": stats,
         "moves": moves,
+        "hm_moves": hm_moves,
     }
 
 
@@ -401,6 +455,22 @@ def _calc_move_nav(current: int, target: int) -> str:
     return f"press {nav} then A" if nav else "press A"
 
 
+def _count_pokeballs(pyboy: PyBoy) -> int:
+    """Count total Poke Balls in bag (all ball types)."""
+    count = pyboy.memory[_ADDR_NUM_BAG_ITEMS]
+    if count == 0 or count > 20:
+        return 0
+    total = 0
+    for i in range(count):
+        addr = _ADDR_BAG_ITEMS + (i * 2)
+        item_id = pyboy.memory[addr]
+        if item_id == 0xFF:
+            break
+        if item_id in _BALL_IDS:
+            total += pyboy.memory[addr + 1]
+    return total
+
+
 # ---------------------------------------------------------------------------
 # Battle tip
 # ---------------------------------------------------------------------------
@@ -410,8 +480,51 @@ def _generate_battle_tip(
     enemy: Dict[str, Any],
     menu_type: str,
     cursor: int,
+    battle_type: int = 0,
+    pokeball_count: int = 0,
+    party_count: int = 6,
 ) -> Optional[str]:
-    """Generate a short tactical recommendation."""
+    """Generate a short tactical recommendation.
+
+    Key design: when on the main menu, produce a COMPOUND input string
+    that selects FIGHT and the best move in ONE send_inputs call so the
+    agent doesn't waste a full turn navigating each sub-menu separately.
+    """
+    # Enemy already fainted — spam A to clear EXP/level-up/move-learned text
+    if enemy["hp"] == 0:
+        return "Enemy fainted! Advance text — send: A A A A A"
+
+    # Player fainted — spam A to clear faint text, then switch/heal
+    if player["hp"] == 0:
+        return "Your Pokemon fainted! Advance text — send: A A A A A"
+
+    # Catch suggestion: wild battle + have balls + favorable conditions
+    if battle_type == 1 and pokeball_count > 0 and enemy["max_hp"] > 0:
+        enemy_hp_pct = 100 * enemy["hp"] // enemy["max_hp"]
+        should_catch = False
+        reason = ""
+        if party_count < 6 and enemy_hp_pct <= 40:
+            should_catch = True
+            reason = f"party {party_count}/6"
+        elif enemy_hp_pct <= 20:
+            should_catch = True
+            reason = "HP very low"
+
+        if should_catch:
+            if menu_type == "main":
+                nav = _NAV_TO_ITEM.get(cursor, "D")
+                parts = []
+                if nav:
+                    parts.extend(nav.split())
+                parts.append("A")  # open bag
+                parts.append("A")  # select first ball
+                compound = " ".join(parts)
+                return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
+                        f"— send: {compound}")
+            elif menu_type == "fight":
+                return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
+                        f"— press B to return to main menu, then select ITEM")
+
     # Find the strongest usable damage move
     damage_moves = [
         (m, m["slot"]) for m in player["moves"]
@@ -424,18 +537,37 @@ def _generate_battle_tip(
             if m["power"] > 0 and m["pp"] > 0
         ]
 
-    if menu_type == "main":
-        # On the main battle menu — need to select FIGHT first
-        if cursor == 0:
-            return "Press A to select FIGHT, then pick your strongest move."
-        else:
-            nav = []
+    if menu_type == "main" and damage_moves:
+        best_move, best_slot = max(damage_moves, key=lambda x: x[0]["power"])
+        # Build compound input: navigate to FIGHT, then navigate to move, then confirm
+        parts = []
+
+        # Step 1: navigate to FIGHT (slot 0 on main menu)
+        if cursor != 0:
             cur_r, cur_c = divmod(cursor, 2)
             if cur_r > 0:
-                nav.append("U")
+                parts.append("U")
             if cur_c > 0:
-                nav.append("L")
-            return f"Navigate to FIGHT ({' '.join(nav)} then A), then pick a move."
+                parts.append("L")
+        parts.append("A")  # select FIGHT
+
+        # Step 2: navigate to best move in fight sub-menu
+        # After entering fight menu, cursor defaults to slot 1 (second move)
+        # in Gen 1 Red — so assume cursor=1 unless only 1 move exists
+        fight_cursor = 0 if len(player["moves"]) <= 1 else 1
+        if fight_cursor != best_slot:
+            nav = _calc_move_nav(fight_cursor, best_slot)
+            # _calc_move_nav returns "press X then A" — extract just the nav part
+            nav_buttons = nav.replace("press ", "").replace(" then A", "")
+            if nav_buttons:
+                parts.append(nav_buttons)
+        parts.append("A")  # select move
+
+        compound = " ".join(parts)
+        return f"Use {best_move['name']} ({best_move['power']}pwr) — send: {compound}"
+
+    if menu_type == "main" and not damage_moves:
+        return "No usable damage moves! Consider switching (PKMN) or using an item."
 
     if menu_type == "fight" and damage_moves:
         best_move, best_slot = max(damage_moves, key=lambda x: x[0]["power"])
@@ -462,6 +594,8 @@ def _format_battle_text(
     enemy: Dict[str, Any],
     menu_type: str,
     cursor: int,
+    pokeball_count: int = 0,
+    party_count: int = 6,
 ) -> str:
     """Assemble the battle context text block."""
     kind = "Wild" if battle_type == 1 else "Trainer"
@@ -474,17 +608,28 @@ def _format_battle_text(
     )
 
     # Player Pokemon
+    status_str = f" {player['status']}" if player["status"] != "OK" else ""
     lines.append(
         f"YOUR: {player['name']} Lv{player['level']} "
-        f"HP:{player['hp']}/{player['max_hp']} [{player['status']}]"
+        f"HP:{player['hp']}/{player['max_hp']}{status_str}"
     )
 
-    # Moves
+    # Stats
+    ps = player.get("stats", {})
+    if ps:
+        lines.append(f"  Stats: Atk:{ps['atk']} Def:{ps['def']} Spd:{ps['spd']} Spc:{ps['spc']}")
+
+    # Moves (mark HMs)
     move_parts = []
     for m in player["moves"]:
         pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
-        move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}pp)")
+        hm_tag = " [HM]" if m.get("is_hm") else ""
+        move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}pp){hm_tag}")
     lines.append(f"  Moves: {' | '.join(move_parts)}")
+
+    # HM summary
+    if player.get("hm_moves"):
+        lines.append(f"  HMs: {', '.join(player['hm_moves'])}")
 
     # Cursor
     if menu_type == "main":
@@ -499,13 +644,20 @@ def _format_battle_text(
         lines.append(f"  → Menu cursor: {cursor} (animation/text — press A)")
 
     # Enemy Pokemon
+    enemy_status = f" {enemy['status']}" if enemy["status"] != "OK" else ""
     lines.append(
         f"ENEMY: {enemy['name']} Lv{enemy['level']} "
-        f"HP:{enemy['hp']}/{enemy['max_hp']} [{enemy['status']}]"
+        f"HP:{enemy['hp']}/{enemy['max_hp']}{enemy_status}"
     )
+    es = enemy.get("stats", {})
+    if es:
+        lines.append(f"  Stats: Atk:{es['atk']} Def:{es['def']} Spd:{es['spd']} Spc:{es['spc']}")
 
     # Tip
-    tip = _generate_battle_tip(player, enemy, menu_type, cursor)
+    tip = _generate_battle_tip(player, enemy, menu_type, cursor,
+                                battle_type=battle_type,
+                                pokeball_count=pokeball_count,
+                                party_count=party_count)
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -534,12 +686,14 @@ def extract_battle_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             _ADDR_PLAYER_SPECIES, _ADDR_PLAYER_HP, _ADDR_PLAYER_STATUS,
             _ADDR_PLAYER_MOVES, _ADDR_PLAYER_LEVEL, _ADDR_PLAYER_MAX_HP,
             _ADDR_PLAYER_PP,
+            _ADDR_PLAYER_ATK, _ADDR_PLAYER_DEF, _ADDR_PLAYER_SPD, _ADDR_PLAYER_SPC,
         )
         enemy = _read_pokemon(
             pyboy,
             _ADDR_ENEMY_SPECIES, _ADDR_ENEMY_HP, _ADDR_ENEMY_STATUS,
             _ADDR_ENEMY_MOVES, _ADDR_ENEMY_LEVEL, _ADDR_ENEMY_MAX_HP,
             _ADDR_ENEMY_PP,
+            _ADDR_ENEMY_ATK, _ADDR_ENEMY_DEF, _ADDR_ENEMY_SPD, _ADDR_ENEMY_SPC,
         )
 
         if not player or not enemy:
@@ -549,7 +703,12 @@ def extract_battle_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         menu_type = _detect_battle_submenu(pyboy)
         cursor = pyboy.memory[_ADDR_MENU_ITEM]
 
-        text = _format_battle_text(battle_type, player, enemy, menu_type, cursor)
+        pokeball_count = _count_pokeballs(pyboy)
+        party_count = min(pyboy.memory[_ADDR_PARTY_COUNT], 6)
+
+        text = _format_battle_text(battle_type, player, enemy, menu_type, cursor,
+                                   pokeball_count=pokeball_count,
+                                   party_count=party_count)
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "

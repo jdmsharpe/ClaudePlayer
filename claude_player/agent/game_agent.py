@@ -68,6 +68,14 @@ class GameAgent:
             else:
                 with open(self.config.STATE_PATH, "rb") as file:
                     self.pyboy.load_state(file)
+                logging.info(f"Loaded explicit save state: {self.config.STATE_PATH}")
+        else:
+            # Fall back to autosave if it exists
+            autosave = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves", "autosave.state")
+            if os.path.exists(autosave):
+                with open(autosave, "rb") as file:
+                    self.pyboy.load_state(file)
+                logging.info(f"Loaded autosave: {autosave}")
         
         # Store previous tilemap and player position for spatial context
         self._previous_visible_tilemap = None
@@ -95,6 +103,12 @@ class GameAgent:
         self._last_bag_snapshot = None       # (item_id, qty) tuples for change detection
         self._last_bag_inject_turn = 0
         self._bag_refresh_interval = 15     # Less frequent than party (bag changes rarely)
+
+        # Periodic emulator state saving
+        self._last_save_turn = 0
+        self._save_interval = 100  # Save every N turns
+        self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
+        self._save_path = os.path.join(self._save_dir, "autosave.state")
         
         # Initialize game state
         self.game_state = GameState()
@@ -202,6 +216,9 @@ class GameAgent:
         Returns a dict with screenshot and optional spatial context data,
         ready to be passed to prepare_turn_state on the AI thread.
         """
+        # Periodic autosave (main thread only, skips during battles)
+        self._maybe_save_state()
+
         screenshot = take_screenshot(self.pyboy, True)
         spatial_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT:
@@ -667,6 +684,46 @@ class GameAgent:
             
         return pending_actions
 
+    def _maybe_save_state(self):
+        """Save emulator state periodically (every _save_interval turns).
+
+        Called from the main thread during capture_pyboy_state.
+        Keeps a single autosave file that gets overwritten.
+        """
+        turn = self.game_state.turn_count
+        if turn <= 0 or turn - self._last_save_turn < self._save_interval:
+            return
+
+        # Don't save during battles (RAM state can be weird mid-battle)
+        try:
+            in_battle = self.pyboy.memory[0xD057]
+            if in_battle != 0:
+                return
+        except Exception:
+            return
+
+        try:
+            os.makedirs(self._save_dir, exist_ok=True)
+            with open(self._save_path, "wb") as f:
+                self.pyboy.save_state(f)
+            self._last_save_turn = turn
+            logging.info(f"Autosaved emulator state at turn {turn} → {self._save_path}")
+            self.display.print_event(f"Autosaved at turn {turn}")
+        except Exception as e:
+            logging.warning(f"Failed to autosave: {e}")
+
+    def _save_state_now(self, reason: str = "manual"):
+        """Unconditionally save emulator state (used on shutdown)."""
+        try:
+            os.makedirs(self._save_dir, exist_ok=True)
+            with open(self._save_path, "wb") as f:
+                self.pyboy.save_state(f)
+            turn = self.game_state.turn_count
+            logging.info(f"Saved state on {reason} at turn {turn} → {self._save_path}")
+            self.display.print_event(f"Saved on {reason} (turn {turn})")
+        except Exception as e:
+            logging.warning(f"Failed to save state on {reason}: {e}")
+
     def run_continuous(self):
         """Run the game agent in continuous mode where the emulator runs at 1x speed continuously."""
         logging.info("Starting continuous emulation mode")
@@ -938,7 +995,10 @@ class GameAgent:
         except KeyboardInterrupt:
             logging.info("Received keyboard interrupt, stopping emulation")
             self.display.print_event("Stopping emulation...")
-        
+
+        # Save state on exit so no progress is lost
+        self._save_state_now("shutdown")
+
         # Clean up
         if ai_thread and ai_thread.is_alive():
             # Wait for AI thread to complete (with timeout)

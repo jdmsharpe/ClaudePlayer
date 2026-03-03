@@ -50,24 +50,25 @@ _ADDR_WALK_COUNTER   = 0xCFC5   # wWalkCounter – non-zero = mid-step animation
 _ADDR_JOY_IGNORE     = 0xCC6B   # wJoyIgnore – button ignore bitmask (retained for reference; stale like wTextBoxID)
 _ADDR_STATUS_FLAGS5  = 0xD730   # bit5=joypad disabled, bit7=scripted movement
 _ADDR_WINDOW_Y       = 0xFF4A   # WY register – Window layer Y position (144 = off-screen)
+_ADDR_SIM_JOYPAD_IDX = 0xCD38   # wSimulatedJoypadStatesIndex – non-zero = game running scripted input
 
-# Sprite picture ID → readable name (from pokered sprite_constants.asm)
+# Sprite picture ID → readable name (from pret/pokered sprite_constants.asm)
 _SPRITE_NAMES = {
     0x01: "Player",
     0x02: "Rival",
     0x03: "Prof. Oak",
-    0x04: "Bug Catcher",
-    0x05: "Slowbro",
-    0x06: "Lass",
-    0x07: "Boy",
+    0x04: "Youngster",
+    0x05: "Monster",           # decoration (Slowbro, Nidorino)
+    0x06: "Cooltrainer",
+    0x07: "Cooltrainer",
     0x08: "Little Girl",
-    0x09: "Bird",
-    0x0A: "Old Man",
+    0x09: "Bird",              # decoration
+    0x0A: "Man",
     0x0B: "Gambler",
-    0x0C: "Boy",
+    0x0C: "Nerd",
     0x0D: "Girl",
     0x0E: "Hiker",
-    0x0F: "Woman",
+    0x0F: "Beauty",
     0x10: "Gentleman",
     0x11: "Daisy",
     0x12: "Biker",
@@ -79,28 +80,52 @@ _SPRITE_NAMES = {
     0x18: "Rocket",
     0x19: "Channeler",
     0x1A: "Waiter",
-    0x1B: "Erika",
-    0x1C: "Mom",
-    0x1D: "Balding Man",
-    0x1E: "Young Boy",
-    0x1F: "Gameboy Kid",
-    0x20: "Clefairy",
-    0x21: "Agatha",
-    0x22: "Bruno",
-    0x23: "Lorelei",
-    0x24: "Seel",
-    0x25: "Swimmer",
-    0x26: "Item Ball",
-    0x27: "Omanyte",
-    0x28: "Boulder",
-    0x29: "Sign",
-    0x2A: "Book",
-    0x2B: "Clipboard",
-    0x2C: "Snorlax",
-    0x2D: "Old Amber",
-    0x2E: "Fossil",
+    0x1B: "Worker",            # Silph Co. female worker
+    0x1C: "Woman",
+    0x1D: "Brunette Girl",
+    0x1E: "Lance",
+    0x1F: "Scientist",
+    0x20: "Scientist",
+    0x21: "Rocker",
+    0x22: "Swimmer",
+    0x23: "Safari Worker",
+    0x24: "Gym Guide",
+    0x25: "Gramps",
+    0x26: "Clerk",
+    0x27: "Fishing Guru",
+    0x28: "Granny",
+    0x29: "Nurse",
+    0x2A: "Receptionist",
+    0x2B: "Silph President",
+    0x2C: "Worker",            # Silph Co. male worker
+    0x2D: "Warden",
+    0x2E: "Captain",
+    0x2F: "Fisher",
+    0x30: "Koga",
+    0x31: "Guard",
+    0x33: "Mom",
+    0x34: "Balding Guy",
+    0x35: "Little Boy",
+    0x37: "Gameboy Kid",
+    0x38: "Fairy",             # decoration (Clefairy)
+    0x39: "Agatha",
+    0x3A: "Bruno",
+    0x3B: "Lorelei",
+    0x3C: "Seel",              # decoration
+    0x3D: "Poke Ball",
+    0x3E: "Fossil",
+    0x3F: "Boulder",
+    0x40: "Sign",
+    0x41: "Pokedex",
+    0x42: "Clipboard",
+    0x43: "Snorlax",
+    0x45: "Old Amber",
 }
-_ITEM_SPRITE_ID = 0x26
+_ITEM_SPRITE_ID = 0x3D  # SPRITE_POKE_BALL
+
+# Non-person interactable objects (bookshelves, fossils, boulders, etc.)
+# Listed separately from NPCs in the spatial context output.
+_OBJECT_SPRITE_IDS = {0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x45}
 
 # Common early-game map names for readability
 _MAP_NAMES = {
@@ -343,14 +368,42 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
 
         # Calibrate offset: sprite-state coords include a map-border offset
         # that wYCoord/wXCoord don't.  Derive it from sprite 0 (player).
-        offset_y = pyboy.memory[_ADDR_SPRITE_STATE2 + 0x04] - player_y
-        offset_x = pyboy.memory[_ADDR_SPRITE_STATE2 + 0x05] - player_x
+        # C2x4/C2x5 use 2x2 tile grid with base value 4 (Data Crystal RAM map).
+        # During scripted events, sprite 0 may be (0,0) — fall back to the
+        # standard border offset of 4.
+        player_sprite_y = pyboy.memory[_ADDR_SPRITE_STATE2 + 0x04]
+        player_sprite_x = pyboy.memory[_ADDR_SPRITE_STATE2 + 0x05]
+        if player_sprite_y == 0 and player_sprite_x == 0:
+            # Sprite state not initialised (scripted event) — use known border offset
+            offset_y = 4
+            offset_x = 4
+            logger.debug(
+                f"NPC offset: sprite0=(0,0) — using default border offset=4, "
+                f"player_map=({player_x},{player_y})"
+            )
+        else:
+            offset_y = player_sprite_y - player_y
+            offset_x = player_sprite_x - player_x
+            logger.debug(
+                f"NPC offset: player_map=({player_x},{player_y}) "
+                f"sprite0=({player_sprite_x},{player_sprite_y}) "
+                f"offset=({offset_x},{offset_y})"
+            )
 
         npcs = []
         for n in range(1, num_sprites + 1):
             pic_id = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10]
             if pic_id == 0:
                 continue  # empty slot
+
+            # Movement status at C1x0+1: 0 = uninitialized (ghost sprite).
+            # Pokemon Red pre-loads all map sprites into RAM, but sprites
+            # that haven't spawned yet (e.g. Oak before Route 1 trigger)
+            # have movement_status == 0.
+            movement_status = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10 + 0x01]
+            if movement_status == 0:
+                logger.debug(f"Sprite {n}: pic=0x{pic_id:02X} skipped (not spawned)")
+                continue
 
             raw_y = pyboy.memory[_ADDR_SPRITE_STATE2 + n * 0x10 + 0x04]
             raw_x = pyboy.memory[_ADDR_SPRITE_STATE2 + n * 0x10 + 0x05]
@@ -372,9 +425,10 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
                 "dx": dx,
                 "pic_id": pic_id,
                 "is_item": pic_id == _ITEM_SPRITE_ID,
+                "is_object": pic_id in _OBJECT_SPRITE_IDS,
             })
 
-        logger.info(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
+        logger.debug(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
         return npcs if npcs else None
     except Exception as e:
         logger.warning(f"NPC data extraction failed: {e}", exc_info=True)
@@ -415,6 +469,17 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
                 "input_hint": "Wait for the event to finish, then press A/B to advance",
             }
 
+        # Simulated joypad: game is replaying a scripted input sequence
+        # (e.g. Oak walking to the table, player being moved by a script).
+        # Player input is ignored while this index is non-zero.
+        sim_joy = pyboy.memory[_ADDR_SIM_JOYPAD_IDX]
+        if sim_joy != 0:
+            return {
+                "state": "scripted_event",
+                "details": "Scripted movement in progress",
+                "input_hint": "Wait — game is running an automatic sequence. Press A to advance when it ends.",
+            }
+
         text_box = pyboy.memory[_ADDR_TEXT_BOX_ID]
         walk = pyboy.memory[_ADDR_WALK_COUNTER]
 
@@ -436,6 +501,21 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
                 "state": "dialogue",
                 "details": "Text/menu visible (Window layer active)",
                 "input_hint": "Press A to advance/select, B to cancel. Arrows to navigate menus.",
+            }
+
+        # Player sprite not initialised — likely a map script is controlling
+        # the player (e.g. Oak's Lab intro).  Sprite0 at C204/C205 should have
+        # the border offset (≥4); (0,0) means the entry hasn't been written.
+        # BUT: also check picture ID at C100 — if non-zero the sprite IS loaded
+        # (state2 coords lag behind during map transitions).
+        sprite0_y = pyboy.memory[_ADDR_SPRITE_STATE2 + 0x04]
+        sprite0_x = pyboy.memory[_ADDR_SPRITE_STATE2 + 0x05]
+        sprite0_pic = pyboy.memory[_ADDR_SPRITE_STATE1]
+        if sprite0_y == 0 and sprite0_x == 0 and sprite0_pic == 0:
+            return {
+                "state": "scripted_event",
+                "details": "Player sprite not initialised (script may be running)",
+                "input_hint": "Press A to try advancing, otherwise wait for the script to finish.",
             }
 
         if walk != 0:
@@ -539,22 +619,24 @@ def _format_warp_text(
                         if buttons:
                             hint = f"  [path: {buttons}]"
                         else:
-                            # ON THIS TILE — need to re-trigger
-                            hint = "  [on this tile — walk D16 to re-trigger exit]"
+                            # ON THIS TILE — need to trigger
+                            hint = "  [on this tile — walk D16 to trigger exit]"
                     else:
                         hint = "  [no path found]"
                 else:
-                    # Warp is off the visible grid — give straight-line estimate
-                    cmds = []
-                    if dy < 0:
-                        cmds.append(f"U{abs(dy) * 16}")
-                    elif dy > 0:
-                        cmds.append(f"D{dy * 16}")
-                    if dx < 0:
-                        cmds.append(f"L{abs(dx) * 16}")
-                    elif dx > 0:
-                        cmds.append(f"R{dx * 16}")
-                    hint = f"  [not on screen, est. {' '.join(cmds)}]" if cmds else ""
+                    # Warp is off the visible grid — use A* to the nearest edge
+                    # in the warp's direction, avoiding walls.
+                    edge_dir = None
+                    if abs(dy) >= abs(dx):
+                        edge_dir = "NORTH" if dy < 0 else "SOUTH"
+                    else:
+                        edge_dir = "WEST" if dx < 0 else "EAST"
+                    edge_path = find_path_to_edge(grid, player_pos, edge_dir) if edge_dir else None
+                    if edge_path:
+                        buttons = path_to_buttons(edge_path)
+                        hint = f"  [path: {buttons} (warp is off screen, continue {edge_dir})]" if buttons else f"  [off screen — head {edge_dir}]"
+                    else:
+                        hint = f"  [off screen — head {edge_dir}]" if edge_dir else ""
             else:
                 # Fallback: straight-line when no collision grid available
                 cmds = []
@@ -569,7 +651,7 @@ def _format_warp_text(
                 if cmds:
                     hint = f"  [straight-line: {' '.join(cmds)}]"
                 else:
-                    hint = "  [on this tile — walk D16 to re-trigger exit]"
+                    hint = "  [on this tile — walk D16 to trigger exit]"
 
             lines.append(
                 f"  W{i}: {direction} -> {w['dest_name']}{hint}"
@@ -586,7 +668,7 @@ def _overlay_npcs_on_grid(
 ) -> None:
     """Overlay NPC/item markers on the grid.
 
-    Digits 1-9 for NPCs, 'i' for item balls.
+    Digits 1-9 for NPCs, 'i' for item balls, 'o' for objects.
     scale: grid cells per map tile (1 for metatile grid, 2 for screen-tile grid).
     """
     if not npc_data or not player_screen:
@@ -603,6 +685,8 @@ def _overlay_npcs_on_grid(
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
             if npc["is_item"]:
                 grid[gy][gx] = "i"
+            elif npc.get("is_object"):
+                grid[gy][gx] = "o"
             else:
                 npc_num += 1
                 grid[gy][gx] = str(npc_num) if npc_num <= 9 else "n"
@@ -621,12 +705,13 @@ def _format_npc_text(
 
     can_pathfind = grid is not None and player_pos is not None
 
-    npcs = [n for n in npc_data if not n["is_item"]]
+    npcs = [n for n in npc_data if not n["is_item"] and not n.get("is_object")]
+    objects = [n for n in npc_data if n.get("is_object")]
     items = [n for n in npc_data if n["is_item"]]
     lines = []
 
     # Direction → face command (sub-16-frame press = turn without moving)
-    _face_cmd = {(0, -1): "U1", (0, 1): "D1", (-1, 0): "L1", (1, 0): "R1"}
+    _face_cmd = {(0, -1): "U2", (0, 1): "D2", (-1, 0): "L2", (1, 0): "R2"}
 
     def _dir_line(marker, entity):
         dy, dx = entity["dy"], entity["dx"]
@@ -650,15 +735,15 @@ def _format_npc_text(
 
             if 0 <= tx < grid_w and 0 <= ty < grid_h:
                 if entity["is_item"]:
-                    # Items: path directly TO the item tile (step on it)
+                    # Items: try path directly TO the tile (overworld pickups).
+                    # If blocked (item on table), fall through to adjacent+face.
                     item_path = find_path(grid, player_pos, (tx, ty))
                     if item_path:
                         buttons = path_to_buttons(item_path)
                         hint = f"  [path: {buttons}]" if buttons else "  [already here]"
-                    else:
-                        hint = "  [no path found]"
-                else:
-                    # NPCs: path to best adjacent tile, then face + interact
+                if not entity["is_item"] or (entity["is_item"] and not hint):
+                    # NPCs/objects: path to best adjacent tile, then face + interact.
+                    # Also used as fallback for items on blocked tiles (tables).
                     adjacent = [(tx, ty - 1), (tx, ty + 1), (tx - 1, ty), (tx + 1, ty)]
                     best_path = None
                     best_adj = None
@@ -682,9 +767,9 @@ def _format_npc_text(
                         face_dy = ty - best_adj[1]
                         face = _face_cmd.get((face_dx, face_dy), "")
                         if face:
-                            buttons = f"{buttons} {face} A1".strip()
+                            buttons = f"{buttons} {face} A".strip()
                         else:
-                            buttons = f"{buttons} A1".strip()
+                            buttons = f"{buttons} A".strip()
                         hint = f"  [path: {buttons}]" if buttons else "  [already here]"
                     else:
                         hint = "  [no path found]"
@@ -726,6 +811,11 @@ def _format_npc_text(
         lines.append("Items:")
         for item in items:
             lines.append(_dir_line("i", item))
+
+    if objects:
+        lines.append("Objects:")
+        for obj in objects:
+            lines.append(_dir_line("o", obj))
 
     return "\n".join(lines)
 
@@ -808,6 +898,13 @@ def _format_spatial_text(
     if story_progress and story_progress.get("progress_summary"):
         lines.append(f"PROGRESS: {story_progress['progress_summary']}")
 
+    # Context-aware hint for current milestone + map
+    if story_progress and story_progress.get("next") and warp_data:
+        from claude_player.utils.event_flags import get_map_hint
+        hint = get_map_hint(story_progress["next"][0], warp_data["map_number"])
+        if hint:
+            lines.append(f"HINT: {hint}")
+
     # Player grid position (viewport-relative, matches the grid below)
     if player_screen_pos:
         lines.append(f"Player @ is at grid column {player_screen_pos[0]}, row {player_screen_pos[1]}")
@@ -823,7 +920,7 @@ def _format_spatial_text(
 
     # Brief legend
     if has_collision:
-        lines.append(". = walkable  # = blocked  W = exit  @ = player  1-9 = NPC  i = item  (1 cell = 16 frames)")
+        lines.append(". = walkable  # = blocked  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
 
     # NPC/item text with A* paths
     npc_text = _format_npc_text(npc_data, grid if has_collision else None, player_screen_pos)
@@ -892,21 +989,21 @@ def extract_spatial_context(
             logger.debug(f"Story progress unavailable: {e}")
             story_progress = None
 
-        # Filter out hidden/event sprites whose positions are outside the map.
+        # Filter out hidden/event sprites with stale positions far from player.
         # Pokemon Red loads ALL map sprites (including event-hidden ones like
-        # Oak waiting on Route 1) — their MapY/MapX values are stale/invalid.
-        if npc_data and warp_data:
-            map_h = warp_data["map_height"]
-            map_w = warp_data["map_width"]
+        # Oak waiting on Route 1) — their MapY/MapX values can be stale.
+        # Use the visible screen grid (10x9) as the bound, not map dimensions,
+        # because small maps (5x6) were incorrectly filtering valid nearby NPCs.
+        if npc_data:
             before = len(npc_data)
             npc_data = [
                 npc for npc in npc_data
-                if abs(npc["dy"]) <= map_h and abs(npc["dx"]) <= map_w
+                if abs(npc["dy"]) <= 10 and abs(npc["dx"]) <= 10
             ]
             if len(npc_data) < before:
-                logger.info(
-                    f"Filtered {before - len(npc_data)} out-of-bounds sprites "
-                    f"(map {map_w}x{map_h}, kept {len(npc_data)})"
+                logger.debug(
+                    f"Filtered {before - len(npc_data)} far-away sprites "
+                    f"(kept {len(npc_data)})"
                 )
             npc_data = npc_data or None
 

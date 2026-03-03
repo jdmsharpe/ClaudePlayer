@@ -254,19 +254,34 @@ class GameAgent:
         logging.info(f"======= NEW TURN: {current_time_str} =======")
         self.game_state.log_state()
 
+        # Extract grid for terminal display from spatial context
+        spatial_grid = ""
+        spatial_data = captured_state.get("spatial_data")
+        if spatial_data and spatial_data["text"]:
+            grid_lines = []
+            for line in spatial_data["text"].split("\n"):
+                stripped = line.lstrip()
+                # Column header (digits row) or grid row (starts with digit)
+                if stripped and (stripped[0].isdigit() or stripped.startswith(".")):
+                    grid_lines.append(line)
+                elif line.startswith("GAME STATE:") or line.startswith("PROGRESS:"):
+                    grid_lines.append(line)
+            spatial_grid = "\n".join(grid_lines)
+
         # Update terminal display
         self.display.update(
             turn=self.game_state.turn_count,
             status="Analyzing...",
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
             goal=self.game_state.current_goal or "",
+            spatial_grid=spatial_grid,
         )
 
         # Build user content from pre-captured data
         screenshot = captured_state["screenshot"]
         user_content = [screenshot]
-        if captured_state.get("spatial_data") and captured_state["spatial_data"]["text"]:
-            user_content.append({"type": "text", "text": captured_state["spatial_data"]["text"]})
+        if spatial_data and spatial_data["text"]:
+            user_content.append({"type": "text", "text": spatial_data["text"]})
 
         # Stuck detection: escalating intervention when player hasn't moved
         if self._stuck_count >= 2:
@@ -295,16 +310,17 @@ class GameAgent:
                     "type": "text",
                     "text": (
                         f"STALLED {self._stuck_count} turns. Recent actions:\n{history_text}\n"
-                        "Try: untried direction (1 tile = 16 frames), A1 for dialogue, or B1 to cancel menu."
+                        "Try: untried direction (1 tile = 16 frames), A for dialogue, or B to cancel menu."
                     )
                 })
                 logging.warning(f"STUCK DETECTION: Player at same position for {self._stuck_count} turns")
 
-        # Add timing information and cartridge title
-        cartridge_title = captured_state.get("cartridge_title", "")
+        # Add timing header (include cartridge title only until game is identified)
         header = f"Current time: {current_time_str}\nTurn #{self.game_state.turn_count}"
-        if cartridge_title:
-            header += f"\nCartridge: {cartridge_title}"
+        if not self.game_state.identified_game:
+            cartridge_title = captured_state.get("cartridge_title", "")
+            if cartridge_title:
+                header += f"\nCartridge: {cartridge_title}"
         user_content.insert(0, {"type": "text", "text": header})
         
         # Add user message to chat history
@@ -320,6 +336,16 @@ class GameAgent:
             user_message = {"role": "user", "content": content_prefix + user_content}
             self.chat_history.append(user_message)
             self.game_state.add_to_complete_history(user_message)
+
+            # Strip state prefix from older user messages to avoid duplicating
+            # the summary (~750 tokens) in every message in the context window.
+            for msg in self.chat_history[:-1]:
+                if msg["role"] == "user" and isinstance(msg["content"], list) and len(msg["content"]) > 1:
+                    first = msg["content"][0]
+                    if isinstance(first, dict) and first.get("type") == "text":
+                        text = first.get("text", "")
+                        if "=== GAME PROGRESS SUMMARY ===" in text or text.startswith("Memory:"):
+                            msg["content"].pop(0)
             
         # Apply the screenshot limit
         self._limit_screenshots_in_history()

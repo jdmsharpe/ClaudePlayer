@@ -6,12 +6,13 @@ from pyboy.utils import WindowEvent
 
 # Define button rules documentation
 button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), E (SELECT).
-Format: BUTTON + FRAMES. Separate with spaces. Bare letter = 1 frame.
-Examples: A5 = A for 5 frames. U16 = up 1 tile. "D1 D1 A1" = cursor down twice, confirm.
+Format: BUTTON + FRAMES. Separate with spaces. A bare letter (no number) = 4-frame press.
+Examples: A = press A. U16 = up 1 tile. "D D A" = menu cursor down twice, confirm.
 
 MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16.
   U16 = 1 tile up, R32 = 2 tiles right, D48 = 3 tiles down.
 CRITICAL: Counts under 16 (e.g. D10) will NOT complete a tile move. Always use multiples of 16.
+BUTTONS: Use bare A, B, S, E for single presses (4 frames). Avoid A1/B1 — 1-frame presses can be missed.
 """
 
 def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: int = 0):
@@ -30,9 +31,12 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
         return
     
     try:
-        # Parse input string
-        inputs = input_string.strip().split()
-        
+        # Parse input string — normalize bare letters (e.g. "A" → "A4")
+        # Bare letter = 4-frame press (enough for the game to register).
+        # 1-frame presses can be missed; 16 frames wastes time.
+        raw_tokens = input_string.strip().split()
+        inputs = [t + "4" if len(t) == 1 and t.isalpha() else t for t in raw_tokens]
+
         # Define button mappings
         button_map = {
             'A': WindowEvent.PRESS_BUTTON_A,

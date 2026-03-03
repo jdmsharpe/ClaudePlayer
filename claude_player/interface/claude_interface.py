@@ -43,7 +43,7 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
         if self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False):
             spatial_info = """
 <spatial_context>
-Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, W = warp, @ = player, 1-9 = NPC, i = item.
+Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
 1 cell = 1 tile = 16 frames (3 cells right = R48). GAME STATE line is RAM-derived and can be stale after transitions.
 PROGRESS line shows milestones and auto-sets your current_goal.
 
@@ -59,8 +59,7 @@ If GAME STATE says dialogue/menu but no text/menu is visible, treat it as stale 
 NAME ENTRY: On "YOUR NAME?" / "RIVAL'S NAME?" keyboard screens when an alphabet is visible, A selects letters (can cause loops). Use START to finalize current name quickly, or choose a preset name menu option then A.
 DOORS: Walk ONTO W tiles (no A press). To exit houses: walk DOWN (D16) onto door-mat W tile.
 On a W tile but didn't warp? Move UP first, then D16 back onto it.
-ITEMS ON TABLES: Pokeballs, items on tables/desks are NOT shown on the grid (they're background tiles, not sprites). Walk next to the table and press A while facing it to interact. In Oak's Lab, the 3 starter Pokeballs are on a table — walk to an adjacent tile and press A.
-NPCs: Walk to an adjacent tile (shown as 1-9 on grid) and press A while facing them. If an NPC blocks your path, they are a wall — go around them.
+NPCs/ITEMS: Walk to an adjacent tile and press A while facing them. Follow [path: ...] hints which include the face+interact step. If an NPC blocks your path, go around them.
 </spatial_context>
 """
 

@@ -23,6 +23,7 @@ class TerminalDisplay:
         self.last_action = ""
         self.last_response = ""
         self.last_thinking = ""
+        self.spatial_grid = ""
         self.status = "Starting..."
         self.analysis_duration = 0.0
         self.error_count = 0
@@ -123,6 +124,11 @@ class TerminalDisplay:
             if self.last_thinking:
                 lines.append(f"├{sep}┤")
                 lines.extend(wrap_rows("Thinking", self.last_thinking, max_lines=5))
+            if self.spatial_grid:
+                lines.append(f"├{sep}┤")
+                for grid_line in self.spatial_grid.split("\n"):
+                    padded = f" {grid_line} "
+                    lines.append(f"│{padded:<{w}}│")
             lines.append(f"└{sep}┘")
 
             # Clear screen and draw from top

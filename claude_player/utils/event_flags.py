@@ -23,7 +23,7 @@ STORY_PROGRESSION: List[Tuple[int, str, str]] = [
     # Flag numbers parsed from pret/pokered event_constants.asm via const_def/const_skip tracing
     (0x027, "Oak appeared in Pallet",       "Start a new game (press A through intro/naming). Then go downstairs, exit house, walk NORTH into Route 1 tall grass to trigger Oak"),
     (0x022, "Got starter Pokemon",          "Go to Oak's Lab and choose a starter Pokemon"),
-    (0x023, "Battled rival in Oak's Lab",   "Battle your rival in Oak's Lab"),
+    (0x023, "Battled rival in Oak's Lab",   "Walk toward the exit door of Oak's Lab — your rival will stop you and challenge you automatically (do NOT talk to him, just walk south to the door)"),
     (0x025, "Got Pokedex",                  "Deliver Oak's Parcel from Viridian Mart, then get the Pokedex"),
     (0x077, "Beat Brock",                   "Travel through Viridian Forest to Pewter City and defeat Brock"),
     (0x0BF, "Beat Misty",                   "Go through Mt. Moon to Cerulean City and defeat Misty"),
@@ -101,3 +101,40 @@ def check_story_progress(memory_read_func: Callable[[int], int]) -> Dict[str, An
         "next_goal": next_milestone[2] if next_milestone else None,
         "progress_summary": summary,
     }
+
+
+# Context-aware hints: (next_milestone_flag, current_map_id) → action hint.
+# Only shown when the milestone is next AND the player is on the matching map.
+MAP_HINTS: Dict[Tuple[int, int], str] = {
+    # Oak appeared (0x027) — exit house, walk to Route 1 grass
+    (0x027, 0x26): "Go downstairs (walk onto the staircase W tile).",
+    (0x027, 0x25): "Exit through the front door (walk onto the door W tile).",
+    (0x027, 0x00): "Walk NORTH to the map edge to enter Route 1.",
+    (0x027, 0x0C): "Walk into the tall grass. Oak will appear automatically.",
+    # Got starter (0x022) — pick a Pokeball in Oak's Lab
+    (0x022, 0x00): "Enter Oak's Lab (the large building in south Pallet Town).",
+    (0x022, 0x28): "Walk to the table with Pokeballs and press A facing it to choose a starter.",
+    # Battled rival (0x023) — walk to exit, NOT talk to rival
+    (0x023, 0x28): "Walk SOUTH toward the exit door — your rival will stop you automatically. Do NOT talk to him.",
+    # Got Pokedex (0x025) — fetch parcel from Viridian Mart, return to Oak
+    (0x025, 0x28): "Exit the lab and head NORTH through Route 1 to Viridian City Mart.",
+    (0x025, 0x00): "Head NORTH to Route 1, then continue to Viridian City.",
+    (0x025, 0x0C): "Keep heading NORTH to reach Viridian City.",
+    (0x025, 0x01): "Enter the Poke Mart to pick up Oak's Parcel.",
+    (0x025, 0x2A): "Talk to the shopkeeper for Oak's Parcel, then return to Oak's Lab in Pallet Town.",
+    # Beat Brock (0x077) — navigate to Pewter Gym
+    (0x077, 0x00): "Head NORTH through Route 1 toward Viridian City.",
+    (0x077, 0x0C): "Continue NORTH to Viridian City.",
+    (0x077, 0x01): "Head NORTH toward Route 2 and Viridian Forest.",
+    (0x077, 0x0D): "Enter the gatehouse to reach Viridian Forest.",
+    (0x077, 0x2F): "Navigate NORTH through the forest to the exit.",
+    (0x077, 0x02): "Enter Pewter Gym and defeat Brock.",
+    (0x077, 0x3C): "Battle the trainers and defeat Brock at the back of the gym.",
+}
+
+
+def get_map_hint(next_flag: Optional[int], current_map_id: int) -> Optional[str]:
+    """Return a context-aware hint for the current milestone + map, or None."""
+    if next_flag is None:
+        return None
+    return MAP_HINTS.get((next_flag, current_map_id))

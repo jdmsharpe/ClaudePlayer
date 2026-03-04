@@ -16,7 +16,7 @@ FACING: U2/D2/L2/R2 = turn to face that direction without moving (2-frame tap). 
 BUTTONS: Use bare A, B, S, E for single presses (4 frames). Avoid A1/B1 — 1-frame presses can be missed.
 """
 
-def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: int = 0):
+def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: int = 0, stop_event=None, frame_callback=None):
     """
     Parse a button input string and execute the button presses.
 
@@ -26,6 +26,8 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
         settle_frames: Extra frames to tick after all inputs, letting
                        animations (dialog boxes, screen fades) finish
                        before a screenshot is captured.
+        stop_event: Optional threading.Event; if set, abort input execution
+                    immediately (for clean shutdown on Ctrl+C).
     """
     if not input_string.strip():
         logging.warning("Received empty input string")
@@ -61,7 +63,16 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
             'E': WindowEvent.RELEASE_BUTTON_SELECT
         }
         
+        _stopping = lambda: stop_event is not None and stop_event.is_set()
+        _tick = lambda: (pyboy.tick(), frame_callback and frame_callback(pyboy.screen.image))
+        _DIR_BUTTONS = ('U', 'D', 'L', 'R')
+        _MAX_DIR_FRAMES = 256  # total directional frames allowed per turn
+        total_dir_frames = 0
+
         for button_input in inputs:
+            if _stopping():
+                break
+
             # Extract button and duration
             if len(button_input) == 1:
                 # Single character means press for 1 frame
@@ -76,31 +87,44 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                     logging.warning(f"Invalid button input: {button_input}, using duration of 1")
                     duration = 1
 
-            # Cap directional inputs to 4 tiles to force re-evaluation
-            if button in ('U', 'D', 'L', 'R') and duration > 64:
-                duration = 64
+            # Cap directional inputs to 8 tiles to force re-evaluation
+            if button in _DIR_BUTTONS and duration > 128:
+                duration = 128
+
+            # Cap total directional frames per turn to prevent FPS drops and
+            # force re-evaluation after a full screen's worth of movement.
+            if button in _DIR_BUTTONS:
+                remaining = _MAX_DIR_FRAMES - total_dir_frames
+                if remaining <= 0:
+                    logging.warning(f"Turn frame cap ({_MAX_DIR_FRAMES}) reached — skipping: {button_input}")
+                    continue
+                duration = min(duration, remaining)
+                total_dir_frames += duration
 
             # Verify the button is valid
             if button not in button_map:
                 logging.warning(f"Unknown button: {button}, skipping")
                 continue
-            
+
             # Press the button
             pyboy.send_input(button_map[button])
 
             # Hold for the specified duration
             for _ in range(duration):
-                # Tick the emulator for each frame of hold time
-                pyboy.tick()
+                if _stopping():
+                    break
+                _tick()
 
             # Release the button and tick once so the game sees
             # the released state before any subsequent press
             pyboy.send_input(release_map[button])
-            pyboy.tick()
-            
+            _tick()
+
         # Tick extra frames so animations settle before the next screenshot
         for _ in range(settle_frames):
-            pyboy.tick()
+            if _stopping():
+                break
+            _tick()
 
     except Exception as e:
         logging.error(f"Error executing button inputs: {str(e)}")

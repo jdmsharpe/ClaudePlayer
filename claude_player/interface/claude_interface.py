@@ -26,11 +26,12 @@ class ClaudeInterface:
         self.config = config  # Store the config object
         self._logged_config = False
     
-    def generate_system_prompt(self, in_battle: bool = False) -> str:
+    def generate_system_prompt(self, in_battle: bool = False, in_menu: bool = False) -> str:
         """Generate the system prompt for Claude.
 
         Args:
             in_battle: When True, include battle guidance instead of spatial.
+            in_menu: When True, include menu navigation guidance.
         """
 
         # Dynamic thinking control
@@ -48,71 +49,52 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
             if in_battle:
                 context_info = """
 <battle_context>
-During battles, BATTLE CONTEXT replaces the spatial grid. It shows:
-- Both Pokemon: name, level, HP (exact from RAM), status condition
-- Your moves: name, type, power, remaining PP. power=0 means STATUS move (no damage!)
-- Current menu + cursor position, and a TIP with recommended action
+RULE #1: FOLLOW THE TIP. The TIP gives the exact button sequence — send it as-is. Do NOT reason about alternatives when a TIP is present.
 
-BATTLE FLOW: Main menu (FIGHT/ITEM/PKMN/RUN) → select FIGHT → move menu appears → select a move → attacks execute → repeat.
-During attack animations or text messages, press A to advance.
-
-FIGHT MENU is 2x2:
-  Move1(0)  Move2(1)
-  Move3(2)  Move4(3)
-U/D = row, L/R = column, A = confirm, B = back to main menu.
-
-STRATEGY: Always prefer damaging moves (power > 0) over status moves in wild battles.
-Follow the TIP line — it tells you exactly which buttons to press.
-CATCHING: In wild battles, the TIP may suggest catching with Poke Balls via the ITEM menu. Lower enemy HP first for better catch rate. Never waste balls on trainer battles (impossible to catch).
+BATTLE CONTEXT replaces the spatial grid. It shows both Pokemon's stats, your moves (power=0 = status/no damage), and a TIP.
+Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A = confirm, B = back.
+In submenu/text: press B to return to main menu, or A to advance text.
+FAINT FLOW: Pokemon faints → A to advance → "Use next POKEMON?" → A=YES then D/U to pick a mon with HP>0, or D A=NO (wild only). Do NOT mash A blindly.
 </battle_context>
 """
             else:
                 context_info = """
 <spatial_context>
-Each turn includes a SPATIAL CONTEXT grid: . = walkable, # = blocked, , = grass, = = water, v/>/< = ledge, T = cut tree, B = boulder, W = warp, @ = player, 1-9 = NPC, i = item, o = object.
-1 cell = 1 tile = 16 frames (3 cells right = R48). GAME STATE line is RAM-derived and can be stale after transitions.
-PROGRESS line shows milestones and auto-sets your current_goal.
-TERRAIN: , = tall grass (random wild battles — avoid if HP low). = = water (blocked, need Surf HM+badge). v/>/< = ledge (one-way jump in arrow direction ONLY, cannot climb back — plan routes carefully!). T = cuttable tree (blocked, need Cut HM+badge). B = boulder (blocked, need Strength HM+badge to push).
-
-MAP EDGES vs DOORS: There are TWO ways to change maps:
-- "Map edges" = walk off the edge of the current map (e.g. walk UP off Pallet Town to reach Route 1). No warp tile needed — just keep walking in that direction.
-- "Doors/Warps" (W tiles) = building entrances, stairs, caves. Step ONTO the W tile to enter.
-To reach a route or city listed under "Map edges", walk toward that edge of the map. Do NOT look for a W tile.
-NAVIGATION: Follow [path: ...] suggestions — they route around walls and avoid accidental warps.
-If [no path found], try 1-tile exploratory moves in different directions.
-For long paths (5+ tiles), execute the first 3-4 tiles then re-check spatial context after screen scrolls.
-MOVEMENT: Max 4 tiles (64 frames) per direction token. Chain shorter moves: "R64 U64" not "R128". Always check the grid for walls before choosing a direction.
-If "Player didn't move" — you hit a wall, try different direction.
-If GAME STATE says dialogue/menu but no text/menu is visible, treat it as stale and try movement.
-NAME ENTRY: On "YOUR NAME?" / "RIVAL'S NAME?" keyboard screens when an alphabet is visible, A selects letters (can cause loops). Use START to finalize current name quickly, or choose a preset name menu option then A.
-DOORS: Walk ONTO W tiles (no A press). To exit houses: walk DOWN (D16) onto door-mat W tile.
-On a W tile but didn't warp? Move UP first, then D16 back onto it.
-NPCs/ITEMS: Walk to an adjacent tile and press A while facing them. Follow [path: ...] hints which include the face+interact step. If an NPC blocks your path, go around them.
-PICKUP ITEMS: Always pick up ground items (i tiles) — they contain TMs, Poke Balls, potions, and other useful rewards. Follow the [path:] hint to walk onto the item tile. Prioritize nearby items before continuing your route.
-ITEMS ON TABLES: Pokeballs, items on tables/desks are NOT shown on the grid (they're background tiles, not sprites). Walk next to the table and press A while facing it to interact. In Oak's Lab, the 3 starter Pokeballs are on a table — walk to an adjacent tile and press A. After choosing your starter, do NOT go back for the remaining Pokeballs on Oak's table.
+Grid legend: . walkable, # blocked, , grass, = water, v/>/< ledge, T cut tree, B boulder, W warp, @ player, 1-9 NPC, i item, o object. 1 tile = 16 frames.
+FOLLOW [path:] hints — they route around walls and include the interaction step. If [no path found], try 1-tile steps in each direction.
+NAV: A*-computed path through visible obstacles toward off-screen destinations. MOVES: immediate 1-tile walkability. Use both — NAV for multi-step routing, MOVES for quick checks.
+MAP EDGES: walk off the edge (no W needed). WARPS: step ONTO W tile (no A). Exit houses: D16 onto door-mat W.
+MOVEMENT: Max 128 frames/token, 256 total/turn. Chain: "R128 U128". "Player didn't move" = wall, try another direction.
+NPCs/ITEMS: Walk adjacent + A while facing. Always pick up ground items (i tiles).
+NAME ENTRY: Press START to finalize. GAME STATE from RAM can be stale — if it says dialogue but nothing visible, try movement.
 </spatial_context>
 """
 
         # Party & inventory guidance — always included (these context blocks
         # are injected conditionally into user messages, not every turn)
         team_info = """
-<team_and_inventory>
-PARTY STATUS (injected when HP/status changes or periodically): Shows each Pokemon's level, HP, status, and moves with PP.
-PARTY STATUS is AUTHORITATIVE (real-time from RAM) — always trust it over any HP/status claims in the summary.
-If HEAL line appears, prioritize visiting a Pokemon Center. Lead fainted = switch or heal immediately.
-
-INVENTORY (injected when items change or periodically): Shows badges, money, key items, balls, medicine.
-HM usability: ✓ = can use in field, "(need Badge)" = have HM but lack the badge. Plan routes around HM access.
-WARNING lines = progression blockers (missing HMs, no Poke Balls, etc.) — address before continuing main goal.
-</team_and_inventory>
+<authority>
+PARTY STATUS, SPATIAL CONTEXT, BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Always trust them over the summary (which may be stale).
+If HEAL line appears, prioritize Pokemon Center. WARNING lines = progression blockers — address before main goal.
+</authority>
 """ if self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False) else ""
+
+        menu_info = ""
+        if in_menu and self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False):
+            menu_info = """
+<menu_context>
+MENU CONTEXT shows menu type, cursor, options, and a TIP with compound input.
+FOLLOW THE TIP — send its exact button sequence in ONE send_inputs call. B closes menus. START toggles start menu.
+</menu_context>
+"""
 
         # Custom instructions from config
         custom_instructions = ""
         if self.config and hasattr(self.config, 'CUSTOM_INSTRUCTIONS') and self.config.CUSTOM_INSTRUCTIONS:
             custom_instructions = f"\n{self.config.CUSTOM_INSTRUCTIONS}\n"
 
-        return f"""You are an AI agent playing a video game running in real-time. The game continues between your analyses. Your inputs are queued and executed as soon as possible — make them robust to slight state changes.
+        return f"""You play a video game in real-time. The game continues between turns — act quickly.
+CORE RULE: When a TIP is present, send its exact button sequence via send_inputs. Do not overthink or try alternatives.
 
 <notation>
 {button_rules}
@@ -120,8 +102,9 @@ WARNING lines = progression blockers (missing HMs, no Poke Balls, etc.) — addr
 {thinking_info}
 {context_info}
 {team_info}
+{menu_info}
 {custom_instructions}
-Always use the tools provided to you to interact with the game.
+Always use send_inputs to act. Be concise — send compound inputs, not one button at a time.
 """
     
     def send_request(

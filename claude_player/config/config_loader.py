@@ -1,6 +1,7 @@
 import json
 import os.path
 import logging
+from logging.handlers import RotatingFileHandler
 from claude_player.config.config_class import ConfigClass
 
 
@@ -59,6 +60,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "MAX_SCREENSHOTS": 2,
         "BOOT_FRAMES": 400,
         "CUSTOM_INSTRUCTIONS": "",
+        "WEB_PORT": 0,
 
         "MODEL_DEFAULTS": {
             "MODEL": "claude-haiku-4-5",
@@ -73,9 +75,8 @@ def load_config(config_file='config.json') -> ConfigClass:
 
         "SUMMARY": {
             "INITIAL_SUMMARY": True,
-            "SUMMARY_INTERVAL": 30,
+            "SUMMARY_INTERVAL": 20,
             "MODEL": "claude-haiku-4-5",
-            "THINKING": False,
         },
     }
 
@@ -128,7 +129,7 @@ def setup_logging(config: ConfigClass):
     """
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
 
-    file_handler = logging.FileHandler(config.LOG_FILE)
+    file_handler = RotatingFileHandler(config.LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=2)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(fmt)
 

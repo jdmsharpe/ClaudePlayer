@@ -12,9 +12,9 @@ An AI-powered game playing agent using Claude and PyBoy
 
 Claude Player is an AI agent that lets Claude play Game Boy games through the PyBoy emulator. The agent observes game frames, makes strategic decisions, and controls the emulator through button inputs.
 
-I have been working on this project for a while, and have been meaning to clean it up and release it, and with the release of Claude 3.7 (especially given their semi official https://www.twitch.tv/claudeplayspokemon stream of a similar project), I thought it was a good time to do so.
+I have been working on this project for a while, and have been meaning to clean it up and release it, and with the release of Claude 3.7 (especially given their semi official <https://www.twitch.tv/claudeplayspokemon> stream of a similar project), I thought it was a good time to do so.
 
-I've taken some imspiration from their official implementation by adding additional memory tools and summarisation, however mine differs in that I don't have any coordinate based movement helpers: it is purely button based. Additionally, the emulator only ticks when the AI sends inputs, so it is not running at real time speed. 
+I've taken some imspiration from their official implementation by adding additional memory tools and summarisation, however mine differs in that I don't have any coordinate based movement helpers: it is purely button based. Additionally, the emulator only ticks when the AI sends inputs, so it is not running at real time speed.
 
 ## Features
 
@@ -38,17 +38,20 @@ I've taken some imspiration from their official implementation by adding additio
 ## Installation
 
 1. Clone the repository:
+
    ```
    git clone https://github.com/jmurth1234/claude-player.git
    cd claude-player
    ```
 
 2. Install dependencies using Pipenv (recommended):
+
    ```
    pipenv install
    ```
-   
+
 3. Create a `.env` file with your Anthropic API key:
+
    ```
    ANTHROPIC_API_KEY=your_api_key_here
    ```
@@ -91,15 +94,17 @@ Configuration is loaded from `config.json` (created automatically on first run i
   // Summary mode settings (inherits from MODEL_DEFAULTS)
   "SUMMARY": {
     "INITIAL_SUMMARY": false,        // Generate a summary on first turn
-    "SUMMARY_INTERVAL": 30           // Generate summary every N turns
+    "SUMMARY_INTERVAL": 2           // Generate summary every N turns
     // Other MODEL_DEFAULTS can be overridden here
   }
 }
 ```
 
 You can customize these settings by:
+
 1. Editing the generated `config.json` file directly
 2. Creating your own configuration file and specifying it with:
+
    ```
    python play.py --config my_config.json
    ```
@@ -107,24 +112,29 @@ You can customize these settings by:
 ## Usage
 
 1. Activate the Pipenv environment:
+
    ```
    pipenv shell
    ```
 
 2. Run the agent:
+
    ```
    python play.py
    ```
 
    Or specify a custom configuration file:
+
    ```
    python play.py --config my_config.json
    ```
 
 3. For setting up a saved state, you can use the included utility script:
+
    ```
    python emu_setup.py
    ```
+
    This script runs the emulator to help you create a saved state that you can reference in your configuration.
 
 ## Game Controls

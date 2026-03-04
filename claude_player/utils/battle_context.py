@@ -34,11 +34,15 @@ _ADDR_PLAYER_DEF     = 0xD027
 _ADDR_PLAYER_SPD     = 0xD029
 _ADDR_PLAYER_SPC     = 0xD02B
 _ADDR_PLAYER_PP      = 0xD02D  # 4 bytes (PP per move slot)
+_ADDR_PLAYER_TYPE1   = 0xD019
+_ADDR_PLAYER_TYPE2   = 0xD01A
 
 # Enemy's active Pokemon (wEnemyMon)
 _ADDR_ENEMY_SPECIES  = 0xCFE5
 _ADDR_ENEMY_HP       = 0xCFE6  # 2 bytes, big-endian
 _ADDR_ENEMY_STATUS   = 0xCFE9
+_ADDR_ENEMY_TYPE1    = 0xCFEA
+_ADDR_ENEMY_TYPE2    = 0xCFEB
 _ADDR_ENEMY_MOVES    = 0xCFED  # 4 bytes
 _ADDR_ENEMY_LEVEL    = 0xCFF3
 _ADDR_ENEMY_MAX_HP   = 0xCFF4  # 2 bytes, big-endian
@@ -53,21 +57,120 @@ _ADDR_MENU_ITEM      = 0xCC26  # wCurrentMenuItem (0-based)
 _ADDR_MENU_TOP_Y     = 0xCC24  # wTopMenuItemY (screen tile row)
 _ADDR_MENU_TOP_X     = 0xCC25  # wTopMenuItemX (screen tile col)
 
+# Status flags
+_ADDR_STATUS_FLAGS5  = 0xD730  # wStatusFlags5: bit 0 = TEXT_BOX_OPEN
+
 # Bag / party — lightweight reads for catch suggestions
 _ADDR_NUM_BAG_ITEMS  = 0xD31D  # wNumBagItems
 _ADDR_BAG_ITEMS      = 0xD31E  # wBagItems (item_id, qty pairs)
 _BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _ADDR_PARTY_COUNT    = 0xD163  # wPartyCount
+_ADDR_PARTY_BASE     = 0xD16B  # wPartyMon1 (44 bytes each)
+_PARTY_SIZE          = 44      # bytes per party mon struct
+_PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
+
+# ---------------------------------------------------------------------------
+# Gen 1 type system
+# ---------------------------------------------------------------------------
+
+_TYPE_NAMES: Dict[int, str] = {
+    0x00: "Normal", 0x01: "Fighting", 0x02: "Flying", 0x03: "Poison",
+    0x04: "Ground", 0x05: "Rock", 0x07: "Bug", 0x08: "Ghost",
+    0x14: "Fire", 0x15: "Water", 0x16: "Grass", 0x17: "Electric",
+    0x18: "Psychic", 0x19: "Ice", 0x1A: "Dragon",
+}
+
+# Gen 1 type effectiveness: (attack_type, defend_type) → multiplier
+# Only non-1.0 entries stored. Includes the Gen 1 Ghost/Psychic bug (0x).
+_TYPE_CHART: Dict[Tuple[str, str], float] = {
+    # Normal
+    ("Normal", "Rock"): 0.5, ("Normal", "Ghost"): 0.0,
+    # Fire
+    ("Fire", "Fire"): 0.5, ("Fire", "Water"): 0.5, ("Fire", "Grass"): 2.0,
+    ("Fire", "Ice"): 2.0, ("Fire", "Bug"): 2.0, ("Fire", "Rock"): 0.5,
+    ("Fire", "Dragon"): 0.5,
+    # Water
+    ("Water", "Fire"): 2.0, ("Water", "Water"): 0.5, ("Water", "Grass"): 0.5,
+    ("Water", "Ground"): 2.0, ("Water", "Rock"): 2.0, ("Water", "Dragon"): 0.5,
+    # Electric
+    ("Electric", "Water"): 2.0, ("Electric", "Electric"): 0.5,
+    ("Electric", "Grass"): 0.5, ("Electric", "Ground"): 0.0,
+    ("Electric", "Flying"): 2.0, ("Electric", "Dragon"): 0.5,
+    # Grass
+    ("Grass", "Fire"): 0.5, ("Grass", "Water"): 2.0, ("Grass", "Grass"): 0.5,
+    ("Grass", "Poison"): 0.5, ("Grass", "Ground"): 2.0, ("Grass", "Flying"): 0.5,
+    ("Grass", "Bug"): 0.5, ("Grass", "Rock"): 2.0, ("Grass", "Dragon"): 0.5,
+    # Ice
+    ("Ice", "Fire"): 0.5, ("Ice", "Water"): 0.5, ("Ice", "Grass"): 2.0,
+    ("Ice", "Ice"): 0.5, ("Ice", "Ground"): 2.0, ("Ice", "Flying"): 2.0,
+    ("Ice", "Dragon"): 2.0,
+    # Fighting
+    ("Fighting", "Normal"): 2.0, ("Fighting", "Ice"): 2.0,
+    ("Fighting", "Poison"): 0.5, ("Fighting", "Flying"): 0.5,
+    ("Fighting", "Psychic"): 0.5, ("Fighting", "Bug"): 0.5,
+    ("Fighting", "Rock"): 2.0, ("Fighting", "Ghost"): 0.0,
+    # Poison
+    ("Poison", "Grass"): 2.0, ("Poison", "Poison"): 0.5,
+    ("Poison", "Ground"): 0.5, ("Poison", "Rock"): 0.5,
+    ("Poison", "Bug"): 2.0, ("Poison", "Ghost"): 0.5,
+    # Ground
+    ("Ground", "Fire"): 2.0, ("Ground", "Electric"): 2.0,
+    ("Ground", "Grass"): 0.5, ("Ground", "Poison"): 2.0,
+    ("Ground", "Bug"): 0.5, ("Ground", "Rock"): 2.0, ("Ground", "Flying"): 0.0,
+    # Flying
+    ("Flying", "Electric"): 0.5, ("Flying", "Grass"): 2.0,
+    ("Flying", "Fighting"): 2.0, ("Flying", "Bug"): 2.0, ("Flying", "Rock"): 0.5,
+    # Psychic
+    ("Psychic", "Fighting"): 2.0, ("Psychic", "Poison"): 2.0,
+    ("Psychic", "Psychic"): 0.5,
+    # Bug
+    ("Bug", "Fire"): 0.5, ("Bug", "Grass"): 2.0, ("Bug", "Fighting"): 0.5,
+    ("Bug", "Flying"): 0.5, ("Bug", "Poison"): 2.0, ("Bug", "Psychic"): 2.0,
+    ("Bug", "Ghost"): 0.5,
+    # Rock
+    ("Rock", "Fire"): 2.0, ("Rock", "Ice"): 2.0, ("Rock", "Fighting"): 0.5,
+    ("Rock", "Ground"): 0.5, ("Rock", "Flying"): 2.0, ("Rock", "Bug"): 2.0,
+    # Ghost  (Gen 1 bug: Ghost has 0x effect on Psychic instead of 2x)
+    ("Ghost", "Normal"): 0.0, ("Ghost", "Ghost"): 2.0,
+    ("Ghost", "Psychic"): 0.0,
+    # Dragon
+    ("Dragon", "Dragon"): 2.0,
+}
+
+
+def _type_effectiveness(move_type: str, defend_types: List[str]) -> float:
+    """Compute total type effectiveness multiplier for a move vs defender types."""
+    mult = 1.0
+    for dt in defend_types:
+        mult *= _TYPE_CHART.get((move_type, dt), 1.0)
+    return mult
+
 
 # Main battle menu nav: column-major layout
 #   FIGHT(0)  PKMN(2)
 #   ITEM(1)   RUN(3)
+# U/D = vertical within column; L/R = switch columns
 _NAV_TO_ITEM: Dict[int, str] = {
     0: "D",      # FIGHT → ITEM
     1: "",       # already on ITEM
     2: "L D",    # PKMN → ITEM
     3: "L",      # RUN → ITEM
 }
+
+# Navigation from each main menu cursor position to every other option
+_MAIN_MENU_NAV: Dict[int, Dict[str, str]] = {
+    0: {"ITEM": "D",   "PKMN": "R",   "RUN": "R D"},
+    1: {"FIGHT": "U",  "PKMN": "R U", "RUN": "R"},
+    2: {"FIGHT": "L",  "ITEM": "L D", "RUN": "D"},
+    3: {"FIGHT": "U L","ITEM": "L",   "PKMN": "U"},
+}
+
+# Absolute navigation — reaches target from ANY main-menu cursor position.
+# Extra presses at boundaries are no-ops (cursor doesn't wrap in Gen 1).
+_ABS_NAV_FIGHT = "U L"
+_ABS_NAV_ITEM  = "D L"
+_ABS_NAV_PKMN  = "U R"
+_ABS_NAV_RUN   = "D R"
 
 # ---------------------------------------------------------------------------
 # Gen 1 internal Pokemon ID → display name
@@ -351,6 +454,8 @@ def _read_pokemon(
     def_addr: int = 0,
     spd_addr: int = 0,
     spc_addr: int = 0,
+    type1_addr: int = 0,
+    type2_addr: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """Read a battle Pokemon's data from RAM."""
     species_id = pyboy.memory[species_addr]
@@ -396,6 +501,17 @@ def _read_pokemon(
             "is_hm": is_hm,
         })
 
+    # Types (decoded from RAM byte → name string)
+    types: List[str] = []
+    if type1_addr:
+        t1 = _TYPE_NAMES.get(pyboy.memory[type1_addr])
+        if t1:
+            types.append(t1)
+        if type2_addr:
+            t2 = _TYPE_NAMES.get(pyboy.memory[type2_addr])
+            if t2 and t2 != t1:  # Gen 1: single-type mons have same byte twice
+                types.append(t2)
+
     return {
         "species_id": species_id,
         "name": name,
@@ -406,6 +522,7 @@ def _read_pokemon(
         "stats": stats,
         "moves": moves,
         "hm_moves": hm_moves,
+        "types": types,
     }
 
 
@@ -417,42 +534,68 @@ def _read_pokemon(
 _MAIN_MENU_ITEMS = ["FIGHT", "ITEM", "PKMN", "RUN"]
 
 
-def _detect_battle_submenu(pyboy: PyBoy) -> str:
+def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
     """Detect which battle sub-menu is active from cursor position metadata.
 
-    Returns "main", "fight", or "unknown".
+    Returns "main", "fight", "faint", or "unknown".
     """
     top_y = pyboy.memory[_ADDR_MENU_TOP_Y]
     top_x = pyboy.memory[_ADDR_MENU_TOP_X]
 
+    # If a text message is being printed (e.g. "No! There's no running!"),
+    # wCurrentMenuItem holds a transient text-engine value, not the real battle
+    # menu cursor. Detect via wStatusFlags5 bit 0 (TEXT_BOX_OPEN) and return
+    # "unknown" so the agent knows to press A to advance the text.
+    text_box_active = bool(pyboy.memory[_ADDR_STATUS_FLAGS5] & 0x01)
+
     # Main battle menu (FIGHT/ITEM/PKMN/RUN): top item around Y=14, X=9
     if top_y >= 14 and top_x >= 8:
+        if text_box_active:
+            return "unknown"  # Battle message active — press A to advance
         return "main"
     # Move selection menu: top item around Y=12, X=4-5
     if 10 <= top_y <= 13 and top_x <= 6:
         return "fight"
+    # Faint flow: player HP is 0 and we're in an unknown menu state
+    # (YES/NO prompt or party select screen)
+    if player_hp == 0:
+        return "faint"
     return "unknown"
 
 
 def _calc_move_nav(current: int, target: int) -> str:
-    """Calculate button presses to navigate the 2x2 fight move grid.
+    """Calculate button presses to navigate the vertical fight move list.
 
-    Layout:  Move0  Move1
-             Move2  Move3
+    Gen 1 move menu is a single-column vertical list (UP/DOWN only):
+        Move0
+        Move1
+        Move2
+        Move3
     """
-    cur_row, cur_col = divmod(current, 2)
-    tgt_row, tgt_col = divmod(target, 2)
     presses = []
-    if tgt_row < cur_row:
-        presses.append("U")
-    elif tgt_row > cur_row:
-        presses.append("D")
-    if tgt_col < cur_col:
-        presses.append("L")
-    elif tgt_col > cur_col:
-        presses.append("R")
+    diff = target - current
+    if diff < 0:
+        presses.extend(["U"] * abs(diff))
+    elif diff > 0:
+        presses.extend(["D"] * diff)
     nav = " ".join(presses)
     return f"press {nav} then A" if nav else "press A"
+
+
+def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
+    """Count party members with HP > 0 from the party data RAM block.
+
+    Note: the active battler's HP in the party block may not be synced to 0
+    immediately on faint — callers should account for this (alive_count may be
+    inflated by 1 while the active mon is in the process of fainting).
+    """
+    alive = 0
+    for i in range(min(party_count, 6)):
+        base = _ADDR_PARTY_BASE + i * _PARTY_SIZE
+        hp = (pyboy.memory[base + _PARTY_HP_OFFSET] << 8) | pyboy.memory[base + _PARTY_HP_OFFSET + 1]
+        if hp > 0:
+            alive += 1
+    return alive
 
 
 def _count_pokeballs(pyboy: PyBoy) -> int:
@@ -483,6 +626,8 @@ def _generate_battle_tip(
     battle_type: int = 0,
     pokeball_count: int = 0,
     party_count: int = 6,
+    alive_count: int = 0,
+    enemy_types: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Generate a short tactical recommendation.
 
@@ -490,13 +635,28 @@ def _generate_battle_tip(
     that selects FIGHT and the best move in ONE send_inputs call so the
     agent doesn't waste a full turn navigating each sub-menu separately.
     """
-    # Enemy already fainted — spam A to clear EXP/level-up/move-learned text
+    # Enemy already fainted — press A to clear EXP/level-up/move-learned text
     if enemy["hp"] == 0:
-        return "Enemy fainted! Advance text — send: A A A A A"
+        return "Enemy fainted! Press A a few times to advance EXP/level-up text."
 
-    # Player fainted — spam A to clear faint text, then switch/heal
+    # Player fainted — give specific YES/NO and party-select guidance
     if player["hp"] == 0:
-        return "Your Pokemon fainted! Advance text — send: A A A A A"
+        # alive_count from party data may be inflated by 1 (the current battler's
+        # party slot HP may not have synced to 0 yet), so threshold is > 1.
+        has_others = alive_count > 1
+        if battle_type == 1:  # wild battle — can run via NO
+            return (
+                "FAINT FLOW: 'Use next POKEMON?' prompt. "
+                "To send next mon: A, then D/U to pick one with HP > 0, then A. "
+                "To flee: D A (D=move to NO, A=confirm). "
+                "DO NOT press A first — it selects YES immediately!"
+            )
+        else:  # trainer battle — must continue
+            return (
+                "FAINT FLOW: 'Use next POKEMON?' prompt. Trainer battle — must send out another. "
+                "Send: A, then D/U to find a Pokemon with HP > 0, then A to select it. "
+                "Skip fainted mons — selecting one shows 'There's no will to fight!'."
+            )
 
     # Catch suggestion: wild battle + have balls + favorable conditions
     if battle_type == 1 and pokeball_count > 0 and enemy["max_hp"] > 0:
@@ -512,20 +672,32 @@ def _generate_battle_tip(
 
         if should_catch:
             if menu_type == "main":
-                nav = _NAV_TO_ITEM.get(cursor, "D")
-                parts = []
-                if nav:
-                    parts.extend(nav.split())
-                parts.append("A")  # open bag
-                parts.append("A")  # select first ball
-                compound = " ".join(parts)
                 return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
-                        f"— send: {compound}")
+                        f"— send: {_ABS_NAV_ITEM} A A")
             elif menu_type == "fight":
                 return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
-                        f"— press B to return to main menu, then select ITEM")
+                        f"— send: B {_ABS_NAV_ITEM} A A")
 
-    # Find the strongest usable damage move
+    # Wild battle + critically low HP → running is safer than fighting
+    if battle_type == 1 and player["hp"] > 0 and player["max_hp"] > 0:
+        hp_pct = player["hp"] * 100 // player["max_hp"]
+        if hp_pct <= 20:
+            if menu_type == "main":
+                return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
+                        f"Send: {_ABS_NAV_RUN} A")
+            elif menu_type == "fight":
+                return (f"HP critical ({hp_pct}%) — send: B {_ABS_NAV_RUN} A "
+                        f"(B=back, navigate to RUN, confirm).")
+
+    # Find the strongest usable damage move, weighted by type effectiveness
+    etypes = enemy_types or []
+
+    def _effective_power(move_slot_pair):
+        m = move_slot_pair[0]
+        base = m["power"]
+        eff = _type_effectiveness(m["type"], etypes) if etypes else 1.0
+        return base * eff
+
     damage_moves = [
         (m, m["slot"]) for m in player["moves"]
         if m["power"] > 1 and m["pp"] > 0  # >1 excludes OHKO/fixed-dmg quirks
@@ -538,44 +710,54 @@ def _generate_battle_tip(
         ]
 
     if menu_type == "main" and damage_moves:
-        best_move, best_slot = max(damage_moves, key=lambda x: x[0]["power"])
-        # Build compound input: navigate to FIGHT, then navigate to move, then confirm
-        parts = []
-
-        # Step 1: navigate to FIGHT (slot 0 on main menu)
-        if cursor != 0:
-            cur_r, cur_c = divmod(cursor, 2)
-            if cur_r > 0:
-                parts.append("U")
-            if cur_c > 0:
-                parts.append("L")
-        parts.append("A")  # select FIGHT
-
-        # Step 2: navigate to best move in fight sub-menu
-        # After entering fight menu, cursor defaults to slot 1 (second move)
-        # in Gen 1 Red — so assume cursor=1 unless only 1 move exists
-        fight_cursor = 0 if len(player["moves"]) <= 1 else 1
-        if fight_cursor != best_slot:
-            nav = _calc_move_nav(fight_cursor, best_slot)
-            # _calc_move_nav returns "press X then A" — extract just the nav part
-            nav_buttons = nav.replace("press ", "").replace(" then A", "")
-            if nav_buttons:
-                parts.append(nav_buttons)
-        parts.append("A")  # select move
-
-        compound = " ".join(parts)
-        return f"Use {best_move['name']} ({best_move['power']}pwr) — send: {compound}"
+        best_move, best_slot = max(damage_moves, key=_effective_power)
+        # Absolute-nav to FIGHT (works from any cursor), then to move, confirm.
+        # wCurrentMenuItem only stores row, not column — so cursor-relative nav
+        # can't distinguish FIGHT from PKMN. Absolute nav sidesteps this.
+        if best_slot > 0:
+            nav_to_move = " ".join(["D"] * best_slot)
+        else:
+            # Move 0: U is a no-op (already at top) that adds ~5 frames delay
+            # so the fight menu renders before the final A press.
+            # Without this, "...A A" fires too fast and the 2nd A is swallowed.
+            nav_to_move = "U"
+        compound = f"{_ABS_NAV_FIGHT} A {nav_to_move} A"
+        eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
+        eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
+        return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
 
     if menu_type == "main" and not damage_moves:
-        return "No usable damage moves! Consider switching (PKMN) or using an item."
+        if battle_type == 1:  # wild — RUN is an option
+            return f"No usable damage moves — RUN from this wild battle! Send: {_ABS_NAV_RUN} A"
+        # Trainer battle: cannot RUN. Check if switching to a mon with damage moves is viable.
+        can_switch = alive_count > 1
+        if can_switch:
+            return (f"Trainer battle — no damage moves on this mon. "
+                    f"Switch to one with damage moves! Send: {_ABS_NAV_PKMN} A, "
+                    f"then D/U to pick a mon with HP > 0, then A.")
+        # Unwinnable: only status moves, no switchable mons. Use first move to advance.
+        first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
+        compound = f"{_ABS_NAV_FIGHT} A U A"  # FIGHT, delay (U=no-op at move 0), select
+        return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
+                f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 
     if menu_type == "fight" and damage_moves:
-        best_move, best_slot = max(damage_moves, key=lambda x: x[0]["power"])
-        if cursor == best_slot:
-            return f"Use {best_move['name']} ({best_move['power']}pwr) — press A."
+        best_move, best_slot = max(damage_moves, key=_effective_power)
+        eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
+        eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
+        fight_idx = max(cursor - 1, 0)  # fight menu cursor is 1-indexed in Gen 1
+        if fight_idx == best_slot:
+            return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — press A."
         else:
-            nav = _calc_move_nav(cursor, best_slot)
-            return f"Use {best_move['name']} ({best_move['power']}pwr) — {nav}."
+            nav = _calc_move_nav(fight_idx, best_slot)
+            return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — {nav}."
+
+    if menu_type == "fight" and not damage_moves:
+        if battle_type == 1:
+            return f"No usable damage moves in fight menu — press B then RUN. Send: B {_ABS_NAV_RUN} A"
+        # Trainer + no damage: use first available move
+        first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
+        return f"No damage moves — use {first_move} to continue. Press A."
 
     # Low HP
     if player["hp"] > 0 and player["hp"] <= player["max_hp"] // 4:
@@ -596,6 +778,7 @@ def _format_battle_text(
     cursor: int,
     pokeball_count: int = 0,
     party_count: int = 6,
+    alive_count: int = 0,
 ) -> str:
     """Assemble the battle context text block."""
     kind = "Wild" if battle_type == 1 else "Trainer"
@@ -609,8 +792,9 @@ def _format_battle_text(
 
     # Player Pokemon
     status_str = f" {player['status']}" if player["status"] != "OK" else ""
+    player_type_str = f" [{'/'.join(player.get('types', []))}]" if player.get("types") else ""
     lines.append(
-        f"YOUR: {player['name']} Lv{player['level']} "
+        f"YOUR: {player['name']} Lv{player['level']}{player_type_str} "
         f"HP:{player['hp']}/{player['max_hp']}{status_str}"
     )
 
@@ -624,7 +808,7 @@ def _format_battle_text(
     for m in player["moves"]:
         pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
         hm_tag = " [HM]" if m.get("is_hm") else ""
-        move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}pp){hm_tag}")
+        move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp){hm_tag}")
     lines.append(f"  Moves: {' | '.join(move_parts)}")
 
     # HM summary
@@ -634,19 +818,25 @@ def _format_battle_text(
     # Cursor
     if menu_type == "main":
         item_name = _MAIN_MENU_ITEMS[cursor] if cursor < 4 else f"#{cursor}"
-        lines.append(f"  → Main menu: cursor on {item_name}")
+        nav_hints = _MAIN_MENU_NAV.get(cursor, {})
+        nav_str = " | ".join(f"{k}:{v}" for k, v in nav_hints.items())
+        lines.append(f"  → Main menu: cursor on {item_name} (to reach: {nav_str})")
     elif menu_type == "fight":
-        if cursor < len(player["moves"]):
-            lines.append(f"  → Fight menu: cursor on move {cursor+1} ({player['moves'][cursor]['name']})")
+        fight_idx = max(cursor - 1, 0)  # fight menu cursor is 1-indexed in Gen 1
+        if fight_idx < len(player["moves"]):
+            lines.append(f"  → Fight menu: cursor on move {fight_idx+1} ({player['moves'][fight_idx]['name']})")
         else:
             lines.append(f"  → Fight menu: cursor at position {cursor}")
+    elif menu_type == "faint":
+        lines.append(f"  → FAINT FLOW — cursor: {cursor}. 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
     else:
-        lines.append(f"  → Menu cursor: {cursor} (animation/text — press A)")
+        lines.append(f"  → In submenu/text (not main battle menu) — press B to go back, or A to advance text")
 
     # Enemy Pokemon
     enemy_status = f" {enemy['status']}" if enemy["status"] != "OK" else ""
+    enemy_type_str = f" [{'/'.join(enemy.get('types', []))}]" if enemy.get("types") else ""
     lines.append(
-        f"ENEMY: {enemy['name']} Lv{enemy['level']} "
+        f"ENEMY: {enemy['name']} Lv{enemy['level']}{enemy_type_str} "
         f"HP:{enemy['hp']}/{enemy['max_hp']}{enemy_status}"
     )
     es = enemy.get("stats", {})
@@ -657,7 +847,9 @@ def _format_battle_text(
     tip = _generate_battle_tip(player, enemy, menu_type, cursor,
                                 battle_type=battle_type,
                                 pokeball_count=pokeball_count,
-                                party_count=party_count)
+                                party_count=party_count,
+                                alive_count=alive_count,
+                                enemy_types=enemy.get("types"))
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -668,10 +860,16 @@ def _format_battle_text(
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def extract_battle_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
+def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> Optional[Dict[str, Any]]:
     """Extract battle context from RAM.
 
     Must be called on the main thread (PyBoy access is not thread-safe).
+
+    Args:
+        just_entered_battle: True only on the very first turn of a new battle.
+            wCurrentMenuItem holds a stale overworld value at battle start, so
+            we clamp the main-menu cursor to 0 (FIGHT) in that case only.
+            Once inside an ongoing battle the cursor persists correctly in RAM.
 
     Returns dict with "text" key (formatted string) and structured data,
     or None if not in battle or data isn't ready.
@@ -687,6 +885,7 @@ def extract_battle_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             _ADDR_PLAYER_MOVES, _ADDR_PLAYER_LEVEL, _ADDR_PLAYER_MAX_HP,
             _ADDR_PLAYER_PP,
             _ADDR_PLAYER_ATK, _ADDR_PLAYER_DEF, _ADDR_PLAYER_SPD, _ADDR_PLAYER_SPC,
+            _ADDR_PLAYER_TYPE1, _ADDR_PLAYER_TYPE2,
         )
         enemy = _read_pokemon(
             pyboy,
@@ -694,21 +893,30 @@ def extract_battle_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             _ADDR_ENEMY_MOVES, _ADDR_ENEMY_LEVEL, _ADDR_ENEMY_MAX_HP,
             _ADDR_ENEMY_PP,
             _ADDR_ENEMY_ATK, _ADDR_ENEMY_DEF, _ADDR_ENEMY_SPD, _ADDR_ENEMY_SPC,
+            _ADDR_ENEMY_TYPE1, _ADDR_ENEMY_TYPE2,
         )
 
         if not player or not enemy:
             logger.debug("Battle context: Pokemon data not ready")
             return None
 
-        menu_type = _detect_battle_submenu(pyboy)
         cursor = pyboy.memory[_ADDR_MENU_ITEM]
+        menu_type = _detect_battle_submenu(pyboy, player_hp=player["hp"])
+        # wCurrentMenuItem is shared with overworld menus and holds a stale value
+        # at the very start of a new battle. Clamp to 0 (FIGHT) only on that first
+        # turn. In subsequent turns the cursor genuinely persists to whatever the
+        # player last selected (FIGHT, ITEM, PKMN, or RUN).
+        if menu_type == "main" and just_entered_battle:
+            cursor = 0
 
         pokeball_count = _count_pokeballs(pyboy)
         party_count = min(pyboy.memory[_ADDR_PARTY_COUNT], 6)
+        alive_count = _count_alive_party(pyboy, party_count)
 
         text = _format_battle_text(battle_type, player, enemy, menu_type, cursor,
                                    pokeball_count=pokeball_count,
-                                   party_count=party_count)
+                                   party_count=party_count,
+                                   alive_count=alive_count)
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "

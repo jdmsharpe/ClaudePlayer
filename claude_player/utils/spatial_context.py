@@ -458,6 +458,33 @@ _MAP_NAMES = {
     0xFF: "outside (last map)",
 }
 
+# Per-map region tables: map_id → list of (y_min, y_max, region_name, navigation_instruction)
+# Coordinates are in step units (same as player position).  y_min/y_max are inclusive.
+_MAP_REGIONS: dict = {
+    # Viridian Forest (0x33) — 34×48 steps.
+    # North Gate warp: X≈2, Y≈0 (top-left).  South Gate warp: X≈17, Y≈47 (bottom-right).
+    0x33: [
+        (0,  10, "North Entrance",
+         "You are near the NORTH GATE exit. The gate warp is at the TOP-LEFT corner of the"
+         " forest (X≈2, Y≈0). CORRECT MAZE ROUTE from this position: go SOUTH first to"
+         " find a westward path, then move WEST, then NORTH to approach the gate."
+         " The warp may be visible on screen but the walls block a direct approach —"
+         " do NOT try to go straight left or straight up. Follow: D16 to find south"
+         " openings, then L16 repeatedly westward, then U16 to the gate."),
+        (11, 24, "Upper Forest",
+         "You are in the UPPER FOREST. The South Gate is roughly 20-35 steps SOUTH and"
+         " EAST (X≈17, Y≈47). Head SOUTH, staying on walkable path tiles (avoid grass)."
+         " If south is blocked, probe R16 or L16 to find a gap, then continue south."),
+        (25, 38, "Lower Forest",
+         "You are in the LOWER FOREST. The South Gate is 10-20 steps SOUTH-EAST"
+         " (target X≈17, Y≈47). Head SOUTH and gradually move EAST if your X is below 12."
+         " Probe R16 to find south gaps — the path curves east in this section."),
+        (39, 99, "South Approach",
+         "You are near the SOUTH GATE exit. The gate warp is at approximately X=17, Y=47."
+         " Move SOUTH and EAST to reach it. If south is blocked, move R16 to find the gap."),
+    ],
+}
+
 
 def _extract_visible_tilemap(pyboy: PyBoy) -> Tuple[List[List[int]], Tuple[int, int]]:
     """Extract the 20x18 visible tile region from the 32x32 background tilemap.
@@ -558,6 +585,7 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
 
         # Read terrain-classification RAM values
         tileset_type = pyboy.memory[_ADDR_TILESET_TYPE]
+        map_tileset = pyboy.memory[_ADDR_MAP_TILESET]  # 0=OVERWORLD, 3=FOREST, etc.
         grass_tile_vram = None
         if tileset_type > 0:  # Outdoor tileset has grass
             grass_raw = pyboy.memory[_ADDR_GRASS_TILE]
@@ -590,7 +618,9 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
                 tid = metatile_ids[my][mx]
                 if grass_tile_vram is not None and tid == grass_tile_vram:
                     row.append(',')
-                elif tileset_type > 0 and tid in _LEDGE_TILES:
+                elif tileset_type > 0 and map_tileset == 0 and tid in _LEDGE_TILES:
+                    # Ledge VRAM IDs only mean ledges in the OVERWORLD tileset (ID=0).
+                    # Forest/cave tilesets reuse the same VRAM IDs for tree/wall graphics.
                     row.append(_LEDGE_TILES[tid])
                 elif tileset_type > 0 and tid == _WATER_TILE_VRAM:
                     row.append('=')
@@ -863,6 +893,8 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
                 f"offset=({offset_x},{offset_y})"
             )
 
+        sprite_log = logger.debug  # always debug — terminal display already shows NPCs
+
         npcs = []
         for n in range(1, num_sprites + 1):
             pic_id = pyboy.memory[_ADDR_SPRITE_STATE1 + n * 0x10]
@@ -891,7 +923,7 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
             dx = npc_x - player_x
             name = _SPRITE_NAMES.get(pic_id, "NPC")
 
-            logger.info(
+            sprite_log(
                 f"Sprite {n}: {name} (pic=0x{pic_id:02X}) "
                 f"raw=({raw_x},{raw_y}) map=({npc_x},{npc_y}) "
                 f"rel=({dx},{dy}) facing={facing} img=0x{image_index:02X} mvst=0x{movement_status:02X}{' [ghost]' if is_ghost else ''}"
@@ -908,7 +940,7 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
                 "facing": facing,
             })
 
-        logger.info(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
+        sprite_log(f"NPC extraction: {num_sprites} sprites on map, {len(npcs)} with pic_id != 0")
         return npcs if npcs else None
     except Exception as e:
         logger.warning(f"NPC data extraction failed: {e}", exc_info=True)
@@ -1123,36 +1155,40 @@ def _format_warp_text(
 
             # Compute A* path to the warp tile
             hint = ""
+            # Bottom warps (door mats at south map edge) need an extra
+            # step south to walk through the exit in one turn.
+            _mh = warp_data.get("map_height", 0)
+            _is_bottom_warp = bool(_mh and w.get("map_y", 0) >= _mh * 2 - 2)
             if can_pathfind:
                 warp_grid_pos = (player_pos[0] + dx, player_pos[1] + dy)
                 wgx, wgy = warp_grid_pos
                 grid_h = len(grid)
                 grid_w = len(grid[0]) if grid else 0
+
                 if 0 <= wgx < grid_w and 0 <= wgy < grid_h:
                     warp_path = find_path(grid, player_pos, warp_grid_pos)
                     if warp_path:
                         buttons = path_to_buttons(warp_path)
                         if buttons:
+                            if _is_bottom_warp:
+                                buttons += " D16"
                             hint = f"  [path: {buttons}]"
                         else:
                             # ON THIS TILE — need to trigger
                             hint = "  [on this tile — walk D16 to trigger exit]"
                     else:
-                        hint = "  [no path found]"
+                        hint = ("  [Warp visible but walls block direct path —"
+                                " requires an indirect route."
+                                " Try a different approach direction (e.g. SOUTH or EAST)"
+                                " to find a path that curves around to this warp]")
                 else:
-                    # Warp is off the visible grid — use A* to the nearest edge
-                    # in the warp's direction, avoiding walls.
-                    edge_dir = None
-                    if abs(dy) >= abs(dx):
-                        edge_dir = "NORTH" if dy < 0 else "SOUTH"
-                    else:
-                        edge_dir = "WEST" if dx < 0 else "EAST"
-                    edge_path = find_path_to_edge(grid, player_pos, edge_dir) if edge_dir else None
-                    if edge_path:
-                        buttons = path_to_buttons(edge_path)
-                        hint = f"  [path: {buttons} (warp is off screen, continue {edge_dir})]" if buttons else f"  [off screen — head {edge_dir}]"
-                    else:
-                        hint = _edge_opening_hint(edge_dir) if edge_dir else ""
+                    # Warp is off the visible grid — only report compass
+                    # direction + distance.  Do NOT run A* to the viewport
+                    # edge: the path only proves reachability to the screen
+                    # boundary, not beyond.  Walls just past the viewport
+                    # are invisible to A*, so "path clear to edge" creates
+                    # phantom routes that send the agent into known dead ends.
+                    hint = f"  [off screen — use compass below]"
             else:
                 # Fallback: straight-line when no collision grid available
                 cmds = []
@@ -1165,6 +1201,8 @@ def _format_warp_text(
                 elif dx > 0:
                     cmds.append(f"R{dx * 16}")
                 if cmds:
+                    if _is_bottom_warp:
+                        cmds.append("D16")
                     hint = f"  [straight-line: {' '.join(cmds)}]"
                 else:
                     hint = "  [on this tile — walk D16 to trigger exit]"
@@ -1311,7 +1349,7 @@ def _format_npc_text(
                                 buttons = f"{buttons} A".strip()
                         hint = f"  [path: {buttons}]" if buttons else "  [already here]"
                     else:
-                        hint = "  [no path found]"
+                        hint = "  [UNREACHABLE — walls block all paths, do NOT attempt]"
             else:
                 # Off screen — straight-line fallback
                 cmds = []
@@ -1493,16 +1531,45 @@ def _format_spatial_text(
         lines.append(f"Player @ is at grid column {player_screen_pos[0]}, row {player_screen_pos[1]}{facing_str}")
 
     # Absolute map position + compass for off-screen exits
+    _compass_targets: list = []  # (direction_label, manhattan_dist, dest_name)
     if warp_data:
         px_abs = warp_data["player_x"]
         py_abs = warp_data["player_y"]
         mw = warp_data["map_width"]
         mh = warp_data["map_height"]
-        lines.append(f"Map position: ({px_abs}, {py_abs}) of {mw}x{mh}")
+        # Player coords are in step units (2 steps per map block), map dims are in blocks.
+        # Multiply dims by 2 so the coordinate spaces match (avoids "at edge" confusion).
+        lines.append(f"Map position: ({px_abs}, {py_abs}) of {mw*2}x{mh*2}")
+
+        # Per-map region hint — tells agent which sub-area it's in and what to do
+        map_regions = _MAP_REGIONS.get(warp_data.get("map_number"))
+        if map_regions:
+            for y_min, y_max, region_name, region_hint in map_regions:
+                if y_min <= py_abs <= y_max:
+                    lines.append(f"Region: {region_name} — {region_hint}")
+                    break
+
+        # Pre-compute which immediate directions are blocked (for compass warnings)
+        _immediate_blocked: set = set()
+        _ledge_pass = {'v': (0, 1), '>': (1, 0), '<': (-1, 0)}
+        _walkable = {'.', ',', '@', 'W', 'g'}  # floor, grass, player, warp, ghost
+        if player_screen_pos and grid:
+            _cpx, _cpy = player_screen_pos
+            for _lbl, _dx, _dy in [("UP", 0, -1), ("DOWN", 0, 1),
+                                    ("LEFT", -1, 0), ("RIGHT", 1, 0)]:
+                _nx, _ny = _cpx + _dx, _cpy + _dy
+                if 0 <= _nx < grid_width and 0 <= _ny < grid_height:
+                    _c = grid[_ny][_nx]
+                    if _c in _ledge_pass:
+                        if (_dx, _dy) != _ledge_pass[_c]:
+                            _immediate_blocked.add(_lbl)
+                    elif _c not in _walkable:
+                        _immediate_blocked.add(_lbl)
 
         # Compass bearings to warps/connections that are far off-screen
         viewport_half_w = grid_width // 2  # ~5
         viewport_half_h = grid_height // 2  # ~4
+        _DIR_MAP = {"NORTH": "UP", "SOUTH": "DOWN", "WEST": "LEFT", "EAST": "RIGHT"}
         compass_lines: list = []
         for w in warp_data.get("warps", []):
             if abs(w["dy"]) > viewport_half_h or abs(w["dx"]) > viewport_half_w:
@@ -1516,7 +1583,16 @@ def _format_spatial_text(
                 elif w["dx"] > 0:
                     parts.append(f"~{w['dx']} blocks RIGHT")
                 if parts:
-                    compass_lines.append(f"  {w['dest_name']}: {', '.join(parts)}")
+                    # Primary direction = axis with larger distance
+                    if abs(w["dy"]) >= abs(w["dx"]):
+                        pri = "UP" if w["dy"] < 0 else "DOWN"
+                    else:
+                        pri = "LEFT" if w["dx"] < 0 else "RIGHT"
+                    note = ""
+                    if pri in _immediate_blocked:
+                        note = f" ({pri} blocked here — detour around obstacle)"
+                    compass_lines.append(f"  {w['dest_name']}: {', '.join(parts)}{note}")
+                    _compass_targets.append((pri, abs(w["dy"]) + abs(w["dx"]), w['dest_name']))
         for conn in warp_data.get("connections", []):
             d = conn["direction"]
             if d == "NORTH":
@@ -1531,9 +1607,14 @@ def _format_spatial_text(
                 continue
             threshold = viewport_half_h if d in ("NORTH", "SOUTH") else viewport_half_w
             if dist > threshold:
-                compass_lines.append(f"  {conn['dest_name']}: ~{dist} blocks {d}")
+                move_dir = _DIR_MAP.get(d, d)
+                note = ""
+                if move_dir in _immediate_blocked:
+                    note = f" ({move_dir} blocked here — detour around obstacle)"
+                compass_lines.append(f"  {conn['dest_name']}: ~{dist} blocks {d}{note}")
+                _compass_targets.append((move_dir, dist, conn['dest_name']))
         if compass_lines:
-            lines.append("COMPASS (off-screen exits):")
+            lines.append("COMPASS (off-screen exits — crow-flies bearing, NOT a path — follow NAV below):")
             lines.extend(compass_lines)
 
     # Player movement status (directional, no raw map coords)
@@ -1545,9 +1626,80 @@ def _format_spatial_text(
     for y in range(grid_height):
         lines.append(f"{y:2d} " + "".join(grid[y]))
 
+    # Immediate walkable neighbors — tells agent which directions are passable
+    # Ledges are one-way: only passable when entering in the arrow direction.
+    # Uses walkable allowlist so NPCs, items, objects, ghosts are all BLOCKED.
+    _LEDGE_PASSABLE_DIR = {'v': (0, 1), '>': (1, 0), '<': (-1, 0)}
+    _WALKABLE_CHARS = {'.', ',', '@', 'W', 'g'}  # floor, grass, player, warp, ghost
+    if player_screen_pos and (has_collision or terrain is not None):
+        px, py = player_screen_pos
+        dir_status = {}
+        for label, dx, dy in [("UP", 0, -1), ("DOWN", 0, 1), ("LEFT", -1, 0), ("RIGHT", 1, 0)]:
+            nx, ny = px + dx, py + dy
+            if 0 <= nx < grid_width and 0 <= ny < grid_height:
+                cell = grid[ny][nx]
+                if cell in _LEDGE_PASSABLE_DIR:
+                    if (dx, dy) == _LEDGE_PASSABLE_DIR[cell]:
+                        dir_status[label] = "open(ledge)"
+                    else:
+                        dir_status[label] = "BLOCKED(ledge)"
+                elif cell in _WALKABLE_CHARS:
+                    dir_status[label] = "open"
+                else:
+                    dir_status[label] = "BLOCKED"
+            else:
+                dir_status[label] = "edge"
+        lines.append(
+            f"MOVES: UP={dir_status['UP']}  DOWN={dir_status['DOWN']}  "
+            f"LEFT={dir_status['LEFT']}  RIGHT={dir_status['RIGHT']}"
+        )
+
+    # NAV: A* path toward off-screen compass targets through visible obstacles.
+    # This gives multi-step maze navigation instead of just 1-tile MOVES.
+    # Different from the old broken "path to edge for off-screen warps" approach:
+    # labeled as a local step (re-evaluate after), not a complete route.
+    _MOVE_TO_EDGE = {"UP": "NORTH", "DOWN": "SOUTH", "LEFT": "WEST", "RIGHT": "EAST"}
+    if (_compass_targets and player_screen_pos and grid
+            and (has_collision or terrain is not None)):
+        from claude_player.utils.pathfinding import find_path_to_edge, path_to_buttons
+        # Sort by distance — navigate toward closest off-screen target first
+        _compass_targets.sort(key=lambda t: t[1])
+        _nav_shown = False
+        for _ct_dir, _ct_dist, _ct_name in _compass_targets:
+            edge_name = _MOVE_TO_EDGE.get(_ct_dir)
+            if not edge_name:
+                continue
+            edge_path = find_path_to_edge(grid, player_screen_pos, edge_name)
+            if edge_path:
+                buttons = path_to_buttons(edge_path)
+                if buttons:
+                    lines.append(
+                        f"NAV: toward {_ct_name} ({_ct_dir}): {buttons}"
+                        f" — follow this, then re-evaluate"
+                    )
+                    _nav_shown = True
+                    break
+        if not _nav_shown and _compass_targets:
+            # All direct edges blocked — try perpendicular directions to scroll view
+            _ct_dir = _compass_targets[0][0]
+            _perp = {"UP": ["LEFT", "RIGHT"], "DOWN": ["LEFT", "RIGHT"],
+                     "LEFT": ["UP", "DOWN"], "RIGHT": ["UP", "DOWN"]}
+            for alt_dir in _perp.get(_ct_dir, []):
+                alt_edge = _MOVE_TO_EDGE.get(alt_dir)
+                if alt_edge:
+                    alt_path = find_path_to_edge(grid, player_screen_pos, alt_edge)
+                    if alt_path:
+                        alt_buttons = path_to_buttons(alt_path)
+                        if alt_buttons:
+                            lines.append(
+                                f"NAV: {_ct_dir} blocked — detour {alt_dir}: {alt_buttons}"
+                                f" — scroll view to find {_ct_dir} passage"
+                            )
+                            break
+
     # Brief legend
     if has_collision or terrain is not None:
-        lines.append(". = walkable  # = blocked  , = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  (1 cell = 16 frames)")
+        lines.append(". = walkable  # = blocked  , = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  g = ghost  (1 cell = 16 frames)")
 
     # NPC/item text with A* paths
     has_grid = has_collision or terrain is not None
@@ -1670,5 +1822,5 @@ def extract_spatial_context(
             "story_progress": story_progress,
         }
     except Exception as e:
-        logger.error(f"Error extracting spatial context: {e}")
-        return {"text": "", "visible_tilemap": previous_tilemap, "player_pos": previous_player_pos, "game_state": None, "story_progress": None}
+        logger.error(f"Error extracting spatial context: {e}", exc_info=True)
+        return {"text": "", "visible_tilemap": previous_tilemap, "player_pos": previous_player_pos, "game_state": {}, "story_progress": None}

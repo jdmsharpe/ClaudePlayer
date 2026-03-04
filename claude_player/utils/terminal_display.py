@@ -1,7 +1,17 @@
+import io
 import os
 import sys
 import threading
 import time
+
+
+def _encode_jpeg(pil_image):
+    """Encode a PIL image to JPEG bytes (640×576, pixel-art nearest scaling)."""
+    buf = io.BytesIO()
+    rgb = pil_image.convert("RGB") if pil_image.mode != "RGB" else pil_image
+    scaled = rgb.resize((640, 576), resample=0)  # NEAREST for pixel art
+    scaled.save(buf, format="JPEG", quality=80)
+    return buf.getvalue()
 
 
 class TerminalDisplay:
@@ -24,12 +34,24 @@ class TerminalDisplay:
         self.last_response = ""
         self.last_thinking = ""
         self.spatial_grid = ""
+        self.location = ""
         self.party_summary = ""
         self.bag_summary = ""
+        self.bag_items = []
+        self.party_mons = []
+        self.menu_summary = ""
         self.status = "Starting..."
         self.analysis_duration = 0.0
         self.error_count = 0
         self.fps = 0.0
+        self.dex_caught = 0
+        self.dex_seen = 0
+        self.trainer_name = ""
+        self.trainer_id = 0
+        self.play_time = ""
+        self.badges = []
+        self._raw_frame = None   # latest raw PIL image (stored cheaply; encoding is off-thread)
+        self._frame_seq = 0     # increments on each new frame, for MJPEG change detection
 
     # --- public API ---
 
@@ -44,6 +66,29 @@ class TerminalDisplay:
     def print_event(self, text: str):
         """Print a one-off event line. Currently a no-op since we clear the screen."""
         pass
+
+    def set_frame(self, pil_image):
+        """Store latest raw PIL frame. Cheap: no encoding; JPEG encoding is off-thread."""
+        if pil_image is None:
+            return
+        # Copy so the emulator can reuse its buffer without affecting our stored frame.
+        frame_copy = pil_image.copy()
+        with self._lock:
+            self._raw_frame = frame_copy
+            self._frame_seq += 1
+
+    def get_raw_frame(self):
+        """Return (pil_image, seq) for off-thread encoding (e.g. MJPEG generator)."""
+        with self._lock:
+            return self._raw_frame, self._frame_seq
+
+    def get_frame_jpeg(self):
+        """Encode and return the latest frame as JPEG bytes (for /api/frame snapshot)."""
+        with self._lock:
+            img = self._raw_frame
+        if img is None:
+            return None
+        return _encode_jpeg(img)
 
     # --- internals ---
 
@@ -128,11 +173,20 @@ class TerminalDisplay:
                 lines.extend(wrap_rows("Thinking", self.last_thinking, max_lines=5))
             if self.spatial_grid:
                 lines.append(f"├{sep}┤")
+                after_legend = False
+                npc_sep_added = False
                 for grid_line in self.spatial_grid.split("\n"):
+                    if after_legend and not npc_sep_added and grid_line.strip():
+                        lines.append(f"├{sep}┤")
+                        npc_sep_added = True
                     padded = f" {grid_line} "
                     lines.append(f"│{padded:<{w}}│")
-            if self.party_summary or self.bag_summary:
+                    if grid_line.startswith(". = walkable"):
+                        after_legend = True
+            if self.party_summary or self.bag_summary or self.menu_summary:
                 lines.append(f"├{sep}┤")
+                if self.menu_summary:
+                    lines.extend(wrap_rows("Menu", self.menu_summary))
                 if self.party_summary:
                     lines.extend(wrap_rows("Party", self.party_summary))
                 if self.bag_summary:

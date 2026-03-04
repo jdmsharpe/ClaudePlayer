@@ -33,6 +33,7 @@ class ConfigClass:
     MAX_SCREENSHOTS: int
     BOOT_FRAMES: int
     CUSTOM_INSTRUCTIONS: Optional[str]
+    WEB_PORT: int
     MODEL_DEFAULTS: ModelConfig
     ACTION: ActionConfig
     SUMMARY: SummaryConfig

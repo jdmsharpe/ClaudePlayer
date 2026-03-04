@@ -91,8 +91,7 @@ def check_story_progress(memory_read_func: Callable[[int], int]) -> Dict[str, An
     done = len(completed)
 
     if next_milestone:
-        last_name = completed[-1][1] if completed else "none"
-        summary = f"{done}/{total} milestones (last: {last_name}) | NEXT: {next_milestone[2]}"
+        summary = f"{done}/{total} milestones → NEXT: {next_milestone[2]}"
     elif done == total:
         summary = f"{done}/{total} milestones — game complete!"
     else:
@@ -137,7 +136,15 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (0x077, 0x01): "Head NORTH toward Route 2 and Viridian Forest.",
     (0x077, 0x0D): "Enter the gatehouse to reach Viridian Forest.",
     (0x077, 0x32): "Walk NORTH through the gate to enter Viridian Forest.",
-    (0x077, 0x33): "Navigate NORTH through the forest to the exit.",
+    (0x077, 0x33): (
+        "Viridian Forest is a winding maze (17x24 tiles). "
+        "NORTH exit (to Pewter City): in the NORTHWEST corner — go EAST then NORTH. "
+        "SOUTH exit (to Route 2 / back to heal): in the SOUTH-CENTER. "
+        "Use the COMPASS bearings to track distance to exits. "
+        "Follow [path:] hints only for warps VISIBLE on the grid. "
+        "For off-screen exits, move toward the compass direction and check each new screen. "
+        "IMPORTANT: Do NOT wander west — the west side is a dead end."
+    ),
     (0x077, 0x2F): "Exit NORTH to reach Route 2 near Pewter City.",
     (0x077, 0x02): "Enter Pewter Gym and defeat Brock.",
     (0x077, 0x36): "Battle the trainers and defeat Brock at the back of the gym.",

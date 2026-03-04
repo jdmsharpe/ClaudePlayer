@@ -30,20 +30,19 @@ class SummaryGenerator:
         logging.info(f"Generating gameplay summary #{self.summary_count}")
         
         # Create a system prompt for the summary generation
-        system_prompt = """Summarize this gameplay session in three sections:
-1. GAMEPLAY SUMMARY: Key events, achievements, story progress
-2. CRITICAL REVIEW: What worked/failed in last 30 steps, strategic patterns
-3. NEXT STEPS: Immediate goals and actions
+        system_prompt = """Summarize this gameplay session in plain text (no markdown, no bullets, no headers). Three short paragraphs:
+1. SITUATION: Where the player is, current HP/party state, what just happened (2-3 sentences).
+2. REVIEW: What worked or failed in the last 20 turns, any patterns to avoid (1-2 sentences).
+3. NEXT: The single most important action to take next (1-2 sentences).
 
-Rules: GAME STATE line is RAM-derived and may be stale after transitions. Prefer visible evidence when they conflict. Only describe confirmed events. Drop unverified claims from previous summary. Never invent menus/dialogue not visible in screenshots. Milestone counts MUST match the AUTHORITATIVE STORY PROGRESS line exactly — never invent or estimate progress numbers. Under 3000 chars.
+Rules: GAME STATE line may be stale — trust visible screenshots over it. Only describe confirmed events; drop unverified claims from the prior summary. Milestone counts MUST match the AUTHORITATIVE STORY PROGRESS line exactly. Under 1200 chars.
 """
 
-        initial_summary_system_prompt = """Summarize this game's initial state in three sections:
-1. GAMEPLAY SUMMARY: Identify the game, objective, and starting state
-2. NEXT STEPS: Immediate goals and actions
-3. GAMEPLAY TIPS: Control scheme, key mechanics
+        initial_summary_system_prompt = """Summarize the game's starting state in plain text (no markdown, no bullets). Two short paragraphs:
+1. SITUATION: Game identified, objective, starting location and party state (2 sentences).
+2. NEXT: Immediate first actions to take (1-2 sentences).
 
-GAME STATE line is RAM-derived and may be stale after transitions. Only describe confirmed facts. Milestone counts MUST match the AUTHORITATIVE STORY PROGRESS line exactly — never invent or estimate progress numbers. Under 3000 chars.
+Only describe confirmed facts. Under 800 chars.
 """
 
         # Create a structured message that includes the previous summary and chat history
@@ -117,7 +116,7 @@ GAME STATE line is RAM-derived and may be stale after transitions. Only describe
                 summary += block.text
 
             # Cap summary length to prevent context bloat and hallucination surface area
-            max_summary_len = 3000
+            max_summary_len = 1200
             if len(summary) > max_summary_len:
                 logging.warning(f"Summary too long ({len(summary)} chars), truncating to {max_summary_len}")
                 # Try to truncate at a paragraph/section boundary
@@ -125,7 +124,7 @@ GAME STATE line is RAM-derived and may be stale after transitions. Only describe
                 last_newline = truncated.rfind("\n")
                 if last_newline > max_summary_len * 0.7:
                     truncated = truncated[:last_newline]
-                summary = truncated + "\n[Summary truncated for brevity]"
+                summary = truncated + "\n[truncated]"
 
             logging.info(f"Summary generated successfully ({len(summary)} chars)")
             return summary

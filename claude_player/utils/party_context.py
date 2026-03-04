@@ -261,9 +261,6 @@ def assess_party_health(party: List[Dict[str, Any]]) -> Dict[str, Any]:
     elif total_hp_pct < 25 or (fainted >= 2 and alive == 1):
         recommendation = f"URGENT: {heal_where}!"
         needs_healing = True
-    elif lead_fainted:
-        recommendation = f"Lead fainted — {heal_where} or switch lead"
-        needs_healing = True
     elif total_hp_pct < 50 or fainted >= 2:
         recommendation = f"{heal_where} soon"
         needs_healing = True

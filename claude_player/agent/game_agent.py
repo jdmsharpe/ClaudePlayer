@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import time
+import signal
 import threading
 import collections
 from datetime import datetime
@@ -19,6 +20,7 @@ from claude_player.utils.spatial_context import extract_spatial_context
 from claude_player.utils.battle_context import extract_battle_context
 from claude_player.utils.party_context import extract_party_context
 from claude_player.utils.bag_context import extract_bag_context
+from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
 
 # Error strings that indicate non-recoverable failures (no point retrying)
@@ -93,8 +95,21 @@ class GameAgent:
         self._action_history = []  # List of (turn, action_string) tuples
         self._max_action_history = 8
 
+        # Direction reversal detection: track last move's primary direction
+        self._last_move_direction: str | None = None  # U/D/L/R
+        self._reversal_detected = False  # Set True when next move reverses last
+
+        # Dead-end memory: positions where CYCLING was detected
+        # List of (map_x, map_y) absolute positions confirmed as dead ends
+        self._dead_end_zones: list[tuple[int, int]] = []
+
         # Current context mode — drives which system prompt block to include
         self._in_battle = False
+        self._in_menu = False
+
+        # Battle-specific stuck detection: track battle state between turns
+        self._battle_stuck_count = 0
+        self._last_battle_snapshot = None  # (player_hp, enemy_hp, menu_type, cursor)
 
         # Party context: only inject when meaningful changes occur or periodically
         self._last_party_snapshot = None  # (hp, status) tuples for change detection
@@ -135,6 +150,19 @@ class GameAgent:
 
         # Initialize terminal display
         self.display = TerminalDisplay()
+
+        # Initialize web streamer (if configured)
+        self.web_streamer = None
+        web_port = getattr(self.config, 'WEB_PORT', 0)
+        if web_port:
+            try:
+                from claude_player.web.web_server import WebStreamer
+                self.web_streamer = WebStreamer(self.display, port=web_port, config=self.config)
+                self.web_streamer.start()
+            except ImportError:
+                logging.warning("Flask not installed — web streamer disabled (pip install flask)")
+            except Exception as e:
+                logging.warning(f"Failed to start web streamer: {e}")
     
     def _limit_screenshots_in_history(self):
         """
@@ -226,6 +254,8 @@ class GameAgent:
         self._maybe_save_state()
 
         screenshot = take_screenshot(self.pyboy, True)
+        # Feed raw frame to display for web streaming
+        self.display.set_frame(self.pyboy.screen.image)
         spatial_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT:
             spatial_data = extract_spatial_context(
@@ -268,45 +298,134 @@ class GameAgent:
                         and abs(current_pos[0] - self._visited_positions[-1][0])
                         + abs(current_pos[1] - self._visited_positions[-1][1]) > 10):
                     self._visited_positions.clear()
+                    self._dead_end_zones.clear()  # new map — reset dead ends
                 self._visited_positions.append(current_pos)
 
-            # Exploration hint: analyze visited positions to suggest new directions
+            # ── Unified navigation hint (single message, priority-based) ──
+            # Instead of layering multiple independent warnings (CYCLING,
+            # LOOPING, THRASHING, DEAD END, EXPLORATION) that can
+            # contradict each other, compute ONE coherent directive.
             if (len(self._visited_positions) >= 10
                     and current_pos is not None
                     and spatial_data.get("text")):
                 cx, cy = current_pos
+                from collections import Counter
+                pos_counts = Counter(self._visited_positions)
+                most_visited_pos, most_visited_count = pos_counts.most_common(1)[0]
+                unique_tiles = len(pos_counts)
                 xs = [p[0] for p in self._visited_positions]
                 ys = [p[1] for p in self._visited_positions]
+                x_range = max(xs) - min(xs)
+                y_range = max(ys) - min(ys)
+
+                is_cycling = (len(self._visited_positions) >= 8
+                              and most_visited_count >= 4)
+                is_small_area = (len(self._visited_positions) >= 15
+                                 and x_range <= 6 and y_range <= 6)
+                is_thrashing = (len(self._visited_positions) >= 15
+                                and x_range > 8 and y_range <= 3)
+
+                # Record dead-end zone when cycling detected
+                if is_cycling:
+                    if not any(abs(cx - dz[0]) + abs(cy - dz[1]) <= 3
+                              for dz in self._dead_end_zones):
+                        self._dead_end_zones.append((cx, cy))
+                        logging.info(f"DEAD-END ZONE recorded at ({cx},{cy})")
+
+                # Compute avoid/suggest directions from dead-end zones
+                avoid_dirs: list[str] = []
+                at_dead_end = False
+                for dz_x, dz_y in self._dead_end_zones:
+                    dist = abs(cx - dz_x) + abs(cy - dz_y)
+                    if dist <= 3:
+                        at_dead_end = True
+                    elif dist <= 8:
+                        dx_dz, dy_dz = dz_x - cx, dz_y - cy
+                        if dy_dz < -2 and "NORTH" not in avoid_dirs:
+                            avoid_dirs.append("NORTH")
+                        elif dy_dz > 2 and "SOUTH" not in avoid_dirs:
+                            avoid_dirs.append("SOUTH")
+                        if dx_dz < -2 and "WEST" not in avoid_dirs:
+                            avoid_dirs.append("WEST")
+                        elif dx_dz > 2 and "EAST" not in avoid_dirs:
+                            avoid_dirs.append("EAST")
+
+                # Compute unexplored directions from movement centroid
                 avg_x = sum(xs) / len(xs)
                 avg_y = sum(ys) / len(ys)
-                # Centroid relative to current pos: where we've BEEN
-                dx_c = avg_x - cx
-                dy_c = avg_y - cy
-                # Suggest opposite of where we've been clustering
-                suggestions = []
+                dx_c, dy_c = avg_x - cx, avg_y - cy
+                suggest_dirs: list[str] = []
                 if dy_c > 1.0:
-                    suggestions.append("NORTH")
+                    suggest_dirs.append("NORTH")
                 elif dy_c < -1.0:
-                    suggestions.append("SOUTH")
+                    suggest_dirs.append("SOUTH")
                 if dx_c > 1.0:
-                    suggestions.append("WEST")
+                    suggest_dirs.append("WEST")
                 elif dx_c < -1.0:
-                    suggestions.append("EAST")
-                if suggestions:
-                    been_dirs = []
-                    if dy_c > 1.0:
-                        been_dirs.append("SOUTH")
-                    elif dy_c < -1.0:
-                        been_dirs.append("NORTH")
-                    if dx_c > 1.0:
-                        been_dirs.append("EAST")
-                    elif dx_c < -1.0:
-                        been_dirs.append("WEST")
-                    spatial_data["text"] += (
-                        f"\nEXPLORATION: Recent movement clustered "
-                        f"{'/'.join(been_dirs)}"
-                        f" — try {' or '.join(suggestions)} for new areas"
+                    suggest_dirs.append("EAST")
+                # Remove suggestions that lead toward dead ends
+                suggest_dirs = [d for d in suggest_dirs if d not in avoid_dirs]
+
+                # Build ONE navigation hint based on priority
+                nav_hint = ""
+
+                if is_cycling and at_dead_end:
+                    # P1: Cycling at a known dead end — strongest warning
+                    rec = (f" Try {' or '.join(suggest_dirs)}."
+                           if suggest_dirs else
+                           " Try any direction you haven't attempted yet.")
+                    nav_hint = (
+                        f"STUCK: Looping at dead-end ({cx},{cy}) —"
+                        f" tile visited {most_visited_count}x."
+                        f" LEAVE this area.{rec}"
                     )
+                elif is_cycling:
+                    # P2: Cycling but not at a recorded dead end
+                    rec = (f" Try {' or '.join(suggest_dirs)}."
+                           if suggest_dirs else "")
+                    avoid = (f" Avoid {'/'.join(avoid_dirs)} (dead end)."
+                             if avoid_dirs else "")
+                    nav_hint = (
+                        f"STUCK: Tile ({most_visited_pos[0]},{most_visited_pos[1]})"
+                        f" visited {most_visited_count}x in {len(self._visited_positions)}"
+                        f" turns. You are looping.{avoid}{rec}"
+                    )
+                elif is_small_area or is_thrashing:
+                    # P3: Stuck in a small area or thrashing laterally
+                    label = (f"Bouncing {x_range} tiles east-west without"
+                             f" vertical progress" if is_thrashing else
+                             f"Confined to {x_range+1}x{y_range+1} tile area"
+                             f" for {len(self._visited_positions)} turns")
+                    avoid = (f" Avoid {'/'.join(avoid_dirs)} (dead end)."
+                             if avoid_dirs else "")
+                    rec = (f" Try {' or '.join(suggest_dirs)}."
+                           if suggest_dirs else
+                           " Pick ONE new direction and commit to it.")
+                    nav_hint = f"STUCK: {label}.{avoid}{rec}"
+                elif at_dead_end:
+                    # P4: At dead end but not cycling yet — early warning
+                    rec = (f" Try {' or '.join(suggest_dirs)}."
+                           if suggest_dirs else
+                           " Move in a direction you haven't tried.")
+                    nav_hint = (
+                        f"WARNING: Near a known dead-end zone ({cx},{cy})."
+                        f" Leave before you get stuck.{rec}"
+                    )
+                elif avoid_dirs:
+                    # P5: Near a dead end (not at it, not cycling)
+                    nav_hint = (
+                        f"NOTE: Avoid going {'/'.join(avoid_dirs)}"
+                        f" — leads to a dead end you already explored."
+                    )
+                elif suggest_dirs and "[path:" not in spatial_data["text"]:
+                    # P6: Mild exploration hint (only when no A* path)
+                    nav_hint = (
+                        f"EXPLORE: Recent movement clustered"
+                        f" — try {' or '.join(suggest_dirs)} for new areas."
+                    )
+
+                if nav_hint:
+                    spatial_data["text"] += f"\n{nav_hint}"
 
             # Auto-set goal from event flags
             story_progress = spatial_data.get("story_progress")
@@ -323,8 +442,11 @@ class GameAgent:
         # Extract battle context when in battle (replaces spatial grid)
         battle_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT and spatial_data:
-            if spatial_data.get("game_state", {}).get("state") == "battle":
-                battle_data = extract_battle_context(self.pyboy)
+            if (spatial_data.get("game_state") or {}).get("state") == "battle":
+                # self._in_battle still holds the PREVIOUS turn's value here
+                # (updated at line ~511 after capture). So not self._in_battle
+                # correctly identifies "just entered battle this turn".
+                battle_data = extract_battle_context(self.pyboy, just_entered_battle=not self._in_battle)
 
         # Extract party context (always available — overworld and battle)
         party_data = None
@@ -346,12 +468,22 @@ class GameAgent:
         if self.config.ENABLE_SPATIAL_CONTEXT:
             bag_data = extract_bag_context(self.pyboy)
 
+        # Extract overworld menu context (dialogue/menu state, not battle)
+        menu_data = None
+        if self.config.ENABLE_SPATIAL_CONTEXT and spatial_data:
+            gs = (spatial_data.get("game_state") or {}).get("state")
+            if gs == "dialogue" and not battle_data:
+                menu_data = extract_menu_context(
+                    self.pyboy, party_data=party_data, bag_data=bag_data,
+                )
+
         return {
             "screenshot": screenshot,
             "spatial_data": spatial_data,
             "battle_data": battle_data,
             "party_data": party_data,
             "bag_data": bag_data,
+            "menu_data": menu_data,
             "cartridge_title": self.pyboy.cartridge_title,
         }
 
@@ -372,11 +504,32 @@ class GameAgent:
 
         # Extract display text for terminal
         spatial_grid = ""
+        location = ""
         spatial_data = captured_state.get("spatial_data")
         battle_data = captured_state.get("battle_data")
 
+        menu_data = captured_state.get("menu_data")
+
         self._was_in_battle = self._in_battle
         self._in_battle = bool(battle_data and battle_data.get("text"))
+        self._in_menu = bool(menu_data and menu_data.get("text"))
+
+        # Battle stuck detection: track HP/menu between turns
+        if self._in_battle and battle_data:
+            snap = (
+                battle_data.get("player", {}).get("hp"),
+                battle_data.get("enemy", {}).get("hp"),
+                battle_data.get("menu_type"),
+                battle_data.get("cursor"),
+            )
+            if snap == self._last_battle_snapshot:
+                self._battle_stuck_count += 1
+            else:
+                self._battle_stuck_count = 0
+            self._last_battle_snapshot = snap
+        elif not self._in_battle:
+            self._battle_stuck_count = 0
+            self._last_battle_snapshot = None
 
         if self._in_battle:
             # In battle: show battle context in terminal
@@ -384,6 +537,9 @@ class GameAgent:
         elif spatial_data and spatial_data["text"]:
             # Overworld: extract grid lines for terminal
             grid_lines = []
+            map_name_line = ""
+            map_pos_line = ""
+            region_line = ""
             for line in spatial_data["text"].split("\n"):
                 stripped = line.lstrip()
                 # Column header (digits row) or grid row (starts with digit)
@@ -391,7 +547,27 @@ class GameAgent:
                     grid_lines.append(line)
                 elif line.startswith("GAME STATE:") or line.startswith("PROGRESS:"):
                     grid_lines.append(line)
+                elif line.startswith("Map:"):
+                    map_name_line = line
+                elif line.startswith("Map position:"):
+                    map_pos_line = line
+                elif line.startswith("Region:"):
+                    region_line = line
             spatial_grid = "\n".join(grid_lines)
+            # Compose compact location string for web dashboard
+            location_parts = []
+            if map_name_line:
+                # "Map: Viridian City (size=34x48)" → "Viridian City"
+                name_part = map_name_line[len("Map:"):].split("(")[0].strip()
+                location_parts.append(name_part)
+            if map_pos_line:
+                # "Map position: (17, 19) of 34x48" → keep as-is
+                location_parts.append(map_pos_line[len("Map position:"):].strip())
+            location = " — ".join(location_parts)
+            if region_line:
+                # "Region: South Forest — hint..." → "South Forest"
+                region_name = region_line[len("Region:"):].split("—")[0].strip()
+                location += f"\n{region_name}"
 
         # Build compact one-line summaries for terminal display
         party_data = captured_state.get("party_data")
@@ -409,6 +585,16 @@ class GameAgent:
                 team += f" — {health['recommendation']}"
             party_summary = " | ".join(mons) + f" [{team}]"
 
+        party_mons_list = []
+        if party_data and party_data.get("party"):
+            party_mons_list = [
+                {"name": m["name"], "level": m["level"], "hp": m["hp"],
+                 "max_hp": m["max_hp"], "types": m.get("types", []),
+                 "status": m.get("status", "OK"),
+                 "exp": m.get("exp", 0)}
+                for m in party_data["party"]
+            ]
+
         bag_summary = ""
         if bag_data and bag_data.get("assessment"):
             a = bag_data["assessment"]
@@ -424,6 +610,50 @@ class GameAgent:
                 parts.append(f"Key: {', '.join(a['key_items'][:3])}")
             bag_summary = " | ".join(parts)
 
+        bag_items_list = []
+        if bag_data and bag_data.get("items"):
+            bag_items_list = [
+                {"name": it["name"], "qty": it["quantity"], "cat": it["category"]}
+                for it in bag_data["items"]
+            ]
+
+        menu_summary = ""
+        if menu_data and menu_data.get("menu_type"):
+            mt = menu_data
+            menu_summary = (
+                f"{mt['menu_type'].replace('_', ' ').title()} "
+                f"[cursor:{mt['cursor']}/{mt.get('max_item', 0)}]"
+            )
+
+        # Read Pokédex caught count from RAM (wPokedexOwned = 0xD2F7, 19 bytes, 1 bit/mon)
+        dex_caught = sum(bin(self.pyboy.memory[0xD2F7 + i]).count("1") for i in range(19))
+        dex_seen = sum(bin(self.pyboy.memory[0xD30A + i]).count("1") for i in range(19))
+
+        # Read trainer name from RAM (wPlayerName = 0xD158, 11 bytes, Gen 1 charset, 0x50=terminator)
+        _G1_CHARS = {
+            **{0x80 + i: chr(ord('A') + i) for i in range(26)},
+            **{0xA0 + i: chr(ord('a') + i) for i in range(26)},
+            **{0xF6 + i: chr(ord('0') + i) for i in range(10)},
+        }
+        raw = []
+        for i in range(11):
+            b = self.pyboy.memory[0xD158 + i]
+            if b == 0x50:
+                break
+            raw.append(b)
+        trainer_name = "".join(_G1_CHARS.get(b, "") for b in raw).strip() or ""
+
+        # Trainer ID (wPlayerID = 0xD359, 2 bytes big-endian)
+        trainer_id = (self.pyboy.memory[0xD359] << 8) | self.pyboy.memory[0xD35A]
+
+        # Play time (wPlayTimeHours = 0xDA40 word, wPlayTimeMinutes = 0xDA42 byte)
+        pt_hours = (self.pyboy.memory[0xDA40] << 8) | self.pyboy.memory[0xDA41]
+        pt_mins = self.pyboy.memory[0xDA42]
+        play_time = f"{pt_hours}:{pt_mins:02d}"
+
+        # Badges list from bag data (already read above)
+        badges_list = bag_data.get("badges", []) if bag_data else []
+
         # Update terminal display
         self.display.update(
             turn=self.game_state.turn_count,
@@ -431,8 +661,18 @@ class GameAgent:
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
             goal=self.game_state.current_goal or "",
             spatial_grid=spatial_grid,
+            location=location,
             party_summary=party_summary,
+            party_mons=party_mons_list,
             bag_summary=bag_summary,
+            bag_items=bag_items_list,
+            menu_summary=menu_summary,
+            dex_caught=dex_caught,
+            dex_seen=dex_seen,
+            trainer_name=trainer_name,
+            trainer_id=trainer_id,
+            play_time=play_time,
+            badges=badges_list,
         )
 
         # Build user content from pre-captured data
@@ -443,6 +683,10 @@ class GameAgent:
             user_content.append({"type": "text", "text": battle_data["text"]})
         elif spatial_data and spatial_data["text"]:
             user_content.append({"type": "text", "text": spatial_data["text"]})
+
+        # Menu context: inject every turn when active (menus change frequently)
+        if menu_data and menu_data.get("text"):
+            user_content.append({"type": "text", "text": menu_data["text"]})
 
         # Party status: inject only on meaningful changes or periodically
         if party_data and party_data.get("text"):
@@ -481,6 +725,44 @@ class GameAgent:
 
             self._last_bag_snapshot = current_bag_snapshot
 
+        # Critical HP urgency: when party is nearly wiped, prioritize retreat
+        if (party_data and not self._in_battle
+                and spatial_data and (spatial_data.get("game_state") or {}).get("state") == "overworld"):
+            health = party_data.get("health", {})
+            hp_pct = health.get("total_hp_pct", 100)
+            alive_count = health.get("alive", 6)
+            total_count = health.get("total", 6)
+            if hp_pct <= 25 and alive_count <= 2:
+                fainted = total_count - alive_count
+                is_stuck_and_lost = bool(self._dead_end_zones)
+                if is_stuck_and_lost:
+                    # Agent is cycling in dead ends with critical HP —
+                    # a blackout teleports to Pokemon Center (optimal play)
+                    user_content.append({
+                        "type": "text",
+                        "text": (
+                            f"CRITICAL HP: {fainted}/{total_count} Pokemon fainted,"
+                            f" {hp_pct}% HP remaining. You are STUCK in a dead-end area."
+                            f" BEST STRATEGY: Walk INTO grass (,) tiles to trigger a"
+                            f" wild battle. Let your last Pokemon faint — a blackout"
+                            f" teleports you to the nearest Pokemon Center for FREE"
+                            f" healing. This is faster than wandering lost. Do NOT"
+                            f" avoid grass — seek it out."
+                        )
+                    })
+                    logging.warning(f"CRITICAL HP + STUCK: {fainted}/{total_count} fainted, {hp_pct}% HP — blackout strategy suggested")
+                else:
+                    user_content.append({
+                        "type": "text",
+                        "text": (
+                            f"CRITICAL HP WARNING: {fainted}/{total_count} Pokemon fainted,"
+                            f" {hp_pct}% HP remaining. Another wild encounter could cause a blackout."
+                            f" PRIORITY: Avoid grass tiles (,) and exit to the nearest town with"
+                            f" a Pokemon Center. If you have a repel, use it to skip encounters."
+                        )
+                    })
+                logging.warning(f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP — retreat urgency injected")
+
         # Stuck detection: escalating intervention when player hasn't moved
         if self._stuck_count >= 2:
             # Build action history text so the model can see what it already tried
@@ -513,6 +795,56 @@ class GameAgent:
                 })
                 logging.warning(f"STUCK DETECTION: Player at same position for {self._stuck_count} turns")
 
+        # Battle stuck detection: same HP/menu/cursor for too many turns
+        if self._in_battle and self._battle_stuck_count >= 4:
+            history_lines = []
+            for turn, action in self._action_history[-5:]:
+                history_lines.append(f"  Turn {turn}: {action}")
+            history_text = "\n".join(history_lines) if history_lines else "  (none)"
+
+            if self._battle_stuck_count >= 7:
+                user_content.append({
+                    "type": "text",
+                    "text": (
+                        f"BATTLE STUCK {self._battle_stuck_count} turns! "
+                        f"Recent actions:\n{history_text}\n"
+                        "STOP reasoning — your inputs are not working. Try IN ORDER:\n"
+                        "1. B B B (back out of any submenu to main battle menu)\n"
+                        "2. Then FOLLOW THE TIP exactly — send its compound input\n"
+                        "3. If no TIP: A A A A A (advance text/animations)"
+                    )
+                })
+                logging.warning(f"BATTLE STUCK (CRITICAL): {self._battle_stuck_count} turns, same battle state")
+            else:
+                user_content.append({
+                    "type": "text",
+                    "text": (
+                        f"BATTLE STALLED {self._battle_stuck_count} turns — "
+                        "you may be in a submenu. Send B B to return to main menu, "
+                        "then FOLLOW THE TIP exactly."
+                    )
+                })
+                logging.warning(f"BATTLE STUCK: {self._battle_stuck_count} turns, same state")
+
+        # Direction reversal warning: flag when agent immediately undoes last move
+        if (self._reversal_detected and self._last_move_direction
+                and not self._in_battle
+                and spatial_data and (spatial_data.get("game_state") or {}).get("state") == "overworld"):
+            _dir_names = {'U': 'UP', 'D': 'DOWN', 'L': 'LEFT', 'R': 'RIGHT'}
+            _rev_map = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
+            prev_dir = _dir_names.get(self._last_move_direction, '?')
+            came_from = _dir_names.get(_rev_map.get(self._last_move_direction, ''), '?')
+            user_content.append({
+                "type": "text",
+                "text": (
+                    f"REVERSAL WARNING: Your last move went {prev_dir},"
+                    f" but the move before that went {came_from}."
+                    f" You are undoing your own progress."
+                    f" Commit to a direction — do not ping-pong."
+                )
+            })
+            logging.warning(f"REVERSAL: agent reversed direction ({came_from} → {prev_dir})")
+
         # Add timing header (include cartridge title only until game is identified)
         header = f"Current time: {current_time_str}\nTurn #{self.game_state.turn_count}"
         if not self.game_state.identified_game:
@@ -528,7 +860,8 @@ class GameAgent:
             self.game_state.add_to_complete_history(user_message)
         else:
             current_memory = self.game_state.get_current_state_summary(
-                compact=self.config.ENABLE_SPATIAL_CONTEXT
+                compact=self.config.ENABLE_SPATIAL_CONTEXT,
+                summary_interval=self.config.SUMMARY["SUMMARY_INTERVAL"],
             )
             content_prefix = [{"type": "text", "text": current_memory}] if current_memory else []
             user_message = {"role": "user", "content": content_prefix + user_content}
@@ -550,15 +883,19 @@ class GameAgent:
         
         # Check if we need to generate a summary (also retry if previous failed)
         summary_is_error = self.game_state.summary.startswith("[SUMMARY_ERROR]")
+        battle_state_changed = self._was_in_battle != self._in_battle
         should_generate = (
             (self.config.SUMMARY["INITIAL_SUMMARY"] and self.game_state.turn_count == 1)
             or (self.game_state.turn_count % self.config.SUMMARY["SUMMARY_INTERVAL"] == 0
                 and self.game_state.turn_count > 0)
             or summary_is_error
+            or (battle_state_changed and self.game_state.turn_count > 1)
         )
         if should_generate:
             if summary_is_error:
                 logging.info(f"Retrying failed summary at turn {self.game_state.turn_count}")
+            elif battle_state_changed:
+                logging.info(f"Generating summary at turn {self.game_state.turn_count} (battle state changed: {'entered' if self._in_battle else 'exited'} battle)")
             else:
                 logging.info(f"Generating summary at turn {self.game_state.turn_count}")
             summary = self.summary_generator.generate_summary(self.game_state.complete_message_history)
@@ -577,7 +914,9 @@ class GameAgent:
         for attempt in range(max_retries + 1):
             try:
                 # Generate system prompt with context-appropriate guidance block
-                system_prompt = self.claude.generate_system_prompt(in_battle=self._in_battle)
+                system_prompt = self.claude.generate_system_prompt(
+                    in_battle=self._in_battle, in_menu=self._in_menu,
+                )
 
                 # Get tools
                 tools = self.tool_registry.get_tools()
@@ -693,6 +1032,18 @@ class GameAgent:
                 self._action_history.append((self.game_state.turn_count, tool_input["inputs"]))
                 if len(self._action_history) > self._max_action_history:
                     self._action_history.pop(0)
+                # Track primary direction for reversal detection
+                import re as _re
+                _dir_match = _re.search(r'[UDLR]', tool_input["inputs"])
+                if _dir_match:
+                    new_dir = _dir_match.group()
+                    opposites = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
+                    if (self._last_move_direction
+                            and new_dir == opposites.get(self._last_move_direction)):
+                        self._reversal_detected = True
+                    else:
+                        self._reversal_detected = False
+                    self._last_move_direction = new_dir
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
@@ -978,6 +1329,18 @@ class GameAgent:
             with lock:
                 analysis_complete = True
         
+        # Shutdown event — signal handler sets this so Ctrl+C works even when
+        # the main thread is inside PyBoy's Cython tick() which swallows
+        # KeyboardInterrupt.  The event is also passed to press_and_release_buttons
+        # so long button holds (e.g. D64) can be interrupted immediately.
+        shutdown_event = threading.Event()
+        prev_handler = signal.getsignal(signal.SIGINT)
+
+        def _shutdown_handler(signum, frame):
+            shutdown_event.set()
+
+        signal.signal(signal.SIGINT, _shutdown_handler)
+
         # FPS tracking
         fps_frame_count = 0
         fps_last_log_time = time.time()
@@ -986,7 +1349,7 @@ class GameAgent:
 
         # Main continuous emulation loop
         try:
-            while True:
+            while not shutdown_event.is_set():
                 current_time = time.time()
                 
                 # Process any pending actions from the AI
@@ -999,10 +1362,20 @@ class GameAgent:
                     logging.info(f"Executing pending action: {action} (remaining: {len(pending_actions)})")
                     try:
                         from claude_player.utils.game_utils import press_and_release_buttons
-                        press_and_release_buttons(self.pyboy, action, settle_frames=0)
+                        frame_cb = self.display.set_frame if self.web_streamer else None
+                        press_and_release_buttons(self.pyboy, action, settle_frames=0, stop_event=shutdown_event, frame_callback=frame_cb)
                     except Exception as e:
                         logging.error(f"Error executing inputs '{action}': {str(e)}")
                         # Continue with next actions rather than crashing
+                    # Refresh battle context after action so the web/terminal cursor
+                    # matches the live game state (cursor RAM updates immediately on button press)
+                    if self._in_battle:
+                        try:
+                            fresh = extract_battle_context(self.pyboy)
+                            if fresh and fresh.get("text"):
+                                self.display.update(spatial_grid=fresh["text"])
+                        except Exception:
+                            pass
                     last_action_time = time.time()
                 
                 # Check if it's time to run AI analysis and we're not already analyzing
@@ -1046,6 +1419,10 @@ class GameAgent:
                     break
                 fps_frame_count += 1
 
+                # Feed web stream every 2nd tick (~30fps — plenty for the dashboard)
+                if self.web_streamer and fps_frame_count % 2 == 0:
+                    self.display.set_frame(self.pyboy.screen.image)
+
                 # Log FPS periodically
                 fps_elapsed = current_time - fps_last_log_time
                 if fps_elapsed >= fps_log_interval:
@@ -1056,8 +1433,12 @@ class GameAgent:
                     fps_last_log_time = current_time
                 
         except KeyboardInterrupt:
-            logging.info("Received keyboard interrupt, stopping emulation")
-            self.display.print_event("Stopping emulation...")
+            shutdown_event.set()
+        finally:
+            signal.signal(signal.SIGINT, prev_handler)
+
+        logging.info("Shutting down emulation")
+        self.display.print_event("Stopping emulation...")
 
         # Save state on exit so no progress is lost
         self._save_state_now("shutdown")

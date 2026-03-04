@@ -8,6 +8,7 @@ pyboy = "*"
 pillow = "*"
 python-dotenv = "*"
 anthropic = "*"
+flask = "*"
 
 [dev-packages]
 

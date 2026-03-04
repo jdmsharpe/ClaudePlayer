@@ -9,6 +9,7 @@ chat_history.json
 *.gb
 *.gb.state
 *.gb.ram
+*.state
 
 .env
 .git

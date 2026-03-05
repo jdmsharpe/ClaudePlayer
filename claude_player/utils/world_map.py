@@ -84,6 +84,35 @@ class WorldMap:
                 wy = py_map + w["dy"]
                 warp_map[(wx, wy)] = w.get("dest_name", "?")
 
+            # Record map connections as edge-tile warps.
+            # Connections = walk off the map edge to reach adjacent map.
+            # We synthesize warp entries on walkable edge tiles so A* can
+            # path to them just like regular warps.
+            mw = warp_data.get("map_width", 0)
+            mh = warp_data.get("map_height", 0)
+            for conn in warp_data.get("connections", []):
+                dest = conn.get("dest_name", "?")
+                d = conn.get("direction")
+                # Map dims are in blocks, coords are in steps (2 per block)
+                if d == "SOUTH":
+                    edge_y = mh * 2 - 1
+                    for ex in range(mw * 2):
+                        if tile_map.get((ex, edge_y)) in (".", ","):
+                            warp_map.setdefault((ex, edge_y), dest)
+                elif d == "NORTH":
+                    for ex in range(mw * 2):
+                        if tile_map.get((ex, 0)) in (".", ","):
+                            warp_map.setdefault((ex, 0), dest)
+                elif d == "WEST":
+                    for ey in range(mh * 2):
+                        if tile_map.get((0, ey)) in (".", ","):
+                            warp_map.setdefault((0, ey), dest)
+                elif d == "EAST":
+                    edge_x = mw * 2 - 1
+                    for ey in range(mh * 2):
+                        if tile_map.get((edge_x, ey)) in (".", ","):
+                            warp_map.setdefault((edge_x, ey), dest)
+
     def save(self, path: str) -> None:
         """Serialize explored map to JSON."""
         data = {

@@ -12,6 +12,7 @@ All context modules import from here to avoid duplication.
 # Battle / game state detection
 # ---------------------------------------------------------------------------
 ADDR_IS_IN_BATTLE   = 0xD057   # wIsInBattle: 0=overworld, 1=wild, 2=trainer
+ADDR_CUR_MAP        = 0xD35E   # wCurMap: current map number
 ADDR_STATUS_FLAGS5  = 0xD730   # wStatusFlags5: bit0=text box, bit5=joypad off, bit7=scripted
 ADDR_WINDOW_Y       = 0xFF4A   # WY register: window Y position (< 144 = visible)
 

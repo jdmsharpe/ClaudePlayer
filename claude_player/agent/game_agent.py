@@ -24,6 +24,7 @@ from claude_player.utils.party_context import extract_party_context
 from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
+from claude_player.utils.ram_constants import ADDR_IS_IN_BATTLE, ADDR_CUR_MAP
 from claude_player.agent.memory_manager import MemoryManager
 
 # Gen 1 character encoding (wPlayerName etc.)
@@ -1259,6 +1260,11 @@ class GameAgent:
         self.last_error_time = 0
         fatal_error_msg = None
 
+        # State-aware interrupt tracking: detect battle/map transitions mid-analysis
+        interrupt_fired = False
+        tracked_battle_state = self.pyboy.memory[ADDR_IS_IN_BATTLE]
+        tracked_map_id = self.pyboy.memory[ADDR_CUR_MAP]
+
         # Add threading lock for shared variables
         lock = threading.Lock()
         
@@ -1486,6 +1492,10 @@ class GameAgent:
                         analysis_complete = False
                 
                 if start_analysis:
+                    # Reset interrupt flag for the new analysis cycle
+                    with lock:
+                        interrupt_fired = False
+
                     # Capture PyBoy state ON THE MAIN THREAD before spawning AI thread
                     captured_state = self.capture_pyboy_state()
 
@@ -1502,6 +1512,13 @@ class GameAgent:
                 with lock:
                     if ai_is_analyzing and analysis_complete:
                         ai_is_analyzing = False
+                        if interrupt_fired:
+                            # State changed while AI was thinking — discard results, re-analyze now
+                            pending_actions.clear()
+                            adaptive_interval = 0.5  # minimal wait before fresh analysis
+                            last_action_time = 0     # bypass action settle check
+                            logging.info("INTERRUPT: analysis finished post-interrupt, scheduling immediate re-analysis")
+                            interrupt_fired = False
                     if fatal_error_msg:
                         logging.critical(f"Stopping continuous mode due to fatal error: {fatal_error_msg}")
                         self.display.print_event(f"Fatal error: {fatal_error_msg}")
@@ -1512,6 +1529,51 @@ class GameAgent:
                     # PyBoy signal to exit
                     break
                 fps_frame_count += 1
+
+                # --- State-aware interrupt detection ---
+                # Poll RAM every tick (~nanosecond cost) to catch battle/map transitions
+                cur_battle = self.pyboy.memory[ADDR_IS_IN_BATTLE]
+                cur_map = self.pyboy.memory[ADDR_CUR_MAP]
+
+                battle_changed = cur_battle != tracked_battle_state
+                map_changed = cur_map != tracked_map_id
+
+                if battle_changed or map_changed:
+                    reason_parts = []
+                    if battle_changed:
+                        reason_parts.append(f"battle {'started' if cur_battle else 'ended'} ({tracked_battle_state}->{cur_battle})")
+                    if map_changed:
+                        reason_parts.append(f"map changed ({tracked_map_id:#04x}->{cur_map:#04x})")
+                    reason = ", ".join(reason_parts)
+                    tracked_battle_state = cur_battle
+                    tracked_map_id = cur_map
+
+                    with lock:
+                        if ai_is_analyzing and not interrupt_fired:
+                            # Stale analysis in flight — discard its future actions
+                            interrupt_fired = True
+                            pending_actions.clear()
+                            logging.info(f"INTERRUPT: {reason} — discarding pending actions, will re-analyze immediately")
+                            self.display.print_event(f"Interrupt: {reason}")
+                        elif not ai_is_analyzing and pending_actions:
+                            # Actions queued from a now-stale analysis
+                            discarded = len(pending_actions)
+                            pending_actions.clear()
+                            logging.info(f"INTERRUPT: {reason} — discarded {discarded} stale queued actions")
+
+                    # Immediately refresh display context so dashboard reflects new state
+                    try:
+                        if cur_battle:
+                            # Battle just started — show battle grid immediately
+                            fresh_battle = extract_battle_context(self.pyboy, just_entered_battle=True)
+                            if fresh_battle and fresh_battle.get("text"):
+                                self.display.update(spatial_grid=fresh_battle["text"], status="Battle!")
+                        else:
+                            # Battle ended or map changed — clear battle grid,
+                            # show transitional status until next full analysis
+                            self.display.update(spatial_grid="", status="Transitioning...")
+                    except Exception:
+                        pass  # display refresh is best-effort
 
                 # Feed web stream every 2nd tick (~30fps — plenty for the dashboard)
                 if self.web_streamer and fps_frame_count % 2 == 0:

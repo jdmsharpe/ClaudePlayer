@@ -461,22 +461,33 @@ class WorldMap:
         best_len = float("inf")
 
         if warp_map:
-            # Split warps into preferred and fallback sets
+            # Split warps into preferred and other sets
             preferred_warps: List[Tuple[Tuple[int, int], str]] = []
+            other_warps: List[Tuple[Tuple[int, int], str]] = []
             for warp_pos, dest_name in warp_map.items():
                 if preferred_dest and preferred_dest.lower() in dest_name.lower():
                     preferred_warps.append((warp_pos, dest_name))
+                else:
+                    other_warps.append((warp_pos, dest_name))
 
-            # Try preferred warps only.  If preferred warps exist but have no
-            # A* path (unexplored maze), do NOT fall back to other warps — that
-            # would route the agent backward.  Only use all warps when no preferred set.
-            candidates = preferred_warps if preferred_warps else list(warp_map.items())
-            for warp_pos, dest_name in candidates:
+            # Always try preferred warps first.
+            for warp_pos, dest_name in preferred_warps:
                 path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
                 if path and len(path) < best_len:
                     best_path = path
                     best_name = dest_name
                     best_len = len(path)
+
+            # Only fall back to other warps when NO preferred_dest was given.
+            # If preferred_dest was set (agent has a goal direction), route to
+            # frontier instead — never send the agent to a backtrack warp.
+            if not best_path and not preferred_dest:
+                for warp_pos, dest_name in other_warps:
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
+                    if path and len(path) < best_len:
+                        best_path = path
+                        best_name = dest_name
+                        best_len = len(path)
 
         # Fall back to frontier exploration if no warp reachable
         if not best_path:

@@ -240,6 +240,7 @@ class WorldMap:
         start: Tuple[int, int],
         goal: Tuple[int, int],
         max_steps: int = _MAX_PATH_STEPS,
+        blocked: Optional[Set[Tuple[int, int]]] = None,
     ) -> Optional[List[Tuple[int, int]]]:
         """A* pathfinding on the accumulated tile map.
 
@@ -252,6 +253,7 @@ class WorldMap:
             start: (x, y) absolute map position of player.
             goal: (x, y) absolute map position of target.
             max_steps: Truncate path after this many steps (avoids huge outputs).
+            blocked: Extra positions to treat as impassable (e.g. NPC tiles).
 
         Returns:
             List of (x, y) positions from start to goal (or truncated), or None.
@@ -264,10 +266,13 @@ class WorldMap:
         # Goal must be in explored territory (or adjacent to it)
         if goal not in tile_map:
             return None
+        _extra_blocked = blocked or set()
 
         def _passable(x: int, y: int, dx: int, dy: int) -> bool:
             if (x, y) == goal or (x, y) == start:
                 return True  # player is standing here / goal always reachable
+            if (x, y) in _extra_blocked:
+                return False  # NPC or other temporary obstacle
             ch = tile_map.get((x, y))
             if ch is None:
                 return False  # unexplored = can't path through
@@ -326,6 +331,7 @@ class WorldMap:
         start: Tuple[int, int],
         preferred_direction: Optional[str] = None,
         dead_end_tiles: Optional[Set[Tuple[int, int]]] = None,
+        blocked: Optional[Set[Tuple[int, int]]] = None,
         max_steps: int = _MAX_PATH_STEPS,
     ) -> Optional[List[Tuple[int, int]]]:
         """Find path to the nearest frontier tile (walkable with unexplored neighbor).
@@ -342,6 +348,7 @@ class WorldMap:
 
         _WALKABLE = frozenset(".,")
         _dead = dead_end_tiles or set()
+        _extra_blocked = blocked or set()
 
         # Precompute frontier set: walkable tiles with ≥1 unexplored neighbor
         frontiers: Set[Tuple[int, int]] = set()
@@ -373,6 +380,8 @@ class WorldMap:
         def _passable(x: int, y: int, dx: int, dy: int) -> bool:
             if (x, y) == start:
                 return True
+            if (x, y) in _extra_blocked:
+                return False
             ch = tile_map.get((x, y))
             if ch is None:
                 return False
@@ -431,6 +440,7 @@ class WorldMap:
         preferred_dest: Optional[str] = None,
         preferred_direction: Optional[str] = None,
         dead_end_zones: Optional[List[Tuple[int, int]]] = None,
+        npc_positions: Optional[List[Tuple[int, int]]] = None,
         max_steps: int = _MAX_PATH_STEPS,
     ) -> Optional[str]:
         """Find A* path from player to a known warp, or nearest frontier.
@@ -438,7 +448,7 @@ class WorldMap:
         If *preferred_dest* is given (substring match on warp name), only
         warps matching it are tried.  If no warp is reachable, falls back
         to the nearest unexplored frontier in *preferred_direction*, avoiding
-        *dead_end_zones*.
+        *dead_end_zones*.  *npc_positions* are treated as temporary obstacles.
 
         Returns a NAV hint string with button commands, or None.
         """
@@ -454,6 +464,9 @@ class WorldMap:
                 for dy in range(-2, 3):
                     for dx in range(-2, 3):
                         dead_end_tiles.add((dz_x + dx, dz_y + dy))
+
+        # NPC positions as temporary obstacles
+        npc_blocked: Set[Tuple[int, int]] = set(npc_positions) if npc_positions else set()
 
         # Try warps first
         best_path: Optional[List[Tuple[int, int]]] = None
@@ -472,7 +485,7 @@ class WorldMap:
 
             # Always try preferred warps first.
             for warp_pos, dest_name in preferred_warps:
-                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
+                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
                 if path and len(path) < best_len:
                     best_path = path
                     best_name = dest_name
@@ -483,7 +496,7 @@ class WorldMap:
             # frontier instead — never send the agent to a backtrack warp.
             if not best_path and not preferred_dest:
                 for warp_pos, dest_name in other_warps:
-                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
                     if path and len(path) < best_len:
                         best_path = path
                         best_name = dest_name
@@ -495,6 +508,7 @@ class WorldMap:
                 map_id, player_pos,
                 preferred_direction=preferred_direction,
                 dead_end_tiles=dead_end_tiles,
+                blocked=npc_blocked,
                 max_steps=max_steps,
             )
             if frontier_path:

@@ -792,6 +792,7 @@ class GameAgent:
                     preferred_dest=preferred_dest,
                     preferred_direction=preferred_direction,
                     dead_end_zones=self._dead_end_zones,
+                    npc_positions=spatial_data.get("npc_abs_positions"),
                 )
                 if wm_nav:
                     # Replace viewport NAV with world-map NAV, placed

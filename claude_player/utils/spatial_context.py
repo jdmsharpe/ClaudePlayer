@@ -1776,6 +1776,16 @@ def extract_spatial_context(
 
         map_number = warp_data["map_number"] if warp_data else None
 
+        # Compute absolute map positions for non-ghost, non-item, non-object NPCs
+        # so world-map A* can treat them as temporary obstacles.
+        npc_abs_positions: List[Tuple[int, int]] = []
+        if npc_data and player_map_pos:
+            pmx, pmy = player_map_pos
+            for npc in npc_data:
+                if npc.get("is_ghost") or npc.get("is_item") or npc.get("is_object"):
+                    continue
+                npc_abs_positions.append((pmx + npc["dx"], pmy + npc["dy"]))
+
         return {
             "text": text,
             "visible_tilemap": visible,
@@ -1786,6 +1796,7 @@ def extract_spatial_context(
             "base_grid": base_grid,
             "map_number": map_number,
             "warp_data_raw": warp_data,
+            "npc_abs_positions": npc_abs_positions,
         }
     except Exception as e:
         logger.error(f"Error extracting spatial context: {e}", exc_info=True)

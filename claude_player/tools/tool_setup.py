@@ -32,26 +32,6 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         press_and_release_buttons(self.pyboy, inputs)
         return [{"type": "text", "text": "Inputs sent successfully"}]
     
-    # Register set_game tool
-    @registry.register(
-        name="set_game",
-        description="Set the identified game. Use this tool when you have determined what game is being played based on the frames provided.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "game": {
-                    "type": "string",
-                    "description": "Name of the game"
-                }
-            },
-            "required": ["game"]
-        }
-    )
-    def handle_set_game(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
-        self.game_state.identified_game = tool_input["game"]
-        logging.info(f"GAME SET TO: {self.game_state.identified_game}")
-        return [{"type": "text", "text": f"Game set to {self.game_state.identified_game}"}]
-    
     # Register set_current_goal tool
     @registry.register(
         name="set_current_goal",

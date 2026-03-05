@@ -5,6 +5,8 @@ import time
 import signal
 import threading
 import collections
+from collections import Counter
+import re
 from datetime import datetime
 from pyboy import PyBoy
 
@@ -22,6 +24,13 @@ from claude_player.utils.party_context import extract_party_context
 from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
+
+# Gen 1 character encoding (wPlayerName etc.)
+_G1_CHARS = {
+    **{0x80 + i: chr(ord('A') + i) for i in range(26)},
+    **{0xA0 + i: chr(ord('a') + i) for i in range(26)},
+    **{0xF6 + i: chr(ord('0') + i) for i in range(10)},
+}
 
 # Error strings that indicate non-recoverable failures (no point retrying)
 FATAL_ERROR_PATTERNS = [
@@ -95,9 +104,9 @@ class GameAgent:
         self._action_history = []  # List of (turn, action_string) tuples
         self._max_action_history = 8
 
-        # Direction reversal detection: track last move's primary direction
-        self._last_move_direction: str | None = None  # U/D/L/R
-        self._reversal_detected = False  # Set True when next move reverses last
+        # Direction reversal detection (overworld anti-ping-pong)
+        self._last_move_direction: str | None = None  # Last directional token (U/D/L/R)
+        self._consecutive_reversals = 0  # Count of back-to-back direction reversals
 
         # Dead-end memory: positions where CYCLING was detected
         # List of (map_x, map_y) absolute positions confirmed as dead ends
@@ -309,7 +318,6 @@ class GameAgent:
                     and current_pos is not None
                     and spatial_data.get("text")):
                 cx, cy = current_pos
-                from collections import Counter
                 pos_counts = Counter(self._visited_positions)
                 most_visited_pos, most_visited_count = pos_counts.most_common(1)[0]
                 unique_tiles = len(pos_counts)
@@ -350,19 +358,19 @@ class GameAgent:
                         elif dx_dz > 2 and "EAST" not in avoid_dirs:
                             avoid_dirs.append("EAST")
 
-                # Compute unexplored directions from movement centroid
+                # Suggest directions AWAY from movement centroid (unexplored territory)
                 avg_x = sum(xs) / len(xs)
                 avg_y = sum(ys) / len(ys)
                 dx_c, dy_c = avg_x - cx, avg_y - cy
                 suggest_dirs: list[str] = []
                 if dy_c > 1.0:
-                    suggest_dirs.append("NORTH")
-                elif dy_c < -1.0:
                     suggest_dirs.append("SOUTH")
+                elif dy_c < -1.0:
+                    suggest_dirs.append("NORTH")
                 if dx_c > 1.0:
-                    suggest_dirs.append("WEST")
-                elif dx_c < -1.0:
                     suggest_dirs.append("EAST")
+                elif dx_c < -1.0:
+                    suggest_dirs.append("WEST")
                 # Remove suggestions that lead toward dead ends
                 suggest_dirs = [d for d in suggest_dirs if d not in avoid_dirs]
 
@@ -630,11 +638,6 @@ class GameAgent:
         dex_seen = sum(bin(self.pyboy.memory[0xD30A + i]).count("1") for i in range(19))
 
         # Read trainer name from RAM (wPlayerName = 0xD158, 11 bytes, Gen 1 charset, 0x50=terminator)
-        _G1_CHARS = {
-            **{0x80 + i: chr(ord('A') + i) for i in range(26)},
-            **{0xA0 + i: chr(ord('a') + i) for i in range(26)},
-            **{0xF6 + i: chr(ord('0') + i) for i in range(10)},
-        }
         raw = []
         for i in range(11):
             b = self.pyboy.memory[0xD158 + i]
@@ -725,7 +728,7 @@ class GameAgent:
 
             self._last_bag_snapshot = current_bag_snapshot
 
-        # Critical HP urgency: when party is nearly wiped, prioritize retreat
+        # Critical HP urgency: when party is nearly wiped, prioritize healing
         if (party_data and not self._in_battle
                 and spatial_data and (spatial_data.get("game_state") or {}).get("state") == "overworld"):
             health = party_data.get("health", {})
@@ -734,116 +737,79 @@ class GameAgent:
             total_count = health.get("total", 6)
             if hp_pct <= 25 and alive_count <= 2:
                 fainted = total_count - alive_count
-                is_stuck_and_lost = bool(self._dead_end_zones)
-                if is_stuck_and_lost:
-                    # Agent is cycling in dead ends with critical HP —
-                    # a blackout teleports to Pokemon Center (optimal play)
-                    user_content.append({
-                        "type": "text",
-                        "text": (
-                            f"CRITICAL HP: {fainted}/{total_count} Pokemon fainted,"
-                            f" {hp_pct}% HP remaining. You are STUCK in a dead-end area."
-                            f" BEST STRATEGY: Walk INTO grass (,) tiles to trigger a"
-                            f" wild battle. Let your last Pokemon faint — a blackout"
-                            f" teleports you to the nearest Pokemon Center for FREE"
-                            f" healing. This is faster than wandering lost. Do NOT"
-                            f" avoid grass — seek it out."
-                        )
-                    })
-                    logging.warning(f"CRITICAL HP + STUCK: {fainted}/{total_count} fainted, {hp_pct}% HP — blackout strategy suggested")
-                else:
-                    user_content.append({
-                        "type": "text",
-                        "text": (
-                            f"CRITICAL HP WARNING: {fainted}/{total_count} Pokemon fainted,"
-                            f" {hp_pct}% HP remaining. Another wild encounter could cause a blackout."
-                            f" PRIORITY: Avoid grass tiles (,) and exit to the nearest town with"
-                            f" a Pokemon Center. If you have a repel, use it to skip encounters."
-                        )
-                    })
-                logging.warning(f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP — retreat urgency injected")
+                user_content.append({
+                    "type": "text",
+                    "text": (
+                        f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP."
+                        f" Heal soon — either head to a Pokemon Center or fight in battle"
+                        f" to black out (free teleport to nearest Center)."
+                    )
+                })
+                logging.warning(f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP")
 
         # Stuck detection: escalating intervention when player hasn't moved
         if self._stuck_count >= 2:
-            # Build action history text so the model can see what it already tried
-            history_lines = []
-            for turn, action in self._action_history[-5:]:
-                history_lines.append(f"  Turn {turn}: {action}")
-            history_text = "\n".join(history_lines) if history_lines else "  (none recorded)"
+            history_text = "\n".join(
+                f"  T{turn}: {action}" for turn, action in self._action_history[-5:]
+            ) or "  (none)"
 
             if self._stuck_count >= 5:
                 user_content.append({
                     "type": "text",
                     "text": (
-                        f"STUCK {self._stuck_count} turns! Failed actions:\n{history_text}\n"
-                        "Try ONE of these (do NOT repeat failed actions above):\n"
-                        "- D16, L16, R16, U16 (untried direction)\n"
-                        "- A1 (confirm/advance dialogue)\n"
-                        "- B1 (cancel/back out of menu)\n"
-                        "- S (open/close start menu)\n"
-                        "If in a YES/NO menu, use U16/D16 to move cursor then A1 to confirm."
+                        f"STUCK {self._stuck_count} turns! Failed:\n{history_text}\n"
+                        "Try ONE untried: D16/L16/R16/U16, A (dialogue), B (cancel), S (menu)."
                     )
                 })
-                logging.warning(f"STUCK DETECTION (CRITICAL): {self._stuck_count} turns, forcing single-step mode")
+                logging.warning(f"STUCK (CRITICAL): {self._stuck_count} turns")
             else:
                 user_content.append({
                     "type": "text",
                     "text": (
-                        f"STALLED {self._stuck_count} turns. Recent actions:\n{history_text}\n"
-                        "Try: untried direction (1 tile = 16 frames), A for dialogue, or B to cancel menu."
+                        f"STALLED {self._stuck_count} turns. Recent:\n{history_text}\n"
+                        "Try untried direction (16 frames), A, or B."
                     )
                 })
-                logging.warning(f"STUCK DETECTION: Player at same position for {self._stuck_count} turns")
+                logging.warning(f"STUCK: {self._stuck_count} turns at same position")
 
         # Battle stuck detection: same HP/menu/cursor for too many turns
         if self._in_battle and self._battle_stuck_count >= 4:
-            history_lines = []
-            for turn, action in self._action_history[-5:]:
-                history_lines.append(f"  Turn {turn}: {action}")
-            history_text = "\n".join(history_lines) if history_lines else "  (none)"
+            history_text = "\n".join(
+                f"  T{turn}: {action}" for turn, action in self._action_history[-5:]
+            ) or "  (none)"
 
             if self._battle_stuck_count >= 7:
                 user_content.append({
                     "type": "text",
                     "text": (
-                        f"BATTLE STUCK {self._battle_stuck_count} turns! "
-                        f"Recent actions:\n{history_text}\n"
-                        "STOP reasoning — your inputs are not working. Try IN ORDER:\n"
-                        "1. B B B (back out of any submenu to main battle menu)\n"
-                        "2. Then FOLLOW THE TIP exactly — send its compound input\n"
-                        "3. If no TIP: A A A A A (advance text/animations)"
+                        f"BATTLE STUCK {self._battle_stuck_count} turns!\n{history_text}\n"
+                        "Try: B B B (back to main), then follow TIP, or A A A A A (advance text)."
                     )
                 })
-                logging.warning(f"BATTLE STUCK (CRITICAL): {self._battle_stuck_count} turns, same battle state")
+                logging.warning(f"BATTLE STUCK (CRITICAL): {self._battle_stuck_count} turns")
             else:
                 user_content.append({
                     "type": "text",
                     "text": (
-                        f"BATTLE STALLED {self._battle_stuck_count} turns — "
-                        "you may be in a submenu. Send B B to return to main menu, "
-                        "then FOLLOW THE TIP exactly."
+                        f"BATTLE STALLED {self._battle_stuck_count} turns. "
+                        "Send B B to return to main menu, then follow TIP."
                     )
                 })
-                logging.warning(f"BATTLE STUCK: {self._battle_stuck_count} turns, same state")
+                logging.warning(f"BATTLE STUCK: {self._battle_stuck_count} turns")
 
-        # Direction reversal warning: flag when agent immediately undoes last move
-        if (self._reversal_detected and self._last_move_direction
+        # Direction reversal warning: only flag after 2+ consecutive reversals (real ping-ponging)
+        if (self._consecutive_reversals >= 2
                 and not self._in_battle
                 and spatial_data and (spatial_data.get("game_state") or {}).get("state") == "overworld"):
-            _dir_names = {'U': 'UP', 'D': 'DOWN', 'L': 'LEFT', 'R': 'RIGHT'}
-            _rev_map = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
-            prev_dir = _dir_names.get(self._last_move_direction, '?')
-            came_from = _dir_names.get(_rev_map.get(self._last_move_direction, ''), '?')
             user_content.append({
                 "type": "text",
                 "text": (
-                    f"REVERSAL WARNING: Your last move went {prev_dir},"
-                    f" but the move before that went {came_from}."
-                    f" You are undoing your own progress."
-                    f" Commit to a direction — do not ping-pong."
+                    f"PING-PONG WARNING: {self._consecutive_reversals} consecutive direction"
+                    f" reversals. You are undoing your own progress."
+                    f" Commit to a direction or try a perpendicular path."
                 )
             })
-            logging.warning(f"REVERSAL: agent reversed direction ({came_from} → {prev_dir})")
+            logging.warning(f"PING-PONG: {self._consecutive_reversals} consecutive reversals")
 
         # Add timing header (include cartridge title only until game is identified)
         header = f"Current time: {current_time_str}\nTurn #{self.game_state.turn_count}"
@@ -1006,7 +972,17 @@ class GameAgent:
 
         # Fallback return (all retries exhausted with thinking-only responses)
         return message_content
-    
+
+    @staticmethod
+    def _extract_direction_tokens(inputs: str) -> list[str]:
+        """Return ordered movement directions (U/D/L/R) from a compound input."""
+        dirs: list[str] = []
+        for token in inputs.split():
+            match = re.fullmatch(r"([UDLR])(?:\d+)?", token.strip().upper())
+            if match:
+                dirs.append(match.group(1))
+        return dirs
+
     def process_tool_results(self, message_content):
         """Process tool results from AI response.
 
@@ -1024,26 +1000,31 @@ class GameAgent:
             tool_use_id = tool_use.id
 
             if tool_name == "send_inputs":
+                raw_inputs = tool_input["inputs"]
+                queued_inputs = raw_inputs
+                directions = self._extract_direction_tokens(raw_inputs)
+                opposites = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
+
+                if directions:
+                    first_dir = directions[0]
+                    if (self._last_move_direction
+                            and first_dir == opposites.get(self._last_move_direction)):
+                        self._consecutive_reversals += 1
+                    else:
+                        self._consecutive_reversals = 0
+                    self._last_move_direction = directions[-1]
+                else:
+                    # Non-movement action resets reversal tracking
+                    self._consecutive_reversals = 0
+
                 # Queue for main-thread execution
-                pending_actions.append(tool_input["inputs"])
-                logging.info(f"Queued input for later execution: {tool_input['inputs']} (queue size: {len(pending_actions)})")
-                self.display.update(last_action=tool_input["inputs"])
+                pending_actions.append(queued_inputs)
+                logging.info(f"Queued input for later execution: {queued_inputs} (queue size: {len(pending_actions)})")
+                self.display.update(last_action=queued_inputs)
                 # Record in action history for loop detection
-                self._action_history.append((self.game_state.turn_count, tool_input["inputs"]))
+                self._action_history.append((self.game_state.turn_count, queued_inputs))
                 if len(self._action_history) > self._max_action_history:
                     self._action_history.pop(0)
-                # Track primary direction for reversal detection
-                import re as _re
-                _dir_match = _re.search(r'[UDLR]', tool_input["inputs"])
-                if _dir_match:
-                    new_dir = _dir_match.group()
-                    opposites = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
-                    if (self._last_move_direction
-                            and new_dir == opposites.get(self._last_move_direction)):
-                        self._reversal_detected = True
-                    else:
-                        self._reversal_detected = False
-                    self._last_move_direction = new_dir
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,

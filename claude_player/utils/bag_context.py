@@ -15,14 +15,17 @@ from typing import Any, Dict, List, Optional
 
 from pyboy import PyBoy
 
+from claude_player.utils.ram_constants import (
+    ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
+    ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# RAM addresses (pret/pokered wram.asm)
+# RAM addresses (bag-specific)
 # ---------------------------------------------------------------------------
 
-_ADDR_NUM_BAG_ITEMS = 0xD31D  # 1 byte, max 20
-_ADDR_BAG_ITEMS = 0xD31E      # pairs of (item_id, quantity), 2 bytes each
 _ADDR_PLAYER_MONEY = 0xD347   # 3 bytes, BCD-encoded
 _ADDR_OBTAINED_BADGES = 0xD356  # 1 byte bitfield
 

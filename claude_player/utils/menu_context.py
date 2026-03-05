@@ -12,22 +12,25 @@ from typing import Any, Dict, List, Optional
 
 from pyboy import PyBoy
 
+from claude_player.utils.ram_constants import (
+    ADDR_IS_IN_BATTLE as _ADDR_IS_IN_BATTLE,
+    ADDR_STATUS_FLAGS5 as _ADDR_STATUS_FLAGS5,
+    ADDR_WINDOW_Y as _ADDR_WINDOW_Y,
+    ADDR_MENU_ITEM as _ADDR_CURRENT_MENU,
+    ADDR_MENU_TOP_Y as _ADDR_MENU_ITEM_Y,
+    ADDR_MENU_TOP_X as _ADDR_MENU_ITEM_X,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# RAM addresses
+# RAM addresses (menu-specific)
 # ---------------------------------------------------------------------------
 
-_ADDR_MENU_ITEM_Y   = 0xCC24  # wTopMenuItemY (screen tile row)
-_ADDR_MENU_ITEM_X   = 0xCC25  # wTopMenuItemX (screen tile col)
-_ADDR_CURRENT_MENU  = 0xCC26  # wCurrentMenuItem (0-based cursor)
 _ADDR_MAX_MENU      = 0xCC28  # wMaxMenuItem (0-based max index)
 _ADDR_MENU_TO_SWAP  = 0xCC35  # wMenuItemToSwap (non-zero = swap pending)
 _ADDR_LIST_SCROLL   = 0xCC36  # wListScrollOffset
-_ADDR_IS_IN_BATTLE  = 0xD057  # 0=overworld, 1=wild, 2=trainer
 _ADDR_NAMING_TYPE   = 0xD07D  # wNamingScreenType (0=player,1=rival,2=pokemon)
-_ADDR_STATUS_FLAGS5 = 0xD730  # bit 0 = text/menu active (reliable)
-_ADDR_WINDOW_Y      = 0xFF4A  # WY register (< 144 = window visible)
 
 # ---------------------------------------------------------------------------
 # Menu fingerprinting — uses (Y, X, max_item) to disambiguate overlapping menus

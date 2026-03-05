@@ -13,14 +13,24 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pyboy import PyBoy
 
+from claude_player.utils.ram_constants import (
+    ADDR_IS_IN_BATTLE as _ADDR_IS_IN_BATTLE,
+    ADDR_STATUS_FLAGS5 as _ADDR_STATUS_FLAGS5,
+    ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT,
+    ADDR_PARTY_BASE as _ADDR_PARTY_BASE,
+    PARTY_MON_SIZE as _PARTY_SIZE,
+    ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
+    ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
+    ADDR_MENU_ITEM as _ADDR_MENU_ITEM,
+    ADDR_MENU_TOP_Y as _ADDR_MENU_TOP_Y,
+    ADDR_MENU_TOP_X as _ADDR_MENU_TOP_X,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# RAM addresses
+# RAM addresses (battle-specific, not shared)
 # ---------------------------------------------------------------------------
-
-# Battle state
-_ADDR_IS_IN_BATTLE = 0xD057  # 0=no, 1=wild, 2=trainer
 
 # Player's active Pokemon (wBattleMon)
 _ADDR_PLAYER_SPECIES = 0xD014
@@ -52,21 +62,8 @@ _ADDR_ENEMY_SPD      = 0xCFFA
 _ADDR_ENEMY_SPC      = 0xCFFC
 _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
-# Menu cursor
-_ADDR_MENU_ITEM      = 0xCC26  # wCurrentMenuItem (0-based)
-_ADDR_MENU_TOP_Y     = 0xCC24  # wTopMenuItemY (screen tile row)
-_ADDR_MENU_TOP_X     = 0xCC25  # wTopMenuItemX (screen tile col)
-
-# Status flags
-_ADDR_STATUS_FLAGS5  = 0xD730  # wStatusFlags5: bit 0 = TEXT_BOX_OPEN
-
-# Bag / party — lightweight reads for catch suggestions
-_ADDR_NUM_BAG_ITEMS  = 0xD31D  # wNumBagItems
-_ADDR_BAG_ITEMS      = 0xD31E  # wBagItems (item_id, qty pairs)
+# Bag / party constants (battle-specific)
 _BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
-_ADDR_PARTY_COUNT    = 0xD163  # wPartyCount
-_ADDR_PARTY_BASE     = 0xD16B  # wPartyMon1 (44 bytes each)
-_PARTY_SIZE          = 44      # bytes per party mon struct
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
 
 # ---------------------------------------------------------------------------
@@ -745,7 +742,7 @@ def _generate_battle_tip(
         best_move, best_slot = max(damage_moves, key=_effective_power)
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
-        fight_idx = max(cursor - 1, 0)  # fight menu cursor is 1-indexed in Gen 1
+        fight_idx = cursor  # wCurrentMenuItem is 0-indexed in fight submenu
         if fight_idx == best_slot:
             return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — press A."
         else:
@@ -822,7 +819,7 @@ def _format_battle_text(
         nav_str = " | ".join(f"{k}:{v}" for k, v in nav_hints.items())
         lines.append(f"  → Main menu: cursor on {item_name} (to reach: {nav_str})")
     elif menu_type == "fight":
-        fight_idx = max(cursor - 1, 0)  # fight menu cursor is 1-indexed in Gen 1
+        fight_idx = cursor  # wCurrentMenuItem is 0-indexed in fight submenu
         if fight_idx < len(player["moves"]):
             lines.append(f"  → Fight menu: cursor on move {fight_idx+1} ({player['moves'][fight_idx]['name']})")
         else:

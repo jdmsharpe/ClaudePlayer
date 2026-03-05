@@ -2,6 +2,12 @@ import logging
 from typing import Dict, List, Tuple, Optional, Any
 from pyboy import PyBoy
 
+from claude_player.utils.ram_constants import (
+    ADDR_IS_IN_BATTLE,
+    ADDR_STATUS_FLAGS5,
+    ADDR_WINDOW_Y,
+)
+
 # Game Boy visible screen: 160x144 pixels = 20x18 tiles of 8x8 pixels
 SCREEN_TILES_X = 20
 SCREEN_TILES_Y = 18
@@ -18,7 +24,7 @@ SPRITE_MARKERS = "@$%&*!~+=^"
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Pokemon Red/Blue RAM addresses (from pret/pokered disassembly)
+# Pokemon Red/Blue RAM addresses (spatial-specific, from pret/pokered)
 # ---------------------------------------------------------------------------
 _ADDR_CUR_MAP = 0xD35E
 _ADDR_PLAYER_Y = 0xD361       # Map-block coordinate
@@ -53,13 +59,13 @@ _FACING_MAP: Dict[int, str] = {
     0x0C: "RIGHT",
 }
 
-# Game state detection addresses (from pret/pokered disassembly)
+# Game state detection addresses (spatial-specific)
 _ADDR_TEXT_BOX_ID    = 0xD125   # wTextBoxID – non-zero = text box active
-_ADDR_IS_IN_BATTLE   = 0xD057   # wIsInBattle – 0=overworld, 1=wild, 2=trainer
+_ADDR_IS_IN_BATTLE   = ADDR_IS_IN_BATTLE
 _ADDR_WALK_COUNTER   = 0xCFC5   # wWalkCounter – non-zero = mid-step animation
 _ADDR_JOY_IGNORE     = 0xCC6B   # wJoyIgnore – button ignore bitmask (retained for reference; stale like wTextBoxID)
-_ADDR_STATUS_FLAGS5  = 0xD730   # bit5=joypad disabled, bit7=scripted movement
-_ADDR_WINDOW_Y       = 0xFF4A   # WY register – Window layer Y position (144 = off-screen)
+_ADDR_STATUS_FLAGS5  = ADDR_STATUS_FLAGS5
+_ADDR_WINDOW_Y       = ADDR_WINDOW_Y
 _ADDR_SIM_JOYPAD_IDX = 0xCD38   # wSimulatedJoypadStatesIndex – non-zero = game running scripted input
 
 # Terrain classification RAM addresses
@@ -1680,10 +1686,12 @@ def _format_spatial_text(
                     _nav_shown = True
                     break
         if not _nav_shown and _compass_targets:
-            # All direct edges blocked — try perpendicular directions to scroll view
             _ct_dir = _compass_targets[0][0]
+            _ct_name = _compass_targets[0][2]
+            # Try perpendicular directions to scroll view
             _perp = {"UP": ["LEFT", "RIGHT"], "DOWN": ["LEFT", "RIGHT"],
                      "LEFT": ["UP", "DOWN"], "RIGHT": ["UP", "DOWN"]}
+            _fallback_shown = False
             for alt_dir in _perp.get(_ct_dir, []):
                 alt_edge = _MOVE_TO_EDGE.get(alt_dir)
                 if alt_edge:
@@ -1695,7 +1703,23 @@ def _format_spatial_text(
                                 f"NAV: {_ct_dir} blocked — detour {alt_dir}: {alt_buttons}"
                                 f" — scroll view to find {_ct_dir} passage"
                             )
+                            _fallback_shown = True
                             break
+            if not _fallback_shown:
+                # Perpendicular also blocked — try reverse direction to escape dead-end
+                _reverse = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
+                rev_dir = _reverse.get(_ct_dir)
+                if rev_dir:
+                    rev_edge = _MOVE_TO_EDGE.get(rev_dir)
+                    if rev_edge:
+                        rev_path = find_path_to_edge(grid, player_screen_pos, rev_edge)
+                        if rev_path:
+                            rev_buttons = path_to_buttons(rev_path)
+                            if rev_buttons:
+                                lines.append(
+                                    f"NAV: {_ct_dir} and sides blocked — backtrack {rev_dir}: {rev_buttons}"
+                                    f" — escape this dead-end, then find alternate route toward {_ct_name}"
+                                )
 
     # Brief legend
     if has_collision or terrain is not None:

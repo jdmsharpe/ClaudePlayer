@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from pyboy import PyBoy
 
+from claude_player.utils.ram_constants import ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT
 from claude_player.utils.battle_context import (
     _POKEMON_NAMES,
     _MOVE_DATA,
@@ -58,12 +59,6 @@ _TYPE_WEAKNESSES: Dict[str, List[str]] = {
     "Ghost": ["Ghost"],  # Only self-weakness in Gen 1
     "Dragon": ["Ice", "Dragon"],
 }
-
-# ---------------------------------------------------------------------------
-# RAM addresses (pret/pokered wram.asm)
-# ---------------------------------------------------------------------------
-
-_ADDR_PARTY_COUNT = 0xD163  # Number of Pokemon in party (0-6)
 _ADDR_PARTY_SPECIES = 0xD164  # 6 bytes + 0xFF terminator
 
 # Party mon struct base and size

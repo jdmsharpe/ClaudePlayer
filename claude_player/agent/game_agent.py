@@ -181,6 +181,17 @@ class GameAgent:
             except Exception as e:
                 logging.warning(f"Failed to start web streamer: {e}")
     
+    def _goal_with_progress(self) -> str:
+        """Combine current goal with milestone progress fraction."""
+        goal = self.game_state.current_goal or ""
+        sp = self.game_state.story_progress
+        if sp and sp.get("completed") is not None:
+            done = len(sp["completed"])
+            from claude_player.utils.event_flags import STORY_PROGRESSION
+            total = len(STORY_PROGRESSION)
+            return f"[{done}/{total}] {goal}" if goal else f"{done}/{total} milestones"
+        return goal
+
     def _limit_screenshots_in_history(self):
         """
         Limit the number of screenshots in chat history to MAX_SCREENSHOTS.
@@ -596,8 +607,6 @@ class GameAgent:
                 # Column header (digits row) or grid row (starts with digit)
                 if stripped and (stripped[0].isdigit() or stripped.startswith(".")):
                     grid_lines.append(line)
-                elif line.startswith("GAME STATE:") or line.startswith("PROGRESS:"):
-                    grid_lines.append(line)
                 elif line.startswith("Map:"):
                     map_name_line = line
                 elif line.startswith("Map position:"):
@@ -720,7 +729,7 @@ class GameAgent:
             turn=self.game_state.turn_count,
             status="Analyzing...",
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
-            goal=self.game_state.current_goal or "",
+            goal=self._goal_with_progress(),
             spatial_grid=spatial_grid,
             party_summary=party_summary,
             party_mons=party_mons_list,
@@ -1336,7 +1345,7 @@ class GameAgent:
                     status=f"Idle ({last_analysis_duration:.1f}s)",
                     analysis_duration=last_analysis_duration,
                     game=self.game_state.identified_game or self.game_state.cartridge_title or "",
-                    goal=self.game_state.current_goal or "",
+                    goal=self._goal_with_progress(),
                 )
                 
                 # Reset error count after successful analysis

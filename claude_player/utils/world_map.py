@@ -74,22 +74,27 @@ class WorldMap:
                     abs_y = py_map + (gy - py_screen)
                     tile_map[(abs_x, abs_y)] = cell
 
-        # Record warps with destination names
+        # Record warps with destination names.
+        # Rebuild from scratch each update to avoid stale duplicates.
         if warp_data:
-            if map_id not in self.warps:
-                self.warps[map_id] = {}
+            self.warps[map_id] = {}
             warp_map = self.warps[map_id]
+            mw = warp_data.get("map_width", 0)
+            mh = warp_data.get("map_height", 0)
+            bottom_row = mh * 2 - 1 if mh else 999
             for w in warp_data.get("warps", []):
                 wx = px_map + w["dx"]
                 wy = py_map + w["dy"]
+                # Bottom-row warps (building exits) are reported 1 tile
+                # above their actual doormat position.  Shift down by 1.
+                if w.get("map_y", -1) >= bottom_row:
+                    wy += 1
                 warp_map[(wx, wy)] = w.get("dest_name", "?")
 
             # Record map connections as edge-tile warps.
             # Connections = walk off the map edge to reach adjacent map.
             # We synthesize warp entries on walkable edge tiles so A* can
             # path to them just like regular warps.
-            mw = warp_data.get("map_width", 0)
-            mh = warp_data.get("map_height", 0)
             for conn in warp_data.get("connections", []):
                 dest = conn.get("dest_name", "?")
                 d = conn.get("direction")

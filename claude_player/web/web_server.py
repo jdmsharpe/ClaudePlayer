@@ -400,8 +400,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     height: 14px;
   }
   /* Tile cell backgrounds */
-  .tc-w  { background: #161b22; color: #21262d; }
-  .tc-f  { background: #0d1117; color: #3a4048; }
+  .tc-w  { background: #0d1117; color: #21262d; }
+  .tc-f  { background: #161b22; color: #3a4048; }
   .tc-g  { background: #071b05; color: #3fb950; }
   .tc-a  { background: #020d1a; color: #58a6ff; }
   .tc-l  { background: #191100; color: #d29922; font-weight: bold; }
@@ -433,8 +433,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
 
   /* Tile colors (used in legend symbols) */
-  .tw  { color: #8b949e; }
-  .tf  { color: #272e38; }
+  .tw  { color: #272e38; }
+  .tf  { color: #8b949e; }
   .tg  { color: #3fb950; }
   .ta  { color: #58a6ff; }
   .tl  { color: #d29922; }

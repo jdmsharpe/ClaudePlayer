@@ -716,10 +716,10 @@ def _generate_battle_tip(
         # B ensures we're on main menu, U L A enters fight submenu.
         # Gen 1 fight submenu cursor initialises to wPlayerMoveListIndex
         # (last confirmed move), NOT always 0. Navigate from fight_cursor.
-        # The A that enters the submenu is consumed by the menu transition,
-        # so only one confirming A is needed after navigation.
+        # The fight submenu transition eats the first input after entering,
+        # so we send a throwaway A before any D/U nav, then A to confirm.
         nav = _fight_nav_presses(fight_cursor, best_slot)
-        compound = f"B {_ABS_NAV_FIGHT} A" + (f" {nav} A" if nav else " A")
+        compound = f"B {_ABS_NAV_FIGHT} A A" + (f" {nav} A" if nav else " A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
@@ -736,7 +736,7 @@ def _generate_battle_tip(
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
         nav = _fight_nav_presses(fight_cursor, 0)
-        compound = f"B {_ABS_NAV_FIGHT} A" + (f" {nav} A" if nav else " A")
+        compound = f"B {_ABS_NAV_FIGHT} A A" + (f" {nav} A" if nav else " A")
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 

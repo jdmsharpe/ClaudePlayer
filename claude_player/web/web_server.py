@@ -333,7 +333,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
   .grid-panel .panel-label::before { background: #7ee787; }
   .worldmap-panel .panel-label::before { background: #58a6ff; }
-  .worldmap-panel { flex-shrink: 0; overflow: auto; margin-top: auto; }
+  .worldmap-panel { flex-shrink: 0; overflow: auto; max-height: 300px; margin-top: auto; }
   #worldmap-grid {
     font-family: "Cascadia Mono", "Fira Code", "Consolas", monospace;
     font-size: 11px;

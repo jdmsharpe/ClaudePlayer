@@ -36,7 +36,8 @@ _DIR_BUTTONS: Dict[Tuple[int, int], str] = {
 }
 
 # Max rendered dimension before we crop around the player
-_MAX_RENDER_SIZE = 40
+_MAX_RENDER_SIZE = 40       # AI context (full exploration visible)
+_MAX_DISPLAY_SIZE = 20      # Web/terminal display (compact, player-centred)
 
 # Max steps in a world-map A* path before we truncate
 _MAX_PATH_STEPS = 30
@@ -170,18 +171,22 @@ class WorldMap:
         map_id: int,
         player_pos: Tuple[int, int],
         dead_end_zones: Optional[List[Tuple[int, int]]] = None,
+        max_size: Optional[int] = None,
     ) -> Optional[str]:
         """Render the explored map for the given map ID.
 
         dead_end_zones: list of (x, y) centre points that were detected as
             stuck/dead-end areas. Shown as 'X' on the map so Claude can see
             visited traps relative to unexplored ('?') territory.
+        max_size: override max rendered dimension (default _MAX_RENDER_SIZE).
 
         Returns None if fewer than 15 tiles explored (viewport already covers it).
         """
         tile_map = self.tiles.get(map_id)
         if not tile_map or len(tile_map) < 15:
             return None
+
+        render_size = max_size if max_size is not None else _MAX_RENDER_SIZE
 
         # Build a set of tiles within radius 2 of any dead-end zone centre
         dead_end_tiles: set = set()
@@ -202,7 +207,7 @@ class WorldMap:
         exp_min_y = min(p[1] for p in all_positions) - 1
         exp_max_y = max(p[1] for p in all_positions) + 1
 
-        half = _MAX_RENDER_SIZE // 2
+        half = render_size // 2
         min_x = max(exp_min_x, px - half)
         max_x = min(exp_max_x, px + half)
         min_y = max(exp_min_y, py - half)
@@ -315,50 +320,176 @@ class WorldMap:
 
         return None
 
+    def find_frontier_path(
+        self,
+        map_id: int,
+        start: Tuple[int, int],
+        preferred_direction: Optional[str] = None,
+        dead_end_tiles: Optional[Set[Tuple[int, int]]] = None,
+        max_steps: int = _MAX_PATH_STEPS,
+    ) -> Optional[List[Tuple[int, int]]]:
+        """Find path to the nearest frontier tile (walkable with unexplored neighbor).
+
+        Frontier tiles in the *preferred_direction* from start are prioritised
+        via a heuristic bonus.  Dead-end tiles are penalised heavily so the
+        path avoids known traps.
+
+        Returns path list or None.
+        """
+        tile_map = self.tiles.get(map_id)
+        if not tile_map or len(tile_map) < 30:
+            return None
+
+        _WALKABLE = frozenset(".,")
+        _dead = dead_end_tiles or set()
+
+        # Precompute frontier set: walkable tiles with ≥1 unexplored neighbor
+        frontiers: Set[Tuple[int, int]] = set()
+        for (tx, ty), ch in tile_map.items():
+            if ch not in _WALKABLE:
+                continue
+            if (tx, ty) in _dead:
+                continue
+            if any((tx + ox, ty + oy) not in tile_map for ox, oy in _NEIGHBORS):
+                frontiers.add((tx, ty))
+
+        if not frontiers:
+            return None
+
+        # Direction bias: prefer frontiers in the compass direction of the goal
+        _DIR_BIAS = {"NORTH": (0, -1), "SOUTH": (0, 1), "WEST": (-1, 0), "EAST": (1, 0)}
+        bias_dx, bias_dy = _DIR_BIAS.get(preferred_direction or "", (0, 0))
+
+        def _h(x: int, y: int) -> int:
+            """Heuristic: distance to nearest frontier, biased by direction."""
+            # Bias: subtract a bonus for tiles in the preferred direction
+            bonus = 0
+            if bias_dx or bias_dy:
+                dx = x - start[0]
+                dy = y - start[1]
+                bonus = dx * bias_dx + dy * bias_dy  # positive = in preferred dir
+            return -min(bonus, 10)  # cap so it doesn't dominate
+
+        def _passable(x: int, y: int, dx: int, dy: int) -> bool:
+            if (x, y) == start:
+                return True
+            ch = tile_map.get((x, y))
+            if ch is None:
+                return False
+            if ch in _LEDGE_ALLOWED_DIR:
+                return (dx, dy) == _LEDGE_ALLOWED_DIR[ch]
+            return ch not in _BLOCKED_TILES
+
+        counter = 0
+        open_heap: list = [(_h(*start), counter, start)]
+        counter += 1
+        g_score: Dict[Tuple[int, int], int] = {start: 0}
+        came_from: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        closed: Set[Tuple[int, int]] = set()
+
+        while open_heap:
+            _, _, current = heapq.heappop(open_heap)
+            if current in closed:
+                continue
+            if current in frontiers and current != start:
+                # Found a frontier — reconstruct path
+                path = [current]
+                while current in came_from:
+                    current = came_from[current]
+                    path.append(current)
+                path.reverse()
+                if len(path) > max_steps:
+                    path = path[: max_steps + 1]
+                return path
+            closed.add(current)
+            cx, cy = current
+            g_cur = g_score[current]
+
+            for ddx, ddy in _NEIGHBORS:
+                nx, ny = cx + ddx, cy + ddy
+                if (nx, ny) in closed:
+                    continue
+                if not _passable(nx, ny, ddx, ddy):
+                    continue
+                # Penalise dead-end tiles so path avoids them
+                cost = 1 + (5 if (nx, ny) in _dead else 0)
+                tentative_g = g_cur + cost
+                if tentative_g < g_score.get((nx, ny), float("inf")):
+                    g_score[(nx, ny)] = tentative_g
+                    came_from[(nx, ny)] = current
+                    heapq.heappush(
+                        open_heap, (tentative_g + _h(nx, ny), counter, (nx, ny))
+                    )
+                    counter += 1
+
+        return None
+
     def find_nav_hint(
         self,
         map_id: int,
         player_pos: Tuple[int, int],
         preferred_dest: Optional[str] = None,
+        preferred_direction: Optional[str] = None,
+        dead_end_zones: Optional[List[Tuple[int, int]]] = None,
         max_steps: int = _MAX_PATH_STEPS,
     ) -> Optional[str]:
-        """Find A* path from player to a known warp on this map.
+        """Find A* path from player to a known warp, or nearest frontier.
 
         If *preferred_dest* is given (substring match on warp name), only
-        warps matching it are tried.  Falls back to shortest reachable warp
-        if no preferred match has a path.
+        warps matching it are tried.  If no warp is reachable, falls back
+        to the nearest unexplored frontier in *preferred_direction*, avoiding
+        *dead_end_zones*.
 
         Returns a NAV hint string with button commands, or None.
         """
         warp_map = self.warps.get(map_id)
         tile_map = self.tiles.get(map_id)
-        if not warp_map or not tile_map or len(tile_map) < 30:
+        if not tile_map or len(tile_map) < 30:
             return None
 
-        # Split warps into preferred and fallback sets
-        preferred_warps: List[Tuple[Tuple[int, int], str]] = []
-        fallback_warps: List[Tuple[Tuple[int, int], str]] = []
-        for warp_pos, dest_name in warp_map.items():
-            if preferred_dest and preferred_dest.lower() in dest_name.lower():
-                preferred_warps.append((warp_pos, dest_name))
-            else:
-                fallback_warps.append((warp_pos, dest_name))
+        # Build dead-end tile set for avoidance
+        dead_end_tiles: Set[Tuple[int, int]] = set()
+        if dead_end_zones:
+            for dz_x, dz_y in dead_end_zones:
+                for dy in range(-2, 3):
+                    for dx in range(-2, 3):
+                        dead_end_tiles.add((dz_x + dx, dz_y + dy))
 
-        # Try preferred warps only.  If preferred warps exist but have no
-        # A* path (unexplored maze), do NOT fall back to other warps — that
-        # would route the agent backward (e.g. south gate in Viridian Forest
-        # when the goal is north).  Only use all warps when no preferred set.
+        # Try warps first
         best_path: Optional[List[Tuple[int, int]]] = None
         best_name: Optional[str] = None
         best_len = float("inf")
 
-        candidates = preferred_warps if preferred_warps else list(warp_map.items())
-        for warp_pos, dest_name in candidates:
-            path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
-            if path and len(path) < best_len:
-                best_path = path
-                best_name = dest_name
-                best_len = len(path)
+        if warp_map:
+            # Split warps into preferred and fallback sets
+            preferred_warps: List[Tuple[Tuple[int, int], str]] = []
+            for warp_pos, dest_name in warp_map.items():
+                if preferred_dest and preferred_dest.lower() in dest_name.lower():
+                    preferred_warps.append((warp_pos, dest_name))
+
+            # Try preferred warps only.  If preferred warps exist but have no
+            # A* path (unexplored maze), do NOT fall back to other warps — that
+            # would route the agent backward.  Only use all warps when no preferred set.
+            candidates = preferred_warps if preferred_warps else list(warp_map.items())
+            for warp_pos, dest_name in candidates:
+                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
+                if path and len(path) < best_len:
+                    best_path = path
+                    best_name = dest_name
+                    best_len = len(path)
+
+        # Fall back to frontier exploration if no warp reachable
+        if not best_path:
+            frontier_path = self.find_frontier_path(
+                map_id, player_pos,
+                preferred_direction=preferred_direction,
+                dead_end_tiles=dead_end_tiles,
+                max_steps=max_steps,
+            )
+            if frontier_path:
+                best_path = frontier_path
+                best_name = "unexplored frontier"
+                best_len = len(frontier_path)
 
         if not best_path or not best_name:
             return None
@@ -379,12 +510,20 @@ class WorldMap:
 
     @staticmethod
     def _path_to_buttons(
-        path: List[Tuple[int, int]], frames_per_tile: int = 16,
+        path: List[Tuple[int, int]],
+        frames_per_tile: int = 16,
+        max_single: int = 128,
+        max_total: int = 256,
     ) -> str:
-        """Convert (x,y) path to button string, merging consecutive directions."""
+        """Convert (x,y) path to button string, respecting frame caps.
+
+        max_single: max frames per command token (128 = 8 tiles).
+        max_total: max total directional frames per turn (256).
+        """
         if len(path) < 2:
             return ""
-        commands: List[str] = []
+        # Collect (direction, tile_count) segments
+        segments: List[Tuple[str, int]] = []
         cur_dir: Optional[str] = None
         cur_count = 0
         for i in range(1, len(path)):
@@ -397,11 +536,31 @@ class WorldMap:
                 cur_count += 1
             else:
                 if cur_dir is not None:
-                    commands.append(f"{cur_dir}{cur_count * frames_per_tile}")
+                    segments.append((cur_dir, cur_count))
                 cur_dir = btn
                 cur_count = 1
         if cur_dir is not None:
-            commands.append(f"{cur_dir}{cur_count * frames_per_tile}")
+            segments.append((cur_dir, cur_count))
+
+        # Emit commands respecting per-token and total frame caps
+        commands: List[str] = []
+        total_frames = 0
+        max_tiles_per_cmd = max_single // frames_per_tile  # 8
+        for btn, tiles in segments:
+            remaining_tiles = tiles
+            while remaining_tiles > 0 and total_frames < max_total:
+                chunk = min(remaining_tiles, max_tiles_per_cmd)
+                chunk_frames = chunk * frames_per_tile
+                if total_frames + chunk_frames > max_total:
+                    chunk = (max_total - total_frames) // frames_per_tile
+                    if chunk <= 0:
+                        break
+                    chunk_frames = chunk * frames_per_tile
+                commands.append(f"{btn}{chunk_frames}")
+                total_frames += chunk_frames
+                remaining_tiles -= chunk
+            if total_frames >= max_total:
+                break
         return " ".join(commands)
 
     def frontier_dirs(

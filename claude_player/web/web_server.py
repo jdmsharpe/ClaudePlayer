@@ -787,6 +787,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <div class="main">
   <div class="goal-bar">
     <div class="panel-label">Goal</div>
+    <div id="goal-progress" style="display:none"><div class="progress-bar" style="width:80px"><div class="progress-fill" id="goal-progress-fill"></div></div><span id="goal-progress-text" style="font-size:11px;color:#8b949e;margin-left:4px"></span></div>
     <div class="ai-goal-text" id="ai-goal">-</div>
   </div>
 
@@ -882,7 +883,20 @@ async function pollState() {
     setText('status', d.status || '-');
     setText('elapsed', d.elapsed || '-');
     setText('fps', d.fps ? d.fps.toFixed(0) : '0');
-    setText('ai-goal', d.goal || '-');
+    // Parse [done/total] prefix from goal text for progress bar
+    const goalRaw = d.goal || '-';
+    const gm = goalRaw.match(/^\[(\d+)\/(\d+)\]\s*(.*)/);
+    const gpPanel = document.getElementById('goal-progress');
+    if (gm) {
+      const done = parseInt(gm[1]), total = parseInt(gm[2]);
+      gpPanel.style.display = 'inline-flex';
+      document.getElementById('goal-progress-fill').style.width = (total ? (done/total*100) : 0) + '%';
+      document.getElementById('goal-progress-text').textContent = done + '/' + total;
+      setText('ai-goal', gm[3] || '-');
+    } else {
+      gpPanel.style.display = 'none';
+      setText('ai-goal', goalRaw);
+    }
     _lastAction = d.last_action || '-';
     renderMarkdown('ai-response', d.last_response || '-');
     renderMarkdown('ai-thinking', d.last_thinking || '-');

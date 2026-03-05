@@ -720,8 +720,11 @@ class GameAgent:
             map_id = spatial_data.get("map_number")
             player_pos = spatial_data.get("player_pos")
             if map_id is not None and player_pos is not None:
+                from claude_player.utils.world_map import _MAX_DISPLAY_SIZE
                 world_map_text = self._world_map.render(
-                    map_id, player_pos, dead_end_zones=self._dead_end_zones
+                    map_id, player_pos,
+                    dead_end_zones=self._dead_end_zones,
+                    max_size=_MAX_DISPLAY_SIZE,
                 ) or ""
 
         # Update terminal display
@@ -768,6 +771,7 @@ class GameAgent:
                 # Compass lines are sorted furthest-first in spatial_context,
                 # so the FIRST indented compass line is the goal destination.
                 preferred_dest = None
+                preferred_direction = None
                 in_compass = False
                 for line in spatial_text.split("\n"):
                     if line.startswith("COMPASS"):
@@ -775,11 +779,19 @@ class GameAgent:
                         continue
                     if in_compass and line.startswith("  ") and ":" in line:
                         preferred_dest = line.strip().split(":")[0].strip()
+                        # Extract direction keyword (NORTH/SOUTH/EAST/WEST)
+                        for d in ("NORTH", "SOUTH", "EAST", "WEST"):
+                            if d in line.upper():
+                                preferred_direction = d
+                                break
                         break  # first = furthest = goal-aligned
                     elif in_compass and not line.startswith("  "):
                         in_compass = False
                 wm_nav = self._world_map.find_nav_hint(
-                    map_id, player_pos, preferred_dest=preferred_dest,
+                    map_id, player_pos,
+                    preferred_dest=preferred_dest,
+                    preferred_direction=preferred_direction,
+                    dead_end_zones=self._dead_end_zones,
                 )
                 if wm_nav:
                     # Replace viewport NAV with world-map NAV, placed

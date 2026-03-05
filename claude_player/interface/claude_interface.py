@@ -65,7 +65,7 @@ FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with
 <spatial_context>
 Grid legend: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost. 1 cell=16 frames.
 FOLLOW [path:] hints — they route around walls. NAV(map) = A* through explored map (best signal). If [no path found], try 1-tile steps.
-MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A). Exit houses: D16 onto door-mat W.
+MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A).
 Use large moves (D96, R128) to cover ground fast. NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
 NAME ENTRY: START to finalize. If RAM says dialogue but nothing visible, try movement.
 </spatial_context>""")

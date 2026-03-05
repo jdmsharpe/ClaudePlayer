@@ -1095,10 +1095,6 @@ def _format_warp_text(
 
             # Compute A* path to the warp tile
             hint = ""
-            # Bottom warps (door mats at south map edge) need an extra
-            # step south to walk through the exit in one turn.
-            _mh = warp_data.get("map_height", 0)
-            _is_bottom_warp = bool(_mh and w.get("map_y", 0) >= _mh * 2 - 2)
             if can_pathfind:
                 warp_grid_pos = (player_pos[0] + dx, player_pos[1] + dy)
                 wgx, wgy = warp_grid_pos
@@ -1110,24 +1106,15 @@ def _format_warp_text(
                     if warp_path:
                         buttons = path_to_buttons(warp_path)
                         if buttons:
-                            if _is_bottom_warp:
-                                buttons += " D16"
                             hint = f"  [path: {buttons}]"
                         else:
-                            # ON THIS TILE — need to trigger
-                            hint = "  [on this tile — walk D16 to trigger exit]"
+                            hint = "  [on this tile — step onto W]"
                     else:
                         hint = ("  [Warp visible but walls block direct path —"
                                 " requires an indirect route."
                                 " Try a different approach direction (e.g. SOUTH or EAST)"
                                 " to find a path that curves around to this warp]")
                 else:
-                    # Warp is off the visible grid — only report compass
-                    # direction + distance.  Do NOT run A* to the viewport
-                    # edge: the path only proves reachability to the screen
-                    # boundary, not beyond.  Walls just past the viewport
-                    # are invisible to A*, so "path clear to edge" creates
-                    # phantom routes that send the agent into known dead ends.
                     hint = f"  [off screen — use compass below]"
             else:
                 # Fallback: straight-line when no collision grid available
@@ -1141,11 +1128,9 @@ def _format_warp_text(
                 elif dx > 0:
                     cmds.append(f"R{dx * 16}")
                 if cmds:
-                    if _is_bottom_warp:
-                        cmds.append("D16")
                     hint = f"  [straight-line: {' '.join(cmds)}]"
                 else:
-                    hint = "  [on this tile — walk D16 to trigger exit]"
+                    hint = "  [on this tile — step onto W]"
 
             lines.append(
                 f"  W{i}: {direction} -> {w['dest_name']}{hint}"

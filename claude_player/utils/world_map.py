@@ -79,39 +79,49 @@ class WorldMap:
             if map_id not in self.warps:
                 self.warps[map_id] = {}
             warp_map = self.warps[map_id]
+            mw = warp_data.get("map_width", 0)
+            mh = warp_data.get("map_height", 0)
+            # Bottom-edge warps (building exits, etc.) are reported 1 tile
+            # above their actual position in RAM.  Shift them down by 1.
+            bottom_row = mh * 2 - 1 if mh else 999
             for w in warp_data.get("warps", []):
                 wx = px_map + w["dx"]
                 wy = py_map + w["dy"]
+                # Warp on the bottom row of the map → shift down 1
+                if w.get("map_y", -1) >= bottom_row:
+                    wy += 1
                 warp_map[(wx, wy)] = w.get("dest_name", "?")
 
             # Record map connections as edge-tile warps.
             # Connections = walk off the map edge to reach adjacent map.
-            # We synthesize warp entries on walkable edge tiles so A* can
-            # path to them just like regular warps.
-            mw = warp_data.get("map_width", 0)
-            mh = warp_data.get("map_height", 0)
+            # The transition fires when stepping ONE TILE PAST the map
+            # boundary (the seam tile), not the last in-bounds tile.
+            # We synthesize warp entries on walkable seam tiles so A*
+            # can path to them just like regular warps.
+            _WALK = (".", ",")
             for conn in warp_data.get("connections", []):
                 dest = conn.get("dest_name", "?")
                 d = conn.get("direction")
-                # Map dims are in blocks, coords are in steps (2 per block)
+                # Map dims are in blocks, coords are in steps (2 per block).
+                # Seam tile = one past the edge (mh*2 not mh*2-1).
                 if d == "SOUTH":
-                    edge_y = mh * 2 - 1
+                    seam_y = mh * 2
                     for ex in range(mw * 2):
-                        if tile_map.get((ex, edge_y)) in (".", ","):
-                            warp_map.setdefault((ex, edge_y), dest)
+                        if tile_map.get((ex, seam_y)) in _WALK:
+                            warp_map.setdefault((ex, seam_y), dest)
                 elif d == "NORTH":
                     for ex in range(mw * 2):
-                        if tile_map.get((ex, 0)) in (".", ","):
-                            warp_map.setdefault((ex, 0), dest)
+                        if tile_map.get((ex, -1)) in _WALK:
+                            warp_map.setdefault((ex, -1), dest)
                 elif d == "WEST":
                     for ey in range(mh * 2):
-                        if tile_map.get((0, ey)) in (".", ","):
-                            warp_map.setdefault((0, ey), dest)
+                        if tile_map.get((-1, ey)) in _WALK:
+                            warp_map.setdefault((-1, ey), dest)
                 elif d == "EAST":
-                    edge_x = mw * 2 - 1
+                    seam_x = mw * 2
                     for ey in range(mh * 2):
-                        if tile_map.get((edge_x, ey)) in (".", ","):
-                            warp_map.setdefault((edge_x, ey), dest)
+                        if tile_map.get((seam_x, ey)) in _WALK:
+                            warp_map.setdefault((seam_x, ey), dest)
 
     def save(self, path: str) -> None:
         """Serialize explored map to JSON."""

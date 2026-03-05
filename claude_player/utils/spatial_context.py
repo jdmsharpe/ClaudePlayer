@@ -1625,13 +1625,19 @@ def _overlay_warps_on_grid(
     bottom_row = mh * 2 - 1 if mh else 999
 
     for w in warp_data["warps"]:
+        wy = w.get("map_y", -1)
         gx = px + w["dx"] * scale
         gy = py + w["dy"] * scale
         # Bottom-row warps (building exits) are reported 1 tile above
         # the actual doormat position in RAM.  Shift overlay down by 1.
-        is_bottom = w.get("map_y", -1) >= bottom_row
+        is_bottom = wy >= bottom_row
+        # Top-row warps (north gate exits) are reported 1 tile below
+        # the actual entrance position in RAM.  Shift overlay up by 1.
+        is_top = wy == 0
         if is_bottom:
             gy += 1 * scale
+        elif is_top:
+            gy -= 1 * scale
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
             # Skip player tile — overlaying W on @ breaks A* (W is blocked,
             # so pathfinding can't start and all NPCs become UNREACHABLE)
@@ -1639,8 +1645,8 @@ def _overlay_warps_on_grid(
                 continue
             # Only overlay W on walkable tiles — some warps sit on wall tiles
             # (e.g. gate buildings with wider warp zones than walkable exits).
-            # Exception: bottom-row warps land on a # doormat tile — allow those.
-            if not is_bottom and grid[gy][gx] in ('#', 'T', 'B', '='):
+            # Exception: bottom/top-row warps land on boundary tiles — allow those.
+            if not (is_bottom or is_top) and grid[gy][gx] in ('#', 'T', 'B', '='):
                 continue
             grid[gy][gx] = "W"
 

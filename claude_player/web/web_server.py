@@ -346,7 +346,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 3px 12px;
+    padding: 6px 12px;
     background: #161b22;
     border-bottom: 1px solid #30363d;
   }
@@ -471,7 +471,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #238636, #3fb950);
+    background: linear-gradient(90deg, #1f6feb, #58a6ff);
     border-radius: 4px;
     transition: width 0.5s ease;
   }

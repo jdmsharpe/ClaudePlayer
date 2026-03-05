@@ -368,7 +368,7 @@ class GameAgent:
 
                 # Record dead-end zone when cycling detected
                 if is_cycling:
-                    if not any(abs(cx - dz[0]) + abs(cy - dz[1]) <= 3
+                    if not any(abs(cx - dz[0]) + abs(cy - dz[1]) <= 6
                               for dz in self._dead_end_zones):
                         self._dead_end_zones.append((cx, cy))
                         logging.info(f"DEAD-END ZONE recorded at ({cx},{cy})")

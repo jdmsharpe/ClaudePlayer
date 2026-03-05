@@ -6,10 +6,11 @@ using absolute map coordinates.  Only static terrain is stored (no NPCs/items).
 
 from __future__ import annotations
 
+import heapq
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,27 @@ logger = logging.getLogger(__name__)
 # (next visit overwrites 'i' with '.'), objects are stationary.
 _STATIC_TILES = frozenset(".#,=v><TBWio")
 
+# Impassable tiles for world-map A*
+_BLOCKED_TILES: FrozenSet[str] = frozenset("#=TBWio")
+
+# Ledge tiles: one-way passable only in the allowed direction
+_LEDGE_ALLOWED_DIR: Dict[str, Tuple[int, int]] = {
+    "v": (0, 1),   # down
+    ">": (1, 0),   # right
+    "<": (-1, 0),  # left
+}
+
+_NEIGHBORS = ((0, -1), (0, 1), (-1, 0), (1, 0))
+
+_DIR_BUTTONS: Dict[Tuple[int, int], str] = {
+    (0, -1): "U", (0, 1): "D", (-1, 0): "L", (1, 0): "R",
+}
+
 # Max rendered dimension before we crop around the player
 _MAX_RENDER_SIZE = 30
+
+# Max steps in a world-map A* path before we truncate
+_MAX_PATH_STEPS = 30
 
 
 class WorldMap:
@@ -162,6 +182,181 @@ class WorldMap:
             lines.append("".join(row_chars))
 
         return "\n".join(lines)
+
+    def find_path_to(
+        self,
+        map_id: int,
+        start: Tuple[int, int],
+        goal: Tuple[int, int],
+        max_steps: int = _MAX_PATH_STEPS,
+    ) -> Optional[List[Tuple[int, int]]]:
+        """A* pathfinding on the accumulated tile map.
+
+        Unlike viewport A* (10x9 grid), this uses ALL explored tiles for the
+        given map — hundreds or thousands of tiles — enabling multi-screen
+        maze navigation.
+
+        Args:
+            map_id: Map ID to pathfind on.
+            start: (x, y) absolute map position of player.
+            goal: (x, y) absolute map position of target.
+            max_steps: Truncate path after this many steps (avoids huge outputs).
+
+        Returns:
+            List of (x, y) positions from start to goal (or truncated), or None.
+        """
+        tile_map = self.tiles.get(map_id)
+        if not tile_map:
+            return None
+        if start == goal:
+            return [start]
+        # Goal must be in explored territory (or adjacent to it)
+        if goal not in tile_map:
+            return None
+
+        def _passable(x: int, y: int, dx: int, dy: int) -> bool:
+            if (x, y) == goal or (x, y) == start:
+                return True  # player is standing here / goal always reachable
+            ch = tile_map.get((x, y))
+            if ch is None:
+                return False  # unexplored = can't path through
+            if ch in _LEDGE_ALLOWED_DIR:
+                return (dx, dy) == _LEDGE_ALLOWED_DIR[ch]
+            return ch not in _BLOCKED_TILES
+
+        def _h(x: int, y: int) -> int:
+            return abs(goal[0] - x) + abs(goal[1] - y)
+
+        counter = 0
+        open_heap: list = [(_h(*start), counter, start)]
+        counter += 1
+        g_score: Dict[Tuple[int, int], int] = {start: 0}
+        came_from: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        closed: Set[Tuple[int, int]] = set()
+
+        while open_heap:
+            _, _, current = heapq.heappop(open_heap)
+            if current in closed:
+                continue
+            if current == goal:
+                path = [current]
+                while current in came_from:
+                    current = came_from[current]
+                    path.append(current)
+                path.reverse()
+                # Truncate long paths — agent re-evaluates each turn anyway
+                if len(path) > max_steps:
+                    path = path[: max_steps + 1]
+                return path
+            closed.add(current)
+            cx, cy = current
+            g_cur = g_score[current]
+
+            for dx, dy in _NEIGHBORS:
+                nx, ny = cx + dx, cy + dy
+                if (nx, ny) in closed:
+                    continue
+                if not _passable(nx, ny, dx, dy):
+                    continue
+                tentative_g = g_cur + 1
+                if tentative_g < g_score.get((nx, ny), float("inf")):
+                    g_score[(nx, ny)] = tentative_g
+                    came_from[(nx, ny)] = current
+                    heapq.heappush(
+                        open_heap, (tentative_g + _h(nx, ny), counter, (nx, ny))
+                    )
+                    counter += 1
+
+        return None
+
+    def find_nav_hint(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        preferred_dest: Optional[str] = None,
+        max_steps: int = _MAX_PATH_STEPS,
+    ) -> Optional[str]:
+        """Find A* path from player to a known warp on this map.
+
+        If *preferred_dest* is given (substring match on warp name), only
+        warps matching it are tried.  Falls back to shortest reachable warp
+        if no preferred match has a path.
+
+        Returns a NAV hint string with button commands, or None.
+        """
+        warp_map = self.warps.get(map_id)
+        tile_map = self.tiles.get(map_id)
+        if not warp_map or not tile_map or len(tile_map) < 30:
+            return None
+
+        # Split warps into preferred and fallback sets
+        preferred_warps: List[Tuple[Tuple[int, int], str]] = []
+        fallback_warps: List[Tuple[Tuple[int, int], str]] = []
+        for warp_pos, dest_name in warp_map.items():
+            if preferred_dest and preferred_dest.lower() in dest_name.lower():
+                preferred_warps.append((warp_pos, dest_name))
+            else:
+                fallback_warps.append((warp_pos, dest_name))
+
+        # Try preferred first, then fallback
+        best_path: Optional[List[Tuple[int, int]]] = None
+        best_name: Optional[str] = None
+        best_len = float("inf")
+
+        for warp_list in ([preferred_warps, fallback_warps] if preferred_warps
+                          else [list(warp_map.items())]):
+            for warp_pos, dest_name in warp_list:
+                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
+                if path and len(path) < best_len:
+                    best_path = path
+                    best_name = dest_name
+                    best_len = len(path)
+            if best_path:
+                break  # found a path in preferred set, don't try fallback
+
+        if not best_path or not best_name:
+            return None
+
+        # Truncate for output
+        truncated = len(best_path) > max_steps + 1
+        display_path = best_path[: max_steps + 1] if truncated else best_path
+        buttons = self._path_to_buttons(display_path)
+        if not buttons:
+            return None
+
+        total_dist = best_len - 1  # steps, not nodes
+        suffix = f" (+{total_dist - max_steps} more)" if truncated else ""
+        return (
+            f"NAV(map): to {best_name} ({total_dist} tiles): "
+            f"{buttons}{suffix} — re-evaluate after executing"
+        )
+
+    @staticmethod
+    def _path_to_buttons(
+        path: List[Tuple[int, int]], frames_per_tile: int = 16,
+    ) -> str:
+        """Convert (x,y) path to button string, merging consecutive directions."""
+        if len(path) < 2:
+            return ""
+        commands: List[str] = []
+        cur_dir: Optional[str] = None
+        cur_count = 0
+        for i in range(1, len(path)):
+            dx = path[i][0] - path[i - 1][0]
+            dy = path[i][1] - path[i - 1][1]
+            btn = _DIR_BUTTONS.get((dx, dy))
+            if btn is None:
+                continue
+            if btn == cur_dir:
+                cur_count += 1
+            else:
+                if cur_dir is not None:
+                    commands.append(f"{cur_dir}{cur_count * frames_per_tile}")
+                cur_dir = btn
+                cur_count = 1
+        if cur_dir is not None:
+            commands.append(f"{cur_dir}{cur_count * frames_per_tile}")
+        return " ".join(commands)
 
     def frontier_dirs(
         self,

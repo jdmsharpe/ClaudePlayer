@@ -745,12 +745,49 @@ class GameAgent:
             spatial_text = spatial_data["text"]
             # Append accumulated world map (overworld only, when enough tiles explored)
             if spatial_data.get("map_number") is not None and spatial_data.get("player_pos"):
+                map_id = spatial_data["map_number"]
+                player_pos = spatial_data["player_pos"]
                 world_map_text = self._world_map.render(
-                    spatial_data["map_number"], spatial_data["player_pos"],
+                    map_id, player_pos,
                     dead_end_zones=self._dead_end_zones,
                 )
                 if world_map_text:
                     spatial_text += "\n" + world_map_text
+                # World-map A* NAV: replace viewport-only NAV with full-map path
+                # Extract preferred destination from compass targets
+                # Compass lines are sorted furthest-first in spatial_context,
+                # so the FIRST indented compass line is the goal destination.
+                preferred_dest = None
+                in_compass = False
+                for line in spatial_text.split("\n"):
+                    if line.startswith("COMPASS"):
+                        in_compass = True
+                        continue
+                    if in_compass and line.startswith("  ") and ":" in line:
+                        preferred_dest = line.strip().split(":")[0].strip()
+                        break  # first = furthest = goal-aligned
+                    elif in_compass and not line.startswith("  "):
+                        in_compass = False
+                wm_nav = self._world_map.find_nav_hint(
+                    map_id, player_pos, preferred_dest=preferred_dest,
+                )
+                if wm_nav:
+                    # Replace the viewport NAV line(s) with world-map NAV
+                    new_lines = []
+                    for line in spatial_text.split("\n"):
+                        if line.startswith("NAV:"):
+                            continue  # drop viewport NAV
+                        new_lines.append(line)
+                    # Insert world-map NAV after MOVES line (or COMPASS)
+                    insert_idx = len(new_lines)
+                    for i, line in enumerate(new_lines):
+                        if line.startswith("MOVES:") or line.startswith("COMPASS"):
+                            insert_idx = i + 1
+                    # Skip past any COMPASS continuation lines (indented)
+                    while insert_idx < len(new_lines) and new_lines[insert_idx].startswith("  "):
+                        insert_idx += 1
+                    new_lines.insert(insert_idx, wm_nav)
+                    spatial_text = "\n".join(new_lines)
             user_content.append({"type": "text", "text": spatial_text})
 
         # Menu context: inject every turn when active (menus change frequently)

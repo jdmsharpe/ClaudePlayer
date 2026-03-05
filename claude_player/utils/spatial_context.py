@@ -648,12 +648,13 @@ def _extract_cut_tree_positions(pyboy: PyBoy) -> Optional[set]:
                 addr = view_ptr + by * stride + bx
                 block_id = pyboy.memory[addr]
                 if block_id in cuttable:
-                    # Each block covers a 2x2 metatile area in the grid
+                    # Each block covers a 2x2 metatile area in the grid.
+                    # Only mark the bottom-left sub-tile (trunk / interaction
+                    # point).  The top two tiles are canopy and the bottom-right
+                    # is grass — marking all 4 creates a confusing triad of T's.
                     base_gx = bx * 2 - x_off
                     base_gy = by * 2 - y_off
-                    for dy in range(2):
-                        for dx in range(2):
-                            positions.add((base_gx + dx, base_gy + dy))
+                    positions.add((base_gx, base_gy + 1))  # bottom-left = trunk
 
         return positions if positions else None
     except Exception as e:

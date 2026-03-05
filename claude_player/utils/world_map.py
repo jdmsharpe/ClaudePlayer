@@ -87,8 +87,13 @@ class WorldMap:
                 wy = py_map + w["dy"]
                 # Bottom-row warps (building exits) are reported 1 tile
                 # above their actual doormat position.  Shift down by 1.
-                if w.get("map_y", -1) >= bottom_row:
+                is_bottom = w.get("map_y", -1) >= bottom_row
+                if is_bottom:
                     wy += 1
+                # Skip warps on wall tiles — ROM defines warps on both
+                # sides of gate corridors but only one may be walkable.
+                if not is_bottom and tile_map.get((wx, wy)) in ('#', 'T', 'B', '='):
+                    continue
                 warp_map[(wx, wy)] = w.get("dest_name", "?")
 
             # Record map connections as edge-tile warps.

@@ -63,12 +63,10 @@ FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with
             else:
                 static_parts.append("""
 <spatial_context>
-Grid: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=warp @=player 1-9=NPC i=item o=object. 1 tile=16 frames.
-FOLLOW [path:] hints — they route around walls. If [no path found], try 1-tile steps.
-NAV=A* path to off-screen targets. MOVES=immediate walkability.
+Grid legend: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost. 1 cell=16 frames.
+FOLLOW [path:] hints — they route around walls. NAV(map) = A* through explored map (best signal). If [no path found], try 1-tile steps.
 MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A). Exit houses: D16 onto door-mat W.
-MOVEMENT: "Player didn't move" = wall, try another direction. Use large moves (D96, R128) to cover ground fast.
-NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
+Use large moves (D96, R128) to cover ground fast. NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
 NAME ENTRY: START to finalize. If RAM says dialogue but nothing visible, try movement.
 </spatial_context>""")
 

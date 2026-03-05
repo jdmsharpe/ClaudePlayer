@@ -464,13 +464,6 @@ _MAP_NAMES = {
     0xFF: "outside (last map)",
 }
 
-# Per-map region tables: map_id → list of (y_min, y_max, region_name, navigation_instruction)
-# Coordinates are in step units (same as player position).  y_min/y_max are inclusive.
-_MAP_REGIONS: dict = {
-    # Removed Viridian Forest (0x33) — static south-pointing hints fought
-    # northward goals.  COMPASS + NAV + FRONTIER provide adaptive guidance.
-}
-
 
 def _extract_visible_tilemap(pyboy: PyBoy) -> Tuple[List[List[int]], Tuple[int, int]]:
     """Extract the 20x18 visible tile region from the 32x32 background tilemap.
@@ -721,46 +714,6 @@ def _check_missable_hidden(pyboy: PyBoy, sprite_slot: int) -> bool:
     except Exception:
         return False  # On error, assume visible
 
-
-def _detect_player_movement(
-    current_pos: Optional[Tuple[int, int]],
-    previous_pos: Optional[Tuple[int, int]],
-    game_state_info: Optional[Dict[str, str]] = None,
-) -> Optional[str]:
-    """Compare current and previous player map-block positions.
-
-    Returns a human-readable movement summary using directions instead of
-    raw map coordinates (which confuse the model when they don't match
-    the viewport grid).  Suppresses "didn't move" during dialogue/battle/
-    cutscenes where the player isn't expected to move.
-    """
-    if current_pos is None:
-        return None
-    if previous_pos is None:
-        return None  # No useful info on first reading
-
-    if current_pos == previous_pos:
-        # Don't report "didn't move" when the player can't move anyway
-        if game_state_info and game_state_info.get("state") not in ("overworld",):
-            return None
-        return "Player didn't move (same position as last turn)"
-
-    cx, cy = current_pos
-    px, py = previous_pos
-    dx = cx - px
-    dy = cy - py
-
-    parts = []
-    if dy < 0:
-        parts.append(f"{abs(dy)} UP")
-    elif dy > 0:
-        parts.append(f"{dy} DOWN")
-    if dx < 0:
-        parts.append(f"{abs(dx)} LEFT")
-    elif dx > 0:
-        parts.append(f"{dx} RIGHT")
-
-    return f"Player moved {', '.join(parts)} since last turn"
 
 
 # ---------------------------------------------------------------------------
@@ -1389,7 +1342,6 @@ def _format_spatial_text(
     tile_to_char: Dict[int, str],
     sprites: List[Dict[str, Any]],
     warp_data: Optional[Dict[str, Any]],
-    player_movement_text: Optional[str],
     npc_data: Optional[List[Dict[str, Any]]] = None,
     game_state_info: Optional[Dict[str, str]] = None,
     story_progress: Optional[Dict[str, Any]] = None,
@@ -1511,11 +1463,6 @@ def _format_spatial_text(
         if hint:
             lines.append(f"HINT: {hint}")
 
-    # Player grid position (viewport-relative, matches the grid below)
-    if player_screen_pos:
-        facing_str = f", facing {player_facing}" if player_facing else ""
-        lines.append(f"Player @ is at grid column {player_screen_pos[0]}, row {player_screen_pos[1]}{facing_str}")
-
     # Absolute map position + compass for off-screen exits
     _compass_targets: list = []  # (direction_label, manhattan_dist, dest_name)
     if warp_data:
@@ -1526,14 +1473,6 @@ def _format_spatial_text(
         # Player coords are in step units (2 steps per map block), map dims are in blocks.
         # Multiply dims by 2 so the coordinate spaces match (avoids "at edge" confusion).
         lines.append(f"Map position: ({px_abs}, {py_abs}) of {mw*2}x{mh*2}")
-
-        # Per-map region hint — tells agent which sub-area it's in and what to do
-        map_regions = _MAP_REGIONS.get(warp_data.get("map_number"))
-        if map_regions:
-            for y_min, y_max, region_name, region_hint in map_regions:
-                if y_min <= py_abs <= y_max:
-                    lines.append(f"Region: {region_name} — {region_hint}")
-                    break
 
         # Pre-compute which immediate directions are blocked (for compass warnings)
         _immediate_blocked: set = set()
@@ -1603,42 +1542,10 @@ def _format_spatial_text(
             lines.append("COMPASS (off-screen exits — crow-flies bearing, NOT a path — follow NAV below):")
             lines.extend(compass_lines)
 
-    # Player movement status (directional, no raw map coords)
-    if player_movement_text:
-        lines.append(player_movement_text)
-
     # Grid with column index header
     lines.append("   " + "".join(str(x % 10) for x in range(grid_width)))
     for y in range(grid_height):
         lines.append(f"{y:2d} " + "".join(grid[y]))
-
-    # Immediate walkable neighbors — tells agent which directions are passable
-    # Ledges are one-way: only passable when entering in the arrow direction.
-    # Uses walkable allowlist so NPCs, items, objects, ghosts are all BLOCKED.
-    _LEDGE_PASSABLE_DIR = {'v': (0, 1), '>': (1, 0), '<': (-1, 0)}
-    _WALKABLE_CHARS = {'.', ',', '@', 'W', 'g'}  # floor, grass, player, warp, ghost
-    if player_screen_pos and (has_collision or terrain is not None):
-        px, py = player_screen_pos
-        dir_status = {}
-        for label, dx, dy in [("UP", 0, -1), ("DOWN", 0, 1), ("LEFT", -1, 0), ("RIGHT", 1, 0)]:
-            nx, ny = px + dx, py + dy
-            if 0 <= nx < grid_width and 0 <= ny < grid_height:
-                cell = grid[ny][nx]
-                if cell in _LEDGE_PASSABLE_DIR:
-                    if (dx, dy) == _LEDGE_PASSABLE_DIR[cell]:
-                        dir_status[label] = "open(ledge)"
-                    else:
-                        dir_status[label] = "BLOCKED(ledge)"
-                elif cell in _WALKABLE_CHARS:
-                    dir_status[label] = "open"
-                else:
-                    dir_status[label] = "BLOCKED"
-            else:
-                dir_status[label] = "edge"
-        lines.append(
-            f"MOVES: UP={dir_status['UP']}  DOWN={dir_status['DOWN']}  "
-            f"LEFT={dir_status['LEFT']}  RIGHT={dir_status['RIGHT']}"
-        )
 
     # NAV: A* path toward off-screen compass targets through visible obstacles.
     # This gives multi-step maze navigation instead of just 1-tile MOVES.
@@ -1695,10 +1602,6 @@ def _format_spatial_text(
                     f"NAV: no local path toward {_ct_name} ({_ct_dir}) visible in current view"
                     f" — shift position 2-3 tiles LEFT or RIGHT to scroll view and find a gap"
                 )
-
-    # Brief legend
-    if has_collision or terrain is not None:
-        lines.append(". = walkable  # = blocked  , = grass  = = water  v/>/< = ledge  T = cut tree  B = boulder  W = exit  @ = player  1-9 = NPC  i = item  o = object  g = ghost  (1 cell = 16 frames)")
 
     # NPC/item text with A* paths
     has_grid = has_collision or terrain is not None
@@ -1809,7 +1712,6 @@ def extract_spatial_context(
         if warp_data:
             player_map_pos = (warp_data["player_x"], warp_data["player_y"])
         game_state_info = _detect_game_state(pyboy)
-        player_movement_text = _detect_player_movement(player_map_pos, previous_player_pos, game_state_info)
         player_facing = _extract_player_facing(pyboy)
 
         text = _format_spatial_text(
@@ -1818,7 +1720,6 @@ def extract_spatial_context(
             tile_to_char=tile_to_char,
             sprites=sprites,
             warp_data=warp_data,
-            player_movement_text=player_movement_text,
             npc_data=npc_data,
             game_state_info=game_state_info,
             story_progress=story_progress,

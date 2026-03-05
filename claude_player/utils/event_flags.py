@@ -137,13 +137,9 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (0x077, 0x0D): "Enter the gatehouse to reach Viridian Forest.",
     (0x077, 0x32): "Walk NORTH through the gate to enter Viridian Forest.",
     (0x077, 0x33): (
-        "Viridian Forest is a winding maze (17x24 tiles). "
-        "NORTH exit (to Pewter City): in the NORTHWEST corner — go EAST, then NORTH, then WEST. "
-        "SOUTH exit (to Route 2 / back to heal): in the SOUTH-CENTER. "
-        "Use the COMPASS bearings to track distance to exits. "
-        "Follow [path:] hints only for warps VISIBLE on the grid. "
-        "For off-screen exits, move toward the compass direction and check each new screen. "
-        "IMPORTANT: Do NOT wander west — the west side is a dead end."
+        "Viridian Forest is a winding maze. "
+        "Use the COMPASS bearings to track distance to exits and explore methodically, ruling out dead ends. "
+        "Trust your NAV to find the correct path through the maze to reach Pewter City on the other side."
     ),
     (0x077, 0x2F): "Exit NORTH to reach Route 2 near Pewter City.",
     (0x077, 0x02): "Enter Pewter Gym and defeat Brock.",

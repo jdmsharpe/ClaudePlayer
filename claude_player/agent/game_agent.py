@@ -773,20 +773,25 @@ class GameAgent:
                     map_id, player_pos, preferred_dest=preferred_dest,
                 )
                 if wm_nav:
-                    # Replace the viewport NAV line(s) with world-map NAV
+                    # Replace viewport NAV with world-map NAV, placed
+                    # right after COMPASS (before the grid) so it's the
+                    # first actionable hint the agent reads.
                     new_lines = []
                     for line in spatial_text.split("\n"):
                         if line.startswith("NAV:"):
                             continue  # drop viewport NAV
                         new_lines.append(line)
-                    # Insert world-map NAV after MOVES line (or COMPASS)
+                    # Insert after COMPASS block (before the grid) so it's
+                    # the first actionable hint. Fallback: after Map position.
                     insert_idx = len(new_lines)
                     for i, line in enumerate(new_lines):
-                        if line.startswith("MOVES:") or line.startswith("COMPASS"):
+                        if line.startswith("COMPASS"):
                             insert_idx = i + 1
-                    # Skip past any COMPASS continuation lines (indented)
-                    while insert_idx < len(new_lines) and new_lines[insert_idx].startswith("  "):
-                        insert_idx += 1
+                            while insert_idx < len(new_lines) and new_lines[insert_idx].startswith("  "):
+                                insert_idx += 1
+                            break
+                        if line.startswith("Map position:"):
+                            insert_idx = i + 1
                     new_lines.insert(insert_idx, wm_nav)
                     spatial_text = "\n".join(new_lines)
             user_content.append({"type": "text", "text": spatial_text})

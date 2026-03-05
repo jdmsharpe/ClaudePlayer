@@ -751,9 +751,15 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             dy = wy - player_y   # +south / -north
             dx = wx - player_x   # +east  / -west
 
+            # Gen 1 stores each warp tile 1 step short of its actual step-on
+            # position in the direction of approach.  Normalise here so all
+            # downstream consumers (overlay, A*, text hints) see the real tile.
+            adj_dy = dy + (1 if dy > 0 else -1 if dy < 0 else 0)
+            adj_dx = dx + (1 if dx > 0 else -1 if dx < 0 else 0)
+
             warps.append({
                 "map_y": wy, "map_x": wx,
-                "dy": dy, "dx": dx,
+                "dy": adj_dy, "dx": adj_dx,
                 "dest_map": dest_map,
                 "dest_name": _MAP_NAMES.get(dest_map, f"Map 0x{dest_map:02X}"),
             })
@@ -1621,23 +1627,13 @@ def _overlay_warps_on_grid(
     grid_w = len(grid[0]) if grid else 0
     px, py = player_screen
 
-    mh = warp_data.get("map_height", 0)
-    bottom_row = mh * 2 - 1 if mh else 999
-
     for w in warp_data["warps"]:
-        wy = w.get("map_y", -1)
+        # dy/dx are already corrected in _extract_warp_data
         gx = px + w["dx"] * scale
         gy = py + w["dy"] * scale
-        # Bottom-row warps (building exits) are reported 1 tile above
-        # the actual doormat position in RAM.  Shift overlay down by 1.
-        is_bottom = wy >= bottom_row
-        # Top-row warps (north gate exits) are reported 1 tile below
-        # the actual entrance position in RAM.  Shift overlay up by 1.
-        is_top = wy == 0
-        if is_bottom:
-            gy += 1 * scale
-        elif is_top:
-            gy -= 1 * scale
+        # Warps with non-zero dy/dx land on map-boundary tiles after correction;
+        # allow those even if the cell looks like a wall (gate corridor edge).
+        is_directional = w["dx"] != 0 or w["dy"] != 0
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
             # Skip player tile — overlaying W on @ breaks A* (W is blocked,
             # so pathfinding can't start and all NPCs become UNREACHABLE)
@@ -1645,8 +1641,8 @@ def _overlay_warps_on_grid(
                 continue
             # Only overlay W on walkable tiles — some warps sit on wall tiles
             # (e.g. gate buildings with wider warp zones than walkable exits).
-            # Exception: bottom/top-row warps land on boundary tiles — allow those.
-            if not (is_bottom or is_top) and grid[gy][gx] in ('#', 'T', 'B', '='):
+            # Exception: directional boundary warps may land on edge tiles.
+            if not is_directional and grid[gy][gx] in ('#', 'T', 'B', '='):
                 continue
             grid[gy][gx] = "W"
 

@@ -89,24 +89,15 @@ class WorldMap:
             warp_map = self.warps[map_id]
             mw = warp_data.get("map_width", 0)
             mh = warp_data.get("map_height", 0)
-            bottom_row = mh * 2 - 1 if mh else 999
             for w in warp_data.get("warps", []):
-                w_map_y = w.get("map_y", -1)
+                # dy/dx are already corrected in _extract_warp_data
                 wx = px_map + w["dx"]
                 wy = py_map + w["dy"]
-                # Bottom-row warps (building exits) are reported 1 tile
-                # above their actual doormat position.  Shift down by 1.
-                is_bottom = w_map_y >= bottom_row
-                # Top-row warps (north gate exits) are reported 1 tile
-                # below their actual entrance position.  Shift up by 1.
-                is_top = w_map_y == 0
-                if is_bottom:
-                    wy += 1
-                elif is_top:
-                    wy -= 1
                 # Skip warps on wall tiles — ROM defines warps on both
                 # sides of gate corridors but only one may be walkable.
-                if not (is_bottom or is_top) and tile_map.get((wx, wy)) in ('#', 'T', 'B', '='):
+                # Directional warps (boundary exits) may land on edge tiles.
+                is_directional = w["dx"] != 0 or w["dy"] != 0
+                if not is_directional and tile_map.get((wx, wy)) in ('#', 'T', 'B', '='):
                     continue
                 warp_map[(wx, wy)] = w.get("dest_name", "?")
 

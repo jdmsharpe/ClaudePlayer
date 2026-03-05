@@ -1,3 +1,4 @@
+import re
 import logging
 import base64
 from io import BytesIO
@@ -5,16 +6,18 @@ from pyboy import PyBoy
 from pyboy.utils import WindowEvent
 
 # Define button rules documentation
-button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), E (SELECT).
-Format: BUTTON + FRAMES. Separate with spaces. A bare letter (no number) = 4-frame press.
-Examples: A = press A. U16 = up 1 tile. "D D A" = menu cursor down twice, confirm.
+button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), X (SELECT), W (WAIT).
+Format: BUTTON[FRAMES]. Separate tokens with spaces. A bare letter (no number) = 4-frame press.
+  Single press: A — press A once.  Hold: A16 — hold A for 16 frames.
+  Simultaneous: AB — press A and B together (4 frames). AB2 — hold both for 2 frames.
+  Wait: W — pause 4 frames. W16 — pause 16 frames with no button pressed.
 
 MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16. Max 128 frames/token (8 tiles), 256 total/turn.
   U16 = 1 tile, R48 = 3 tiles, D96 = 6 tiles, L128 = 8 tiles (max single token).
   Chain tokens for long moves: "R128 R64" = 12 tiles right (192 frames). Use the full 256 budget!
 CRITICAL: Counts under 16 (e.g. D10) will NOT complete a tile move. Always use multiples of 16.
 FACING: U2/D2/L2/R2 = turn to face that direction without moving (2-frame tap). Used in [path:] hints for NPC interaction — e.g. "U32 L2 A" = walk up 2 tiles, face left, press A.
-BUTTONS: Use bare A, B, S, E for single presses (4 frames). Avoid A1/B1 — 1-frame presses can be missed.
+BUTTONS: Use bare A, B, S, X for single presses (4 frames). Avoid A1/B1 — 1-frame presses can be missed.
 """
 
 # Button mappings — module-level constants (avoid rebuilding per call)
@@ -26,7 +29,8 @@ _BUTTON_MAP = {
     'L': WindowEvent.PRESS_ARROW_LEFT,
     'R': WindowEvent.PRESS_ARROW_RIGHT,
     'S': WindowEvent.PRESS_BUTTON_START,
-    'E': WindowEvent.PRESS_BUTTON_SELECT,
+    'X': WindowEvent.PRESS_BUTTON_SELECT,
+    'E': WindowEvent.PRESS_BUTTON_SELECT,  # legacy alias
 }
 
 _RELEASE_MAP = {
@@ -37,10 +41,12 @@ _RELEASE_MAP = {
     'L': WindowEvent.RELEASE_ARROW_LEFT,
     'R': WindowEvent.RELEASE_ARROW_RIGHT,
     'S': WindowEvent.RELEASE_BUTTON_START,
-    'E': WindowEvent.RELEASE_BUTTON_SELECT,
+    'X': WindowEvent.RELEASE_BUTTON_SELECT,
+    'E': WindowEvent.RELEASE_BUTTON_SELECT,  # legacy alias
 }
 
 _DIR_BUTTONS = frozenset('UDLR')
+_TOKEN_RE = re.compile(r'^([A-Za-z]+)(\d+)?$')
 _MAX_DIR_FRAMES = 256  # total directional frames allowed per turn
 _MAX_SINGLE_DIR = 128  # cap per directional token (8 tiles)
 
@@ -63,55 +69,50 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
         return
 
     try:
-        # Parse input string — normalize bare letters (e.g. "A" → "A4")
-        # Bare letter = 4-frame press (enough for the game to register).
-        # 1-frame presses can be missed; 16 frames wastes time.
-        raw_tokens = input_string.strip().split()
-        inputs = [t + "4" if len(t) == 1 and t.isalpha() else t for t in raw_tokens]
-
         _stopping = lambda: stop_event is not None and stop_event.is_set()
         _tick = lambda: (pyboy.tick(), frame_callback and frame_callback(pyboy.screen.image))
         total_dir_frames = 0
 
-        for button_input in inputs:
+        for raw_token in input_string.strip().split():
             if _stopping():
                 break
 
-            # Extract button and duration
-            if len(button_input) == 1:
-                # Single character means press for 1 frame
-                button = button_input
-                duration = 1
-            else:
-                # Otherwise parse the button and duration
-                button = button_input[0]
-                try:
-                    duration = int(button_input[1:])
-                except ValueError:
-                    logging.warning(f"Invalid button input: {button_input}, using duration of 1")
-                    duration = 1
+            m = _TOKEN_RE.match(raw_token)
+            if not m:
+                logging.warning(f"Invalid token: {raw_token!r}, skipping")
+                continue
 
-            # Cap directional inputs to 8 tiles to force re-evaluation
-            if button in _DIR_BUTTONS and duration > _MAX_SINGLE_DIR:
-                duration = _MAX_SINGLE_DIR
+            buttons = m.group(1).upper()
+            duration = int(m.group(2)) if m.group(2) else 4
 
-            # Cap total directional frames per turn to prevent FPS drops and
-            # force re-evaluation after a full screen's worth of movement.
-            if button in _DIR_BUTTONS:
+            # W = wait (no button press, just tick)
+            if buttons == 'W':
+                for _ in range(duration):
+                    if _stopping():
+                        break
+                    _tick()
+                continue
+
+            # Validate all button chars
+            invalid = [b for b in buttons if b not in _BUTTON_MAP]
+            if invalid:
+                logging.warning(f"Unknown button(s) {invalid!r} in {raw_token!r}, skipping")
+                continue
+
+            # Cap directional inputs (single dir button only)
+            if len(buttons) == 1 and buttons in _DIR_BUTTONS:
+                if duration > _MAX_SINGLE_DIR:
+                    duration = _MAX_SINGLE_DIR
                 remaining = _MAX_DIR_FRAMES - total_dir_frames
                 if remaining <= 0:
-                    logging.warning(f"Turn frame cap ({_MAX_DIR_FRAMES}) reached — skipping: {button_input}")
+                    logging.warning(f"Turn frame cap ({_MAX_DIR_FRAMES}) reached — skipping: {raw_token}")
                     continue
                 duration = min(duration, remaining)
                 total_dir_frames += duration
 
-            # Verify the button is valid
-            if button not in _BUTTON_MAP:
-                logging.warning(f"Unknown button: {button}, skipping")
-                continue
-
-            # Press the button
-            pyboy.send_input(_BUTTON_MAP[button])
+            # Press all buttons simultaneously
+            for b in buttons:
+                pyboy.send_input(_BUTTON_MAP[b])
 
             # Hold for the specified duration
             for _ in range(duration):
@@ -119,9 +120,9 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                     break
                 _tick()
 
-            # Release the button and tick once so the game sees
-            # the released state before any subsequent press
-            pyboy.send_input(_RELEASE_MAP[button])
+            # Release all buttons, then tick so game sees released state
+            for b in buttons:
+                pyboy.send_input(_RELEASE_MAP[b])
             _tick()
 
         # Tick extra frames so animations settle before the next screenshot

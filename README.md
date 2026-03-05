@@ -64,38 +64,36 @@ Configuration is loaded from `config.json` (created automatically on first run i
 
 ```json
 {
-  "ROM_PATH": "gold.gbc",            // Path to the Game Boy ROM file
-  "STATE_PATH": "gold.gbc.state",    // Optional path to a saved state (null for none)
-  "LOG_FILE": "game_agent.log",      // Path to the log file
-  "EMULATION_MODE": "turn_based",    // "turn_based" or "continuous"
-  "EMULATION_SPEED": 1,              // Emulation speed multiplier
-  "CONTINUOUS_ANALYSIS_INTERVAL": 1.0, // Analysis frequency in seconds (continuous mode)
-  "ENABLE_WRAPPER": false,           // Whether to enable the PyBoy game wrapper
-  "ENABLE_SOUND": false,             // Whether to enable sound (continuous mode only)
-  "MAX_HISTORY_MESSAGES": 30,        // Max messages kept in context window
-  "MAX_SCREENSHOTS": 5,              // Max recent screenshots kept in chat history
-  "CUSTOM_INSTRUCTIONS": "",         // Custom instructions injected into Claude's system prompt
-  
-  // Default settings for all model modes - inherited by ACTION and SUMMARY if not overridden
+  "ROM_PATH": "red.gb",                   // Path to the Game Boy ROM file
+  "STATE_PATH": null,                     // Optional path to a saved state (null = auto-load from saves/)
+  "LOG_FILE": "game_agent.log",           // Path to the log file
+  "EMULATION_SPEED": 1,                   // Emulation speed multiplier
+  "CONTINUOUS_ANALYSIS_INTERVAL": 3.5,    // Base analysis interval in seconds
+  "MAX_ADAPTIVE_INTERVAL": 15.0,          // Max interval when agent is idle
+  "ENABLE_SPATIAL_CONTEXT": true,         // Whether to include map/grid context in prompts
+  "ENABLE_SOUND": true,                   // Whether to enable emulator sound
+  "MAX_HISTORY_MESSAGES": 15,             // Max messages kept in context window
+  "MAX_SCREENSHOTS": 2,                   // Max recent screenshots kept in chat history
+  "BOOT_FRAMES": 400,                     // Frames to tick before first analysis
+  "WEB_PORT": 0,                          // HTTP dashboard port (0 = disabled)
+  "CUSTOM_INSTRUCTIONS": "",              // Extra instructions injected into Claude's system prompt
+
+  // Default model settings — inherited by ACTION if not overridden
   "MODEL_DEFAULTS": {
-    "MODEL": "claude-3-7-sonnet-20250219", // Claude model version
-    "THINKING": true,                // Whether to enable Claude's thinking mode
-    "DYNAMIC_THINKING": false,       // Whether to allow Claude to toggle thinking on/off dynamically
-    "EFFICIENT_TOOLS": true,         // Whether to use token-efficient-tools beta
-    "MAX_TOKENS": 20000,             // Maximum tokens for Claude's response
-    "THINKING_BUDGET": 16000         // Maximum tokens for Claude's thinking
+    "MODEL": "claude-haiku-4-5",          // Claude model to use
+    "THINKING": true,                     // Enable extended thinking
+    "DYNAMIC_THINKING": true,             // Allow Claude to toggle thinking on/off
+    "EFFICIENT_TOOLS": true,              // Use token-efficient-tools beta
+    "MAX_TOKENS": 16384,                  // Maximum tokens per response
+    "THINKING_BUDGET": 10000              // Maximum tokens for thinking
   },
-  
-  // Action mode settings (inherits from MODEL_DEFAULTS)
-  "ACTION": {
-    // Override MODEL_DEFAULTS settings here if needed
-  },
-  
-  // Summary mode settings (inherits from MODEL_DEFAULTS)
-  "SUMMARY": {
-    "INITIAL_SUMMARY": false,        // Generate a summary on first turn
-    "SUMMARY_INTERVAL": 2           // Generate summary every N turns
-    // Other MODEL_DEFAULTS can be overridden here
+
+  // Action mode overrides (inherits MODEL_DEFAULTS; add keys here to override)
+  "ACTION": {},
+
+  // Memory agent settings
+  "MEMORY": {
+    "MEMORY_INTERVAL": 20                 // Run memory agent every N turns
   }
 }
 ```
@@ -153,13 +151,11 @@ Available buttons: `U` (Up), `D` (Down), `L` (Left), `R` (Right), `A`, `B`, `S` 
 
 The AI uses several tools to interact with the game:
 
-- `send_inputs`: Send button sequences
-- `set_game`: Identify the current game
-- `set_current_goal`: Set the current gameplay objective
-- `add_to_memory`: Store important information
-- `remove_from_memory`: Remove outdated information
-- `update_memory_item`: Update existing memory items
-- `toggle_thinking`: Dynamically enable or disable thinking capabilities (when both THINKING and DYNAMIC_THINKING are enabled)
+- `send_inputs`: Send button sequences to the emulator
+- `set_current_goal`: Override the auto-detected story goal with a specific sub-task
+- `read_from_memory`: Read the persistent memory file (routes, puzzle progress, past mistakes)
+- `delete_memory`: Permanently delete the memory file if it becomes corrupted
+- `toggle_thinking`: Dynamically enable or disable extended thinking (requires `DYNAMIC_THINKING: true` in config)
 
 ## Debugging
 

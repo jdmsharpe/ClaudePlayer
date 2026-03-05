@@ -353,6 +353,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .goal-bar .panel-label { margin-bottom: 0; }
   .goal-bar .panel-label::before { background: #58a6ff; }
   .goal-bar .ai-goal-text { font-size: 12px; }
+  #goal-progress { display: flex; align-items: center; gap: 4px; }
   .party-panel .panel-label::before { background: #f85149; }
   .bag-panel .panel-label::before { background: #e3b341; }
   .menu-panel .panel-label::before { background: #d2a8ff; }
@@ -465,7 +466,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     background: #21262d;
     border-radius: 4px;
     vertical-align: middle;
-    margin: 0 6px;
     overflow: hidden;
     border: 1px solid #30363d;
   }
@@ -889,7 +889,7 @@ async function pollState() {
     const gpPanel = document.getElementById('goal-progress');
     if (gm) {
       const done = parseInt(gm[1]), total = parseInt(gm[2]);
-      gpPanel.style.display = 'inline-flex';
+      gpPanel.style.display = 'flex';
       document.getElementById('goal-progress-fill').style.width = (total ? (done/total*100) : 0) + '%';
       document.getElementById('goal-progress-text').textContent = done + '/' + total;
       setText('ai-goal', gm[3] || '-');
@@ -1050,6 +1050,7 @@ function renderWorldMap(text) {
   const tbody = document.createElement('tbody');
   table.appendChild(tbody);
 
+  let playerRow = null;
   for (const line of text.split('\n')) {
     if (!line) continue;
     const tr = document.createElement('tr');
@@ -1060,8 +1061,16 @@ function renderWorldMap(text) {
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
+    if (line.includes('@')) playerRow = tr;
   }
   el.appendChild(table);
+
+  // Scroll the panel so the player row is centered
+  if (playerRow) {
+    const panelEl = document.getElementById('worldmap-panel');
+    const rowTop = playerRow.offsetTop;
+    panelEl.scrollTop = rowTop - panelEl.clientHeight / 2 + playerRow.clientHeight / 2;
+  }
 }
 
 function renderProgress(parent, line) {

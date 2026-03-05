@@ -751,15 +751,15 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             dy = wy - player_y   # +south / -north
             dx = wx - player_x   # +east  / -west
 
-            # Gen 1 stores each warp tile 1 step short of its actual step-on
-            # position in the direction of approach.  Normalise here so all
-            # downstream consumers (overlay, A*, text hints) see the real tile.
-            adj_dy = dy + (1 if dy > 0 else -1 if dy < 0 else 0)
-            adj_dx = dx + (1 if dx > 0 else -1 if dx < 0 else 0)
+            # Overshoot: 1 tile further in approach direction so agent walks
+            # through the trigger tile rather than stopping just short of it.
+            over_dy = dy + (1 if dy > 0 else -1 if dy < 0 else 0)
+            over_dx = dx + (1 if dx > 0 else -1 if dx < 0 else 0)
 
             warps.append({
                 "map_y": wy, "map_x": wx,
-                "dy": adj_dy, "dx": adj_dx,
+                "dy": dy, "dx": dx,           # raw RAM — used for display/overlay
+                "over_dy": over_dy, "over_dx": over_dx,  # A* overshoot target
                 "dest_map": dest_map,
                 "dest_name": _MAP_NAMES.get(dest_map, f"Map 0x{dest_map:02X}"),
             })
@@ -1099,29 +1099,40 @@ def _format_warp_text(
                 parts.append(f"{dx} RIGHT")
             direction = ", ".join(parts) if parts else "ON THIS TILE"
 
-            # Compute A* path to the warp tile
+            # Compute A* path to the warp tile.
+            # Try overshoot (1 tile past trigger) first so agent walks through it;
+            # fall back to exact warp tile if overshoot is off-screen or blocked.
             hint = ""
             if can_pathfind:
-                warp_grid_pos = (player_pos[0] + dx, player_pos[1] + dy)
-                wgx, wgy = warp_grid_pos
+                over_dy, over_dx = w["over_dy"], w["over_dx"]
                 grid_h = len(grid)
                 grid_w = len(grid[0]) if grid else 0
 
-                if 0 <= wgx < grid_w and 0 <= wgy < grid_h:
-                    warp_path = find_path(grid, player_pos, warp_grid_pos)
-                    if warp_path:
-                        buttons = path_to_buttons(warp_path)
-                        if buttons:
-                            hint = f"  [path: {buttons}]"
-                        else:
-                            hint = "  [on this tile — step onto W]"
-                    else:
-                        hint = ("  [Warp visible but walls block direct path —"
-                                " requires an indirect route."
-                                " Try a different approach direction (e.g. SOUTH or EAST)"
-                                " to find a path that curves around to this warp]")
+                over_pos = (player_pos[0] + over_dx, player_pos[1] + over_dy)
+                exact_pos = (player_pos[0] + dx, player_pos[1] + dy)
+
+                ovx, ovy = over_pos
+                over_in_grid = 0 <= ovx < grid_w and 0 <= ovy < grid_h
+                over_path = find_path(grid, player_pos, over_pos) if over_in_grid else None
+
+                if over_path:
+                    buttons = path_to_buttons(over_path)
+                    hint = f"  [path: {buttons}]" if buttons else "  [on this tile — step onto W]"
                 else:
-                    hint = f"  [off screen — use compass below]"
+                    # Overshoot blocked or off-screen — path to exact trigger tile
+                    wgx, wgy = exact_pos
+                    if 0 <= wgx < grid_w and 0 <= wgy < grid_h:
+                        warp_path = find_path(grid, player_pos, exact_pos)
+                        if warp_path:
+                            buttons = path_to_buttons(warp_path)
+                            hint = f"  [path: {buttons}]" if buttons else "  [on this tile — step onto W]"
+                        else:
+                            hint = ("  [Warp visible but walls block direct path —"
+                                    " requires an indirect route."
+                                    " Try a different approach direction (e.g. SOUTH or EAST)"
+                                    " to find a path that curves around to this warp]")
+                    else:
+                        hint = "  [off screen — use compass below]"
             else:
                 # Fallback: straight-line when no collision grid available
                 cmds = []
@@ -1651,6 +1662,7 @@ def extract_spatial_context(
     pyboy: PyBoy,
     previous_tilemap: Optional[List[List[int]]] = None,
     previous_player_pos: Optional[Tuple[int, int]] = None,
+    visited_maps: Optional[set] = None,
 ) -> Dict[str, Any]:
     """Extract tilemap spatial context for the current frame.
 
@@ -1671,9 +1683,15 @@ def extract_spatial_context(
         cut_tree_pos = _extract_cut_tree_positions(pyboy)
         warp_data = _extract_warp_data(pyboy)
         npc_data = _extract_npc_data(pyboy)
+        # Track current map in visited_maps for visit-check milestones
+        if visited_maps is not None and warp_data:
+            visited_maps.add(warp_data["map_number"])
+
         from claude_player.utils.event_flags import check_story_progress
         try:
-            story_progress = check_story_progress(pyboy.memory.__getitem__)
+            story_progress = check_story_progress(
+                pyboy.memory.__getitem__, visited_maps=visited_maps
+            )
         except Exception as e:
             logger.debug(f"Story progress unavailable: {e}")
             story_progress = None

@@ -17,6 +17,7 @@ class GameState:
         self.party_summary: Optional[str] = None  # Latest 1-line party status from RAM
         self.auto_goal_enabled = True
         self.fight_cursor: int = 0   # Tracked fight-submenu cursor; updated each battle turn
+        self.visited_maps: set = set()  # Map IDs ever visited; used for visit-check milestones
 
     def get_current_state_header(self, compact: bool = False) -> str:
         """Get a brief state header for the user message.

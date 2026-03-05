@@ -9,8 +9,9 @@ button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START
 Format: BUTTON + FRAMES. Separate with spaces. A bare letter (no number) = 4-frame press.
 Examples: A = press A. U16 = up 1 tile. "D D A" = menu cursor down twice, confirm.
 
-MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16.
-  U16 = 1 tile up, R32 = 2 tiles right, D48 = 3 tiles down.
+MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16. Max 128 frames/token (8 tiles), 256 total/turn.
+  U16 = 1 tile, R48 = 3 tiles, D96 = 6 tiles, L128 = 8 tiles (max single token).
+  Chain tokens for long moves: "R128 R64" = 12 tiles right (192 frames). Use the full 256 budget!
 CRITICAL: Counts under 16 (e.g. D10) will NOT complete a tile move. Always use multiples of 16.
 FACING: U2/D2/L2/R2 = turn to face that direction without moving (2-frame tap). Used in [path:] hints for NPC interaction — e.g. "U32 L2 A" = walk up 2 tiles, face left, press A.
 BUTTONS: Use bare A, B, S, E for single presses (4 frames). Avoid A1/B1 — 1-frame presses can be missed.

@@ -1,4 +1,3 @@
-import re
 import logging
 from typing import Optional
 
@@ -11,16 +10,16 @@ class GameState:
         self.cartridge_title = ""
         self.current_goal = None
         self.turn_count = 0
-        self.summary = ""
-        self.summary_turn = 0  # Turn when summary was last generated
+        self.memory_turn = 0  # Turn when memory was last written
         self.complete_message_history = []  # Store ALL messages without truncation
         self.runtime_thinking_enabled = True  # Store the runtime thinking state
         self.story_progress = None   # Updated each turn from event flags
         self.party_summary: Optional[str] = None  # Latest 1-line party status from RAM
         self.auto_goal_enabled = True
+        self.fight_cursor: int = 0   # Tracked fight-submenu cursor; updated each battle turn
 
-    def get_current_state_summary(self, compact: bool = False, summary_interval: int = 30) -> str:
-        """Get a summary of the current game state.
+    def get_current_state_header(self, compact: bool = False) -> str:
+        """Get a brief state header for the user message.
 
         Args:
             compact: If True, omit game/goal lines (spatial context already
@@ -30,24 +29,6 @@ class GameState:
         if not compact:
             parts.append(f"Current game: {self.identified_game or 'Not identified'}")
             parts.append(f"Current goal: {self.current_goal or 'Not set'}")
-
-        if self.summary:
-            age = self.turn_count - self.summary_turn
-            age_tag = f"[{age}t ago]"
-            summary_text = self.summary
-            stale_warning = ""
-            if age >= summary_interval - 5:
-                # Very stale: redact position claims that may mislead the agent
-                summary_text = re.sub(
-                    r'(?:at |position |pos )\(?(\d+,\s*\d+)\)?',
-                    '[pos redacted]',
-                    summary_text,
-                )
-                stale_warning = f"\n⚠ STALE ({age}t) — trust live context only."
-            elif age >= 10:
-                stale_warning = "\n⚠ STALE — trust live context over this summary."
-            parts.append(f"=== GAME PROGRESS SUMMARY === {age_tag}{stale_warning}\n" + summary_text)
-
         return "\n".join(parts)
     
     def log_state(self):
@@ -55,17 +36,11 @@ class GameState:
         logging.info(f"GAME: {self.identified_game or 'Not identified'}")
         logging.info(f"GOAL: {self.current_goal or 'Not set'}")
         logging.info(f"TURN: {self.turn_count}")
-        summary_preview = self.summary[:200] + "..." if len(self.summary) > 200 else self.summary
-        logging.info(f"SUMMARY: {summary_preview}")
+        logging.info(f"MEMORY LAST WRITTEN: turn {self.memory_turn}")
 
     def increment_turn(self):
         """Increment the turn counter."""
         self.turn_count += 1
-
-    def update_summary(self, summary: str):
-        """Update the summary."""
-        self.summary = summary
-        self.summary_turn = self.turn_count
 
     def add_to_complete_history(self, message):
         """Add a message to the complete history archive, capping at 120 messages."""

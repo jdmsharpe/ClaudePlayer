@@ -73,10 +73,8 @@ def load_config(config_file='config.json') -> ConfigClass:
 
         "ACTION": {},
 
-        "SUMMARY": {
-            "INITIAL_SUMMARY": True,
-            "SUMMARY_INTERVAL": 20,
-            "MODEL": "claude-haiku-4-5",
+        "MEMORY": {
+            "MEMORY_INTERVAL": 20,
         },
     }
 
@@ -108,13 +106,20 @@ def load_config(config_file='config.json') -> ConfigClass:
     for key, value in default_config.items():
         setattr(config, key, value)
 
-    # Apply MODEL_DEFAULTS to ACTION and SUMMARY (mode settings override defaults)
-    for mode in ("ACTION", "SUMMARY"):
-        mode_config = default_config.get(mode, {}).copy()
-        for k, v in default_config["MODEL_DEFAULTS"].items():
-            if k not in mode_config:
-                mode_config[k] = v
-        setattr(config, mode, mode_config)
+    # Apply MODEL_DEFAULTS to ACTION (mode settings override defaults)
+    action_config = default_config.get("ACTION", {}).copy()
+    for k, v in default_config["MODEL_DEFAULTS"].items():
+        if k not in action_config:
+            action_config[k] = v
+    config.ACTION = action_config
+
+    # MEMORY config (no model defaults needed — agent writes directly)
+    config.MEMORY = default_config.get("MEMORY", {"MEMORY_INTERVAL": 20})
+
+    # Backward compat: if old config.json has SUMMARY.SUMMARY_INTERVAL, use it
+    legacy = default_config.get("SUMMARY", {})
+    if legacy.get("SUMMARY_INTERVAL") and config.MEMORY.get("MEMORY_INTERVAL", 20) == 20:
+        config.MEMORY["MEMORY_INTERVAL"] = legacy["SUMMARY_INTERVAL"]
 
     _validate_config(config)
 

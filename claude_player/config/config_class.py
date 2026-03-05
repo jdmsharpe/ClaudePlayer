@@ -10,9 +10,10 @@ class ModelConfig(TypedDict):
     THINKING_BUDGET: int
 
 
-class SummaryConfig(ModelConfig):
-    INITIAL_SUMMARY: bool
-    SUMMARY_INTERVAL: int
+class MemoryConfig(TypedDict):
+    MEMORY_INTERVAL: int  # Update memory every N turns via background subagent
+    MODEL: str            # Model for memory subagent (default: claude-haiku-4-5)
+    MAX_TOKENS: int       # Max tokens for memory subagent response
 
 
 class ActionConfig(ModelConfig):
@@ -36,4 +37,4 @@ class ConfigClass:
     WEB_PORT: int
     MODEL_DEFAULTS: ModelConfig
     ACTION: ActionConfig
-    SUMMARY: SummaryConfig
+    MEMORY: MemoryConfig

@@ -15,15 +15,16 @@ from claude_player.config.config_loader import setup_logging
 from claude_player.state.game_state import GameState
 from claude_player.tools.tool_setup import setup_tool_registry
 from claude_player.interface.claude_interface import ClaudeInterface
-from claude_player.agent.summary_generator import SummaryGenerator
 from claude_player.utils.message_utils import MessageUtils
 from claude_player.utils.game_utils import take_screenshot
 from claude_player.utils.spatial_context import extract_spatial_context
+from claude_player.utils.world_map import WorldMap
 from claude_player.utils.battle_context import extract_battle_context
 from claude_player.utils.party_context import extract_party_context
 from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
+from claude_player.agent.memory_manager import MemoryManager
 
 # Gen 1 character encoding (wPlayerName etc.)
 _G1_CHARS = {
@@ -92,7 +93,7 @@ class GameAgent:
         # Store previous tilemap and player position for spatial context
         self._previous_visible_tilemap = None
         self._previous_player_pos = None
-        self._visited_positions: collections.deque = collections.deque(maxlen=50)
+        self._visited_positions: collections.deque = collections.deque(maxlen=150)
 
         # Track consecutive thinking-only responses for recovery
         self._consecutive_thinking_only = 0
@@ -135,6 +136,11 @@ class GameAgent:
         self._save_interval = 100  # Save every N turns
         self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
         self._save_path = os.path.join(self._save_dir, "autosave.state")
+
+        # Persistent world map: accumulates explored tiles across turns
+        self._world_map = WorldMap()
+        self._world_map_path = os.path.join(self._save_dir, "world_map.json")
+        self._world_map.load(self._world_map_path)
         
         # Initialize game state
         self.game_state = GameState()
@@ -151,9 +157,10 @@ class GameAgent:
         # Initialize Claude interface
         self.claude = ClaudeInterface(self.config)
 
-        # Initialize summary generator
-        self.summary_generator = SummaryGenerator(self.claude, self.game_state, self.config)
-        
+        # Initialize memory manager (background subagent for persistent memory)
+        self.memory_manager = MemoryManager(self.claude, self.game_state, self.config)
+        self._memory_thread = None  # Background thread for async memory updates
+
         # Initialize chat history
         self.chat_history = []
 
@@ -310,6 +317,20 @@ class GameAgent:
                     self._dead_end_zones.clear()  # new map — reset dead ends
                 self._visited_positions.append(current_pos)
 
+            # Accumulate tiles into persistent world map
+            if (current_pos is not None
+                    and in_overworld
+                    and spatial_data.get("base_grid")
+                    and spatial_data.get("player_screen_pos")
+                    and spatial_data.get("map_number") is not None):
+                self._world_map.update(
+                    map_id=spatial_data["map_number"],
+                    player_pos=current_pos,
+                    player_screen_pos=spatial_data["player_screen_pos"],
+                    grid=spatial_data["base_grid"],
+                    warp_data=spatial_data.get("warp_data_raw"),
+                )
+
             # ── Unified navigation hint (single message, priority-based) ──
             # Instead of layering multiple independent warnings (CYCLING,
             # LOOPING, THRASHING, DEAD END, EXPLORATION) that can
@@ -359,18 +380,20 @@ class GameAgent:
                             avoid_dirs.append("EAST")
 
                 # Suggest directions AWAY from movement centroid (unexplored territory)
+                # dy_c > 0 means centroid is SOUTH of player → go NORTH (away)
+                # dx_c > 0 means centroid is EAST of player → go WEST (away)
                 avg_x = sum(xs) / len(xs)
                 avg_y = sum(ys) / len(ys)
                 dx_c, dy_c = avg_x - cx, avg_y - cy
                 suggest_dirs: list[str] = []
                 if dy_c > 1.0:
-                    suggest_dirs.append("SOUTH")
-                elif dy_c < -1.0:
                     suggest_dirs.append("NORTH")
+                elif dy_c < -1.0:
+                    suggest_dirs.append("SOUTH")
                 if dx_c > 1.0:
-                    suggest_dirs.append("EAST")
-                elif dx_c < -1.0:
                     suggest_dirs.append("WEST")
+                elif dx_c < -1.0:
+                    suggest_dirs.append("EAST")
                 # Remove suggestions that lead toward dead ends
                 suggest_dirs = [d for d in suggest_dirs if d not in avoid_dirs]
 
@@ -435,6 +458,15 @@ class GameAgent:
                 if nav_hint:
                     spatial_data["text"] += f"\n{nav_hint}"
 
+                # Exploration frontier hint from persistent world map
+                map_id = spatial_data.get("map_number")
+                if map_id is not None and current_pos is not None:
+                    frontier_hint = self._world_map.frontier_dirs(
+                        map_id, current_pos
+                    )
+                    if frontier_hint:
+                        spatial_data["text"] += f"\n{frontier_hint}"
+
             # Auto-set goal from event flags
             story_progress = spatial_data.get("story_progress")
             if story_progress:
@@ -454,13 +486,17 @@ class GameAgent:
                 # self._in_battle still holds the PREVIOUS turn's value here
                 # (updated at line ~511 after capture). So not self._in_battle
                 # correctly identifies "just entered battle this turn".
-                battle_data = extract_battle_context(self.pyboy, just_entered_battle=not self._in_battle)
+                battle_data = extract_battle_context(
+                    self.pyboy,
+                    just_entered_battle=not self._in_battle,
+                    fight_cursor=self.game_state.fight_cursor,
+                )
 
         # Extract party context (always available — overworld and battle)
         party_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT:
             party_data = extract_party_context(self.pyboy)
-            # Store latest party summary for the summary generator
+            # Store latest party status from RAM
             if party_data and party_data.get("party"):
                 health = party_data.get("health", {})
                 names = ", ".join(
@@ -522,6 +558,12 @@ class GameAgent:
         self._in_battle = bool(battle_data and battle_data.get("text"))
         self._in_menu = bool(menu_data and menu_data.get("text"))
 
+        # fight_cursor is now read from wPlayerMoveListIndex RAM in extract_battle_context.
+        # No client-side tracking needed — the TIP uses U U U reset so cursor position
+        # doesn't matter for navigation. Reset on battle end for legacy display only.
+        if self._was_in_battle and not self._in_battle:
+            self.game_state.fight_cursor = 0
+
         # Battle stuck detection: track HP/menu between turns
         if self._in_battle and battle_data:
             snap = (
@@ -576,6 +618,8 @@ class GameAgent:
                 # "Region: South Forest — hint..." → "South Forest"
                 region_name = region_line[len("Region:"):].split("—")[0].strip()
                 location += f"\n{region_name}"
+            if location:
+                spatial_grid = location + "\n" + spatial_grid
 
         # Build compact one-line summaries for terminal display
         party_data = captured_state.get("party_data")
@@ -586,7 +630,9 @@ class GameAgent:
             mons = []
             for m in party_data["party"]:
                 status = f" [{m['status']}]" if m["status"] != "OK" else ""
-                mons.append(f"{m['name']} Lv{m['level']} {m['hp']}/{m['max_hp']}{status}")
+                nick = m.get("nickname", "")
+                display = f"{m['name']} ({nick})" if nick else m["name"]
+                mons.append(f"{display} Lv{m['level']} {m['hp']}/{m['max_hp']}{status}")
             health = party_data.get("health", {})
             team = f"HP:{health.get('total_hp_pct', '?')}%"
             if health.get("recommendation"):
@@ -596,7 +642,8 @@ class GameAgent:
         party_mons_list = []
         if party_data and party_data.get("party"):
             party_mons_list = [
-                {"name": m["name"], "level": m["level"], "hp": m["hp"],
+                {"name": m["name"], "nickname": m.get("nickname", ""),
+                 "level": m["level"], "hp": m["hp"],
                  "max_hp": m["max_hp"], "types": m.get("types", []),
                  "status": m.get("status", "OK"),
                  "exp": m.get("exp", 0)}
@@ -657,6 +704,16 @@ class GameAgent:
         # Badges list from bag data (already read above)
         badges_list = bag_data.get("badges", []) if bag_data else []
 
+        # Render world map for display (overworld only, hidden during battle)
+        world_map_text = ""
+        if not self._in_battle and spatial_data:
+            map_id = spatial_data.get("map_number")
+            player_pos = spatial_data.get("player_pos")
+            if map_id is not None and player_pos is not None:
+                world_map_text = self._world_map.render(
+                    map_id, player_pos, dead_end_zones=self._dead_end_zones
+                ) or ""
+
         # Update terminal display
         self.display.update(
             turn=self.game_state.turn_count,
@@ -664,12 +721,12 @@ class GameAgent:
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
             goal=self.game_state.current_goal or "",
             spatial_grid=spatial_grid,
-            location=location,
             party_summary=party_summary,
             party_mons=party_mons_list,
             bag_summary=bag_summary,
             bag_items=bag_items_list,
             menu_summary=menu_summary,
+            world_map_text=world_map_text,
             dex_caught=dex_caught,
             dex_seen=dex_seen,
             trainer_name=trainer_name,
@@ -685,7 +742,16 @@ class GameAgent:
             # In battle: use battle context instead of spatial grid
             user_content.append({"type": "text", "text": battle_data["text"]})
         elif spatial_data and spatial_data["text"]:
-            user_content.append({"type": "text", "text": spatial_data["text"]})
+            spatial_text = spatial_data["text"]
+            # Append accumulated world map (overworld only, when enough tiles explored)
+            if spatial_data.get("map_number") is not None and spatial_data.get("player_pos"):
+                world_map_text = self._world_map.render(
+                    spatial_data["map_number"], spatial_data["player_pos"],
+                    dead_end_zones=self._dead_end_zones,
+                )
+                if world_map_text:
+                    spatial_text += "\n" + world_map_text
+            user_content.append({"type": "text", "text": spatial_text})
 
         # Menu context: inject every turn when active (menus change frequently)
         if menu_data and menu_data.get("text"):
@@ -825,47 +891,44 @@ class GameAgent:
             self.chat_history.append(user_message)
             self.game_state.add_to_complete_history(user_message)
         else:
-            current_memory = self.game_state.get_current_state_summary(
+            state_header = self.game_state.get_current_state_header(
                 compact=self.config.ENABLE_SPATIAL_CONTEXT,
-                summary_interval=self.config.SUMMARY["SUMMARY_INTERVAL"],
             )
-            content_prefix = [{"type": "text", "text": current_memory}] if current_memory else []
+            content_prefix = [{"type": "text", "text": state_header}] if state_header else []
+
             user_message = {"role": "user", "content": content_prefix + user_content}
             self.chat_history.append(user_message)
             self.game_state.add_to_complete_history(user_message)
 
-            # Strip state prefix from older user messages to avoid duplicating
-            # the summary (~750 tokens) in every message in the context window.
+            # Strip state header from older user messages to avoid token duplication.
             for msg in self.chat_history[:-1]:
                 if msg["role"] == "user" and isinstance(msg["content"], list) and len(msg["content"]) > 1:
                     first = msg["content"][0]
                     if isinstance(first, dict) and first.get("type") == "text":
                         text = first.get("text", "")
-                        if "=== GAME PROGRESS SUMMARY ===" in text or text.startswith("Memory:"):
+                        if text.startswith("Current game:"):
                             msg["content"].pop(0)
-            
+
         # Apply the screenshot limit
         self._limit_screenshots_in_history()
-        
-        # Check if we need to generate a summary (also retry if previous failed)
-        summary_is_error = self.game_state.summary.startswith("[SUMMARY_ERROR]")
-        battle_state_changed = self._was_in_battle != self._in_battle
-        should_generate = (
-            (self.config.SUMMARY["INITIAL_SUMMARY"] and self.game_state.turn_count == 1)
-            or (self.game_state.turn_count % self.config.SUMMARY["SUMMARY_INTERVAL"] == 0
-                and self.game_state.turn_count > 0)
-            or summary_is_error
-            or (battle_state_changed and self.game_state.turn_count > 1)
-        )
-        if should_generate:
-            if summary_is_error:
-                logging.info(f"Retrying failed summary at turn {self.game_state.turn_count}")
-            elif battle_state_changed:
-                logging.info(f"Generating summary at turn {self.game_state.turn_count} (battle state changed: {'entered' if self._in_battle else 'exited'} battle)")
+
+        # Background memory update (subagent): every MEMORY_INTERVAL turns
+        memory_interval = self.config.MEMORY.get("MEMORY_INTERVAL", 20)
+        if (self.game_state.turn_count % memory_interval == 0
+                and self.game_state.turn_count > 0):
+            # Run memory update on a background thread so it doesn't block the AI turn
+            if self._memory_thread is not None and self._memory_thread.is_alive():
+                logging.info("Memory update still running from previous trigger — skipping")
             else:
-                logging.info(f"Generating summary at turn {self.game_state.turn_count}")
-            summary = self.summary_generator.generate_summary(self.game_state.complete_message_history)
-            self.game_state.update_summary(summary)
+                logging.info(f"Triggering async memory update at turn {self.game_state.turn_count}")
+                # Snapshot the history so the background thread has its own copy
+                history_snapshot = list(self.game_state.complete_message_history)
+                self._memory_thread = threading.Thread(
+                    target=self.memory_manager.update_memory,
+                    args=(history_snapshot,),
+                    daemon=True,
+                )
+                self._memory_thread.start()
 
     def get_ai_response(self):
         """Get AI response for the current game state.
@@ -914,6 +977,17 @@ class GameAgent:
                 self.game_state.add_to_complete_history(assistant_message)
 
                 message_content = MessageUtils.print_and_extract_message_content(message)
+
+                # Log cache usage stats
+                usage = getattr(message, 'usage', None)
+                if usage:
+                    cache_create = getattr(usage, 'cache_creation_input_tokens', 0) or 0
+                    cache_read = getattr(usage, 'cache_read_input_tokens', 0) or 0
+                    input_tok = getattr(usage, 'input_tokens', 0) or 0
+                    if cache_create or cache_read:
+                        total_input = cache_create + cache_read + input_tok
+                        pct = (cache_read / total_input * 100) if total_input else 0
+                        logging.info(f"CACHE: read={cache_read} create={cache_create} uncached={input_tok} ({pct:.0f}% cached)")
 
                 # Detect thinking-only responses (no text or tool output)
                 if not message_content["text_blocks"] and not message_content["tool_use_blocks"]:
@@ -1101,6 +1175,7 @@ class GameAgent:
             os.makedirs(self._save_dir, exist_ok=True)
             with open(self._save_path, "wb") as f:
                 self.pyboy.save_state(f)
+            self._world_map.save(self._world_map_path)
             self._last_save_turn = turn
             logging.info(f"Autosaved emulator state at turn {turn} → {self._save_path}")
             self.display.print_event(f"Autosaved at turn {turn}")
@@ -1113,6 +1188,7 @@ class GameAgent:
             os.makedirs(self._save_dir, exist_ok=True)
             with open(self._save_path, "wb") as f:
                 self.pyboy.save_state(f)
+            self._world_map.save(self._world_map_path)
             turn = self.game_state.turn_count
             logging.info(f"Saved state on {reason} at turn {turn} → {self._save_path}")
             self.display.print_event(f"Saved on {reason} (turn {turn})")
@@ -1193,7 +1269,7 @@ class GameAgent:
                 action_duration = analysis_end_time - action_start_time
                 prep_duration = action_start_time - analysis_start_time
 
-                # Use only action duration for adaptive interval (excludes summary generation)
+                # Use only action duration for adaptive interval
                 with lock:
                     if no_action:
                         # Skip the wait — let the model retry immediately with the nudge

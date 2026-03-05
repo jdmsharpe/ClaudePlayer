@@ -34,12 +34,12 @@ class TerminalDisplay:
         self.last_response = ""
         self.last_thinking = ""
         self.spatial_grid = ""
-        self.location = ""
         self.party_summary = ""
         self.bag_summary = ""
         self.bag_items = []
         self.party_mons = []
         self.menu_summary = ""
+        self.world_map_text = ""
         self.status = "Starting..."
         self.analysis_duration = 0.0
         self.error_count = 0
@@ -183,6 +183,11 @@ class TerminalDisplay:
                     lines.append(f"│{padded:<{w}}│")
                     if grid_line.startswith(". = walkable"):
                         after_legend = True
+            if self.world_map_text:
+                lines.append(f"├{sep}┤")
+                for map_line in self.world_map_text.split("\n"):
+                    padded = f" {map_line} "
+                    lines.append(f"│{padded:<{w}}│")
             if self.party_summary or self.bag_summary or self.menu_summary:
                 lines.append(f"├{sep}┤")
                 if self.menu_summary:

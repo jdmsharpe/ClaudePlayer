@@ -2,6 +2,7 @@
 *.json
 frames/*
 !frames/README.md
+saves/*
 chat_history.md
 chat_history.json
 *.gbc

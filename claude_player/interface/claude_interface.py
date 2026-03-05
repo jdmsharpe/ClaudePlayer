@@ -26,90 +26,113 @@ class ClaudeInterface:
         self.config = config  # Store the config object
         self._logged_config = False
     
-    def generate_system_prompt(self, in_battle: bool = False, in_menu: bool = False) -> str:
-        """Generate the system prompt for Claude.
+    def generate_system_prompt(self, in_battle: bool = False, in_menu: bool = False) -> list:
+        """Generate the system prompt as a list of content blocks for caching.
+
+        Returns a list of dicts with "type"/"text" and optional "cache_control".
+        The static preamble (rules, notation) is marked cacheable; dynamic context is not.
 
         Args:
             in_battle: When True, include battle guidance instead of spatial.
             in_menu: When True, include menu navigation guidance.
         """
 
-        # Dynamic thinking control
-        thinking_info = ""
+        # --- Static block (identical every turn — cacheable) ---
+        static_parts = [f"""You play a video game in real-time. The game continues between turns — act quickly.
+CORE RULE: When a TIP is present, send its exact button sequence via send_inputs. Do not overthink or try alternatives.
+
+<notation>
+{button_rules}
+</notation>"""]
+
         if self.config.ACTION.get("DYNAMIC_THINKING", False):
-            thinking_info = """
+            static_parts.append("""
 <thinking_control>
 Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. Only disable for simple tasks; re-enable at decision points.
-</thinking_control>
-"""
+</thinking_control>""")
 
-        # Context guidance — only include the block relevant to current state
-        context_info = ""
-        if self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False):
+        has_spatial = self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False)
+        if has_spatial:
             if in_battle:
-                context_info = """
+                static_parts.append("""
 <battle_context>
 Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
 Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.
 FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with HP>0, or D A=NO (wild only).
-</battle_context>
-"""
+</battle_context>""")
             else:
-                context_info = """
+                static_parts.append("""
 <spatial_context>
 Grid: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=warp @=player 1-9=NPC i=item o=object. 1 tile=16 frames.
 FOLLOW [path:] hints — they route around walls. If [no path found], try 1-tile steps.
 NAV=A* path to off-screen targets. MOVES=immediate walkability.
 MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A). Exit houses: D16 onto door-mat W.
-MOVEMENT: Max 128 frames/token, 256 total/turn. "Player didn't move" = wall, try another direction.
+MOVEMENT: "Player didn't move" = wall, try another direction. Use large moves (D96, R128) to cover ground fast.
 NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
 NAME ENTRY: START to finalize. If RAM says dialogue but nothing visible, try movement.
-</spatial_context>
-"""
+</spatial_context>""")
 
-        # Authority & menu — only when spatial context is enabled
-        team_info = """
+            static_parts.append("""
 <authority>
-PARTY STATUS, SPATIAL/BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Trust over summary.
+PARTY STATUS, SPATIAL/BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Trust over memory.
 HEAL line = prioritize Pokemon Center. WARNING = address before main goal.
 </authority>
-""" if self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False) else ""
+<memory>
+You have persistent memory (saves/MEMORY.md) updated automatically in the background.
+Use read_from_memory when stuck, lost, or entering a familiar area — it may contain routes, dead ends, puzzle hints, and past mistakes.
+</memory>""")
 
-        menu_info = ""
-        if in_menu and self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False):
-            menu_info = """
+            if in_menu:
+                static_parts.append("""
 <menu_context>
 Shows menu type, cursor, options, and a TIP. B closes menus, START toggles start menu.
-</menu_context>
-"""
+</menu_context>""")
 
         # Custom instructions from config
-        custom_instructions = ""
         if self.config and hasattr(self.config, 'CUSTOM_INSTRUCTIONS') and self.config.CUSTOM_INSTRUCTIONS:
-            custom_instructions = f"\n{self.config.CUSTOM_INSTRUCTIONS}\n"
+            static_parts.append(f"\n{self.config.CUSTOM_INSTRUCTIONS}")
 
-        return f"""You play a video game in real-time. The game continues between turns — act quickly.
-CORE RULE: When a TIP is present, send its exact button sequence via send_inputs. Do not overthink or try alternatives.
+        static_parts.append("\nAlways use send_inputs to act. Be concise — send compound inputs, not one button at a time.")
 
-<notation>
-{button_rules}
-</notation>
-{thinking_info}
-{context_info}
-{team_info}
-{menu_info}
-{custom_instructions}
-Always use send_inputs to act. Be concise — send compound inputs, not one button at a time.
-"""
+        static_text = "\n".join(static_parts)
+
+        # Return as content blocks: static block with cache_control
+        return [
+            {
+                "type": "text",
+                "text": static_text,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
     
+    def _prepare_tools_cached(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add cache_control to the last tool definition for prompt caching.
+
+        Tools are identical every turn, so caching them avoids re-processing
+        the full tool schema on every API call.
+        """
+        if not tools:
+            return tools
+        # Shallow-copy the list; deep-copy only the last tool to add cache_control
+        cached = list(tools)
+        last = dict(cached[-1])
+        last["cache_control"] = {"type": "ephemeral"}
+        cached[-1] = last
+        return cached
+
     def send_request(
             self,
             mode_config: Dict[str, Any],
-            system_prompt: str, 
-            chat_history: List[Dict[str, Any]], 
+            system_prompt,
+            chat_history: List[Dict[str, Any]],
             tools: List[Dict[str, Any]]
         ) -> Any:
-        """Send a request to the Claude API using mode configuration."""
+        """Send a request to the Claude API using mode configuration.
+
+        Args:
+            system_prompt: Either a string (legacy) or a list of content blocks
+                           with optional cache_control for prompt caching.
+        """
         try:
             thinking_enabled = mode_config.get("THINKING", False)
 
@@ -122,14 +145,22 @@ Always use send_inputs to act. Be concise — send compound inputs, not one butt
                     logging.info(f"  Thinking budget: {mode_config.get('THINKING_BUDGET', 'default')}")
                 logging.info(f"  Efficient tools: {mode_config.get('EFFICIENT_TOOLS', False)}")
                 logging.info(f"  Max tokens: {mode_config.get('MAX_TOKENS', 'default')}")
+                logging.info(f"  Prompt caching: {isinstance(system_prompt, list)}")
                 self._logged_config = True
+
+            # Normalise system_prompt: accept plain string (memory manager)
+            # or list of content blocks (main agent with caching)
+            if isinstance(system_prompt, str):
+                system_value = system_prompt
+            else:
+                system_value = system_prompt  # list of content blocks
 
             # Create API request params
             request_params = {
                 "model": mode_config["MODEL"],
                 "max_tokens": mode_config["MAX_TOKENS"],
-                "tools": tools,
-                "system": system_prompt,
+                "tools": self._prepare_tools_cached(tools),
+                "system": system_value,
                 "messages": chat_history,
             }
 
@@ -143,4 +174,4 @@ Always use send_inputs to act. Be concise — send compound inputs, not one butt
                 return stream.get_final_message()
         except Exception as e:
             logging.error(f"ERROR in Claude API request: {str(e)}")
-            raise 
+            raise

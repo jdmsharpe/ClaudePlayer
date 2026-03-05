@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Dict, Any, List, Optional
 from pyboy import PyBoy
 from claude_player.state.game_state import GameState
@@ -51,6 +52,49 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         self.game_state.current_goal = tool_input["goal"]
         logging.info(f"GOAL SET TO: {self.game_state.current_goal}")
         return [{"type": "text", "text": f"Current goal set to {self.game_state.current_goal}"}]
+
+    # --- Memory tools (read-only for main agent; subagent handles writes) ---
+    memory_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "saves", "MEMORY.md")
+
+    @registry.register(
+        name="read_from_memory",
+        description="Read your persistent memory file. Use this when stuck, entering a familiar area, or needing to recall routes, puzzle progress, or past mistakes. Memory is updated automatically in the background.",
+        input_schema={
+            "type": "object",
+            "properties": {},
+        }
+    )
+    def handle_read_from_memory(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not os.path.exists(memory_path):
+            return [{"type": "text", "text": "No memory file exists yet. It will be created automatically after a few turns."}]
+        with open(memory_path, "r") as f:
+            content = f.read()
+        line_count = len(content.split("\n"))
+        logging.info(f"Memory read ({line_count} lines)")
+        return [{"type": "text", "text": content}]
+
+    @registry.register(
+        name="delete_memory",
+        description="⚠ DELETE the entire memory file permanently. This cannot be undone. Only use if memory has become corrupted or counterproductive.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to confirm deletion"
+                }
+            },
+            "required": ["confirm"]
+        }
+    )
+    def handle_delete_memory(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not tool_input.get("confirm"):
+            return [{"type": "text", "text": "Deletion not confirmed. Pass confirm=true to delete."}]
+        if os.path.exists(memory_path):
+            os.remove(memory_path)
+            logging.warning("Memory file DELETED")
+            return [{"type": "text", "text": "Memory file deleted."}]
+        return [{"type": "text", "text": "No memory file to delete."}]
 
     # Only register toggle_thinking tool if both THINKING and DYNAMIC_THINKING are enabled
     if config and config.MODEL_DEFAULTS.get("DYNAMIC_THINKING", False):

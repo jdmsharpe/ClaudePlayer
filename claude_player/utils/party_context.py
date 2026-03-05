@@ -65,6 +65,34 @@ _ADDR_PARTY_SPECIES = 0xD164  # 6 bytes + 0xFF terminator
 _ADDR_PARTY_MON1 = 0xD16B  # First Pokemon struct
 _PARTY_MON_SIZE = 44  # 0x2C bytes per Pokemon
 
+# Nickname RAM: wPartyMon1Nick = 0xD2B5, 11 bytes each (10 chars + 0x50 terminator)
+_ADDR_PARTY_NICK1 = 0xD2B5
+_NICK_SIZE = 11
+
+# Gen 1 character map (charmap.asm)
+_GEN1_CHARMAP: Dict[int, str] = {
+    0x7F: " ",
+    **{0x80 + i: chr(ord("A") + i) for i in range(26)},  # A-Z
+    **{0xA0 + i: chr(ord("a") + i) for i in range(26)},  # a-z
+    **{0xF6 + i: str(i) for i in range(10)},             # 0-9
+    0xE1: "PK", 0xE2: "MN",
+    0xE3: "-", 0xE6: "?", 0xE7: "!",
+    0xE8: ".", 0xF4: ",",
+    0x60: "'",  # apostrophe (e.g. FARFETCH'D)
+}
+
+
+def _decode_nickname(pyboy: PyBoy, slot: int) -> str:
+    """Read and decode a Gen 1 party Pokemon nickname."""
+    base = _ADDR_PARTY_NICK1 + slot * _NICK_SIZE
+    chars = []
+    for i in range(10):
+        b = pyboy.memory[base + i]
+        if b == 0x50:  # terminator
+            break
+        chars.append(_GEN1_CHARMAP.get(b, ""))
+    return "".join(chars)
+
 # Offsets within each 44-byte party mon struct
 _OFF_SPECIES = 0x00  # 1 byte
 _OFF_HP = 0x01  # 2 bytes big-endian (current HP)
@@ -132,6 +160,10 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
         return None
 
     name = _POKEMON_NAMES.get(species_id, f"???({species_id:#04x})")
+    nickname = _decode_nickname(pyboy, slot)
+    # Suppress nickname if it matches species name (default, no custom name set)
+    if nickname.upper() == name.upper():
+        nickname = ""
     hp = _read_word(pyboy, base + _OFF_HP)
     max_hp = _read_word(pyboy, base + _OFF_MAX_HP)
     level = pyboy.memory[base + _OFF_LEVEL]
@@ -180,6 +212,7 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
         "slot": slot,
         "species_id": species_id,
         "name": name,
+        "nickname": nickname,
         "level": level,
         "hp": hp,
         "max_hp": max_hp,

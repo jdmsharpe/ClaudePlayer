@@ -467,28 +467,8 @@ _MAP_NAMES = {
 # Per-map region tables: map_id → list of (y_min, y_max, region_name, navigation_instruction)
 # Coordinates are in step units (same as player position).  y_min/y_max are inclusive.
 _MAP_REGIONS: dict = {
-    # Viridian Forest (0x33) — 34×48 steps.
-    # North Gate warp: X≈2, Y≈0 (top-left).  South Gate warp: X≈17, Y≈47 (bottom-right).
-    0x33: [
-        (0,  10, "North Entrance",
-         "You are near the NORTH GATE exit. The gate warp is at the TOP-LEFT corner of the"
-         " forest (X≈2, Y≈0). CORRECT MAZE ROUTE from this position: go SOUTH first to"
-         " find a westward path, then move WEST, then NORTH to approach the gate."
-         " The warp may be visible on screen but the walls block a direct approach —"
-         " do NOT try to go straight left or straight up. Follow: D16 to find south"
-         " openings, then L16 repeatedly westward, then U16 to the gate."),
-        (11, 24, "Upper Forest",
-         "You are in the UPPER FOREST. The South Gate is roughly 20-35 steps SOUTH and"
-         " EAST (X≈17, Y≈47). Head SOUTH, staying on walkable path tiles (avoid grass)."
-         " If south is blocked, probe R16 or L16 to find a gap, then continue south."),
-        (25, 38, "Lower Forest",
-         "You are in the LOWER FOREST. The South Gate is 10-20 steps SOUTH-EAST"
-         " (target X≈17, Y≈47). Head SOUTH and gradually move EAST if your X is below 12."
-         " Probe R16 to find south gaps — the path curves east in this section."),
-        (39, 99, "South Approach",
-         "You are near the SOUTH GATE exit. The gate warp is at approximately X=17, Y=47."
-         " Move SOUTH and EAST to reach it. If south is blocked, move R16 to find the gap."),
-    ],
+    # Removed Viridian Forest (0x33) — static south-pointing hints fought
+    # northward goals.  COMPASS + NAV + FRONTIER provide adaptive guidance.
 }
 
 
@@ -1668,8 +1648,10 @@ def _format_spatial_text(
     if (_compass_targets and player_screen_pos and grid
             and (has_collision or terrain is not None)):
         from claude_player.utils.pathfinding import find_path_to_edge, path_to_buttons
-        # Sort by distance — navigate toward closest off-screen target first
-        _compass_targets.sort(key=lambda t: t[1])
+        # Sort furthest-first: the farthest exit is almost always the goal destination;
+        # nearby exits are usually backtracks. This prevents the South Gate from
+        # being the primary NAV hint when the goal is the North Gate.
+        _compass_targets.sort(key=lambda t: t[1], reverse=True)
         _nav_shown = False
         for _ct_dir, _ct_dist, _ct_name in _compass_targets:
             edge_name = _MOVE_TO_EDGE.get(_ct_dir)
@@ -1706,20 +1688,13 @@ def _format_spatial_text(
                             _fallback_shown = True
                             break
             if not _fallback_shown:
-                # Perpendicular also blocked — try reverse direction to escape dead-end
-                _reverse = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
-                rev_dir = _reverse.get(_ct_dir)
-                if rev_dir:
-                    rev_edge = _MOVE_TO_EDGE.get(rev_dir)
-                    if rev_edge:
-                        rev_path = find_path_to_edge(grid, player_screen_pos, rev_edge)
-                        if rev_path:
-                            rev_buttons = path_to_buttons(rev_path)
-                            if rev_buttons:
-                                lines.append(
-                                    f"NAV: {_ct_dir} and sides blocked — backtrack {rev_dir}: {rev_buttons}"
-                                    f" — escape this dead-end, then find alternate route toward {_ct_name}"
-                                )
+                # All local routes blocked — don't suggest going backward (causes ping-pong).
+                # Instead, give a neutral hint: shift position sideways a few tiles to
+                # scroll the viewport and reveal new paths.
+                lines.append(
+                    f"NAV: no local path toward {_ct_name} ({_ct_dir}) visible in current view"
+                    f" — shift position 2-3 tiles LEFT or RIGHT to scroll view and find a gap"
+                )
 
     # Brief legend
     if has_collision or terrain is not None:
@@ -1761,6 +1736,10 @@ def _overlay_warps_on_grid(
         gx = px + w["dx"] * scale
         gy = py + w["dy"] * scale
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
+            # Skip player tile — overlaying W on @ breaks A* (W is blocked,
+            # so pathfinding can't start and all NPCs become UNREACHABLE)
+            if (gx, gy) == (px, py):
+                continue
             # Only overlay W on walkable tiles — some warps sit on wall tiles
             # (e.g. gate buildings with wider warp zones than walkable exits)
             if grid[gy][gx] not in ('#', 'T', 'B', '='):
@@ -1838,12 +1817,78 @@ def extract_spatial_context(
             player_facing=player_facing,
         )
 
+        # Player screen position (metatile coords) for world map accumulator
+        player_screen_pos = None
+        if sprites:
+            player_screen_pos = (
+                sprites[0]["tile_x"] // 2,
+                sprites[0]["tile_y"] // 2 + 1,
+            )
+
+        # Base terrain grid (no NPC/player overlays) for world map accumulator
+        base_grid = None
+        if terrain is not None and collision is not None:
+            src_h = len(collision)
+            src_w = len(collision[0]) if collision else 0
+            base_grid = []
+            for y in range(len(terrain)):
+                row = []
+                for x in range(len(terrain[0]) if terrain else 0):
+                    t = terrain[y][x]
+                    cy, cx = y * 2, x * 2
+                    if cy + 1 < src_h and cx + 1 < src_w:
+                        coll_walk = all(
+                            collision[cy + dy][cx + dx] != 0
+                            for dy in range(2) for dx in range(2)
+                        )
+                    else:
+                        coll_walk = t not in ('#',)
+                    if t in (',', '=', 'v', '>', '<'):
+                        row.append(t)
+                    elif coll_walk:
+                        row.append('.')
+                    else:
+                        row.append('#')
+                base_grid.append(row)
+            # Overlay cut trees
+            if cut_tree_pos:
+                for y in range(len(base_grid)):
+                    for x in range(len(base_grid[0]) if base_grid else 0):
+                        if base_grid[y][x] == '#' and (x, y) in cut_tree_pos:
+                            base_grid[y][x] = 'T'
+            # Overlay item/object sprites (not ghosts — collected items become
+            # ghosts, so ghost == already picked up; terrain tile takes over)
+            if npc_data and player_screen_pos is not None:
+                bg_h = len(base_grid)
+                bg_w = len(base_grid[0]) if base_grid else 0
+                psx, psy = player_screen_pos
+                for npc in npc_data:
+                    if npc.get("is_ghost"):
+                        continue
+                    gx = psx + npc["dx"]
+                    gy = psy + npc["dy"]
+                    if not (0 <= gx < bg_w and 0 <= gy < bg_h):
+                        continue
+                    if npc["is_item"]:
+                        base_grid[gy][gx] = "i"
+                    elif npc.get("is_object"):
+                        if npc.get("pic_id") == _BOULDER_SPRITE_ID:
+                            base_grid[gy][gx] = "B"
+                        else:
+                            base_grid[gy][gx] = "o"
+
+        map_number = warp_data["map_number"] if warp_data else None
+
         return {
             "text": text,
             "visible_tilemap": visible,
             "player_pos": player_map_pos,
             "game_state": game_state_info,
             "story_progress": story_progress,
+            "player_screen_pos": player_screen_pos,
+            "base_grid": base_grid,
+            "map_number": map_number,
+            "warp_data_raw": warp_data,
         }
     except Exception as e:
         logger.error(f"Error extracting spatial context: {e}", exc_info=True)

@@ -62,6 +62,8 @@ _ADDR_ENEMY_SPD      = 0xCFFA
 _ADDR_ENEMY_SPC      = 0xCFFC
 _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
+_ADDR_PLAYER_MOVE_LIST_IDX = 0xCC2F  # wPlayerMoveListIndex: last A-confirmed fight slot (0-3)
+
 # Bag / party constants (battle-specific)
 _BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
@@ -141,6 +143,14 @@ def _type_effectiveness(move_type: str, defend_types: List[str]) -> float:
     for dt in defend_types:
         mult *= _TYPE_CHART.get((move_type, dt), 1.0)
     return mult
+
+
+def _effective_power(move_slot_pair, enemy_types=None) -> float:
+    """Weighted move power accounting for type effectiveness."""
+    m = move_slot_pair[0]
+    base = m["power"]
+    eff = _type_effectiveness(m["type"], enemy_types) if enemy_types else 1.0
+    return base * eff
 
 
 # Main battle menu nav: column-major layout
@@ -552,6 +562,8 @@ def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
         return "main"
     # Move selection menu: top item around Y=12, X=4-5
     if 10 <= top_y <= 13 and top_x <= 6:
+        if text_box_active:
+            return "unknown"  # Fight submenu message (e.g. "No PP left!") — press A to advance
         return "fight"
     # Faint flow: player HP is 0 and we're in an unknown menu state
     # (YES/NO prompt or party select screen)
@@ -560,23 +572,23 @@ def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
     return "unknown"
 
 
-def _calc_move_nav(current: int, target: int) -> str:
-    """Calculate button presses to navigate the vertical fight move list.
+def _fight_nav_presses(current: int, target: int) -> str:
+    """Raw D/U presses to navigate fight submenu from current slot to target slot.
 
-    Gen 1 move menu is a single-column vertical list (UP/DOWN only):
-        Move0
-        Move1
-        Move2
-        Move3
+    Gen 1 fight submenu is a single-column vertical list (D/U only):
+        slot 0 (top)
+        slot 1
+        slot 2
+        slot 3 (bottom)
+
+    Returns empty string if already at target slot.
     """
-    presses = []
     diff = target - current
     if diff < 0:
-        presses.extend(["U"] * abs(diff))
+        return " ".join(["U"] * abs(diff))
     elif diff > 0:
-        presses.extend(["D"] * diff)
-    nav = " ".join(presses)
-    return f"press {nav} then A" if nav else "press A"
+        return " ".join(["D"] * diff)
+    return ""
 
 
 def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
@@ -625,6 +637,7 @@ def _generate_battle_tip(
     party_count: int = 6,
     alive_count: int = 0,
     enemy_types: Optional[List[str]] = None,
+    fight_cursor: int = 0,
 ) -> Optional[str]:
     """Generate a short tactical recommendation.
 
@@ -688,12 +701,7 @@ def _generate_battle_tip(
 
     # Find the strongest usable damage move, weighted by type effectiveness
     etypes = enemy_types or []
-
-    def _effective_power(move_slot_pair):
-        m = move_slot_pair[0]
-        base = m["power"]
-        eff = _type_effectiveness(m["type"], etypes) if etypes else 1.0
-        return base * eff
+    _ep = lambda pair: _effective_power(pair, etypes)
 
     damage_moves = [
         (m, m["slot"]) for m in player["moves"]
@@ -707,18 +715,11 @@ def _generate_battle_tip(
         ]
 
     if menu_type == "main" and damage_moves:
-        best_move, best_slot = max(damage_moves, key=_effective_power)
-        # Absolute-nav to FIGHT (works from any cursor), then to move, confirm.
-        # wCurrentMenuItem only stores row, not column — so cursor-relative nav
-        # can't distinguish FIGHT from PKMN. Absolute nav sidesteps this.
-        if best_slot > 0:
-            nav_to_move = " ".join(["D"] * best_slot)
-        else:
-            # Move 0: U is a no-op (already at top) that adds ~5 frames delay
-            # so the fight menu renders before the final A press.
-            # Without this, "...A A" fires too fast and the 2nd A is swallowed.
-            nav_to_move = "U"
-        compound = f"{_ABS_NAV_FIGHT} A {nav_to_move} A"
+        best_move, best_slot = max(damage_moves, key=_ep)
+        # U L A enters fight submenu. Cursor lands on last-confirmed slot (fight_cursor).
+        # Then navigate from fight_cursor to best_slot using D/U.
+        nav = _fight_nav_presses(fight_cursor, best_slot)
+        compound = f"{_ABS_NAV_FIGHT} A" + (f" {nav} A" if nav else " A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
@@ -734,20 +735,19 @@ def _generate_battle_tip(
                     f"then D/U to pick a mon with HP > 0, then A.")
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
-        compound = f"{_ABS_NAV_FIGHT} A U A"  # FIGHT, delay (U=no-op at move 0), select
+        compound = f"{_ABS_NAV_FIGHT} A A"  # FIGHT, select move 0
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 
     if menu_type == "fight" and damage_moves:
-        best_move, best_slot = max(damage_moves, key=_effective_power)
+        best_move, best_slot = max(damage_moves, key=_ep)
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
-        fight_idx = cursor  # wCurrentMenuItem is 0-indexed in fight submenu
-        if fight_idx == best_slot:
-            return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — press A."
-        else:
-            nav = _calc_move_nav(fight_idx, best_slot)
-            return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — {nav}."
+        # cursor = wCurrentMenuItem = actual current slot in the single-column fight list.
+        # Navigate directly from current cursor position to best slot.
+        nav = _fight_nav_presses(cursor, best_slot)
+        inputs = (nav + " A").strip() if nav else "A"
+        return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — cursor at slot {cursor+1}, send: {inputs}"
 
     if menu_type == "fight" and not damage_moves:
         if battle_type == 1:
@@ -776,6 +776,7 @@ def _format_battle_text(
     pokeball_count: int = 0,
     party_count: int = 6,
     alive_count: int = 0,
+    fight_cursor: int = 0,
 ) -> str:
     """Assemble the battle context text block."""
     kind = "Wild" if battle_type == 1 else "Trainer"
@@ -819,15 +820,17 @@ def _format_battle_text(
         nav_str = " | ".join(f"{k}:{v}" for k, v in nav_hints.items())
         lines.append(f"  → Main menu: cursor on {item_name} (to reach: {nav_str})")
     elif menu_type == "fight":
-        fight_idx = cursor  # wCurrentMenuItem is 0-indexed in fight submenu
-        if fight_idx < len(player["moves"]):
-            lines.append(f"  → Fight menu: cursor on move {fight_idx+1} ({player['moves'][fight_idx]['name']})")
+        if cursor < len(player["moves"]):
+            lines.append(f"  → Fight menu: cursor on slot {cursor+1} ({player['moves'][cursor]['name']})")
         else:
-            lines.append(f"  → Fight menu: cursor at position {cursor}")
+            lines.append(f"  → Fight menu: cursor at slot {cursor+1}")
     elif menu_type == "faint":
         lines.append(f"  → FAINT FLOW — cursor: {cursor}. 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
     else:
         lines.append(f"  → In submenu/text (not main battle menu) — press B to go back, or A to advance text")
+
+    # VS separator
+    lines.append("──────────── VS ────────────")
 
     # Enemy Pokemon
     enemy_status = f" {enemy['status']}" if enemy["status"] != "OK" else ""
@@ -839,6 +842,12 @@ def _format_battle_text(
     es = enemy.get("stats", {})
     if es:
         lines.append(f"  Stats: Atk:{es['atk']} Def:{es['def']} Spd:{es['spd']} Spc:{es['spc']}")
+    enemy_move_parts = []
+    for m in enemy.get("moves", []):
+        pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
+        enemy_move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp)")
+    if enemy_move_parts:
+        lines.append(f"  Moves: {' | '.join(enemy_move_parts)}")
 
     # Tip
     tip = _generate_battle_tip(player, enemy, menu_type, cursor,
@@ -846,7 +855,8 @@ def _format_battle_text(
                                 pokeball_count=pokeball_count,
                                 party_count=party_count,
                                 alive_count=alive_count,
-                                enemy_types=enemy.get("types"))
+                                enemy_types=enemy.get("types"),
+                                fight_cursor=fight_cursor)
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -857,7 +867,7 @@ def _format_battle_text(
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> Optional[Dict[str, Any]]:
+def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False, fight_cursor: int = 0) -> Optional[Dict[str, Any]]:
     """Extract battle context from RAM.
 
     Must be called on the main thread (PyBoy access is not thread-safe).
@@ -906,14 +916,31 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
         if menu_type == "main" and just_entered_battle:
             cursor = 0
 
+        # wPlayerMoveListIndex: last A-confirmed move slot in the fight submenu (0-3).
+        # Read directly from RAM — more reliable than fight_cursor (which was
+        # optimistically set to best_slot regardless of what the agent actually chose).
+        num_moves = len(player.get("moves", []))
+        raw_fight_cursor = pyboy.memory[_ADDR_PLAYER_MOVE_LIST_IDX]
+        actual_fight_cursor = min(raw_fight_cursor, max(num_moves - 1, 0))
+
         pokeball_count = _count_pokeballs(pyboy)
         party_count = min(pyboy.memory[_ADDR_PARTY_COUNT], 6)
         alive_count = _count_alive_party(pyboy, party_count)
 
+        # Determine best move slot
+        damage_moves = [(m, m["slot"]) for m in player.get("moves", [])
+                        if m["power"] > 1 and m["pp"] > 0]
+        if not damage_moves:
+            damage_moves = [(m, m["slot"]) for m in player.get("moves", [])
+                            if m["power"] > 0 and m["pp"] > 0]
+        enemy_types = enemy.get("types", [])
+        best_slot = max(damage_moves, key=lambda p: _effective_power(p, enemy_types))[1] if damage_moves else None
+
         text = _format_battle_text(battle_type, player, enemy, menu_type, cursor,
                                    pokeball_count=pokeball_count,
                                    party_count=party_count,
-                                   alive_count=alive_count)
+                                   alive_count=alive_count,
+                                   fight_cursor=actual_fight_cursor)
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "
@@ -928,6 +955,8 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
             "menu_type": menu_type,
             "cursor": cursor,
             "battle_type": battle_type,
+            "best_slot": best_slot,
+            "num_moves": num_moves,
         }
     except Exception as e:
         logger.error(f"Error extracting battle context: {e}", exc_info=True)

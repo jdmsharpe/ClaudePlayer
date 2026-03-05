@@ -52,7 +52,6 @@ class WebStreamer:
                     "last_response": d.last_response,
                     "last_thinking": d.last_thinking,
                     "spatial_grid": d.spatial_grid,
-                    "location": d.location,
                     "party_summary": d.party_summary,
                     "party_mons": d.party_mons,
                     "bag_summary": d.bag_summary,
@@ -65,6 +64,7 @@ class WebStreamer:
                     "trainer_id": d.trainer_id,
                     "play_time": d.play_time,
                     "badges": d.badges,
+                    "world_map_text": d.world_map_text,
                 }
             return jsonify(data)
 
@@ -74,13 +74,12 @@ class WebStreamer:
             if cfg is None:
                 return jsonify({})
             action = getattr(cfg, "ACTION", {}) or {}
-            summary = getattr(cfg, "SUMMARY", {}) or {}
+            memory = getattr(cfg, "MEMORY", {}) or {}
             return jsonify({
                 "model": action.get("MODEL", ""),
                 "max_tokens": action.get("MAX_TOKENS", ""),
                 "thinking_budget": action.get("THINKING_BUDGET", ""),
-                "summary_interval": summary.get("SUMMARY_INTERVAL", ""),
-                "summary_model": summary.get("MODEL", ""),
+                "memory_interval": memory.get("MEMORY_INTERVAL", ""),
             })
 
         @app.route("/api/frame")
@@ -333,6 +332,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
 
   .grid-panel .panel-label::before { background: #7ee787; }
+  .worldmap-panel .panel-label::before { background: #58a6ff; }
+  .worldmap-panel { flex-shrink: 0; overflow: auto; max-height: 300px; margin-top: auto; }
+  #worldmap-grid {
+    font-family: "Cascadia Mono", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    line-height: 1.2;
+    overflow-x: auto;
+  }
   .goal-bar {
     grid-row: 1;
     grid-column: 1 / -1;
@@ -349,9 +356,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .party-panel .panel-label::before { background: #f85149; }
   .bag-panel .panel-label::before { background: #e3b341; }
   .menu-panel .panel-label::before { background: #d2a8ff; }
-  .location-panel .panel-label::before { background: #79c0ff; }
-  .location-panel { flex-shrink: 0; }
-  #location-info { color: #e6edf3; white-space: pre; line-height: 1.5; }
+
 
   /* Spatial grid */
   .grid-panel { flex: 1; overflow: hidden; min-width: 0; }
@@ -408,10 +413,28 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .tc-i  { background: #281e00; color: #e3b341; font-weight: bold; }
   .tc-o  { background: #0e141a; color: #6e7681; }
   .tc-gh { background: #110a28; color: #8957e5; font-weight: bold; }
+  .tc-unk { background: #0d1117; color: #161b22; }
+
+  /* World map table (smaller tiles for zoomed-out view) */
+  #worldmap-table { border-collapse: collapse; margin: 4px 0; white-space: nowrap; }
+  #worldmap-table td, #worldmap-table th {
+    width: 10px; height: 10px;
+    text-align: center; vertical-align: middle;
+    font-size: 7px; padding: 0;
+    border: 1px solid #080b10; line-height: 1;
+  }
+  #worldmap-table .row-num {
+    color: #484f58; font-size: 6px; padding-right: 3px;
+    text-align: right; border: none; background: transparent;
+    white-space: nowrap; min-width: 14px;
+  }
+  #worldmap-table .col-num {
+    color: #484f58; font-size: 6px; border: none; background: transparent;
+  }
 
   /* Tile colors (used in legend symbols) */
-  .tw  { color: #6e7681; }
-  .tf  { color: #8b949e; }
+  .tw  { color: #8b949e; }
+  .tf  { color: #272e38; }
   .tg  { color: #3fb950; }
   .ta  { color: #58a6ff; }
   .tl  { color: #d29922; }
@@ -484,6 +507,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .battle-mon-status.fnt { color: #f85149; }
   .battle-mon-status.bad { color: #d29922; }
   .battle-moves-divider { border: none; border-top: 1px solid #21262d; margin: 8px 0; }
+  .battle-vs {
+    text-align: center; font-size: 18px; font-weight: 900; letter-spacing: 4px;
+    color: #6e7681; padding: 4px 0; margin: 4px 0;
+    background: linear-gradient(90deg, transparent, #21262d 30%, #21262d 70%, transparent);
+  }
   .type-badge {
     display: inline-block; padding: 1px 5px; border-radius: 3px;
     font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -545,6 +573,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     margin-bottom: 4px;
   }
   .mon-name { font-weight: 600; width: 110px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mon-nickname { color: #8b949e; font-size: 11px; width: 80px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
   .mon-level { color: #8b949e; width: 34px; flex-shrink: 0; font-size: 11px; }
   .mon-types { display: flex; align-items: center; gap: 3px; width: 100px; flex-shrink: 0; }
   .mon-status-col { width: 32px; flex-shrink: 0; font-size: 11px; font-weight: 600; color: #f85149; }
@@ -765,14 +794,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="right-panels">
-    <div class="panel location-panel" id="location-panel" style="display:none">
-      <div class="panel-label">Location</div>
-      <div id="location-info"></div>
-    </div>
-    <div class="panel grid-panel">
-      <div class="panel-label" id="grid-label">Map</div>
+<div class="panel grid-panel">
+      <div class="panel-label" id="grid-label">Screen Map</div>
       <div id="spatial-grid" class="empty">Waiting for data...</div>
       <div id="battle-view"></div>
+    </div>
+    <div class="panel worldmap-panel" id="worldmap-panel" style="display:none">
+      <div class="panel-label">Explored Map</div>
+      <div id="worldmap-grid"></div>
     </div>
     <div class="panel menu-panel" id="menu-panel" style="display:none">
       <div class="panel-label">Menu</div>
@@ -838,7 +867,7 @@ const TC = {
 /* Tile char -> table cell background class */
 const TCB = {
   '#':'tc-w','.':'tc-f',',':'tc-g','=':'tc-a','v':'tc-l','>':'tc-l','<':'tc-l','^':'tc-l',
-  'T':'tc-t','B':'tc-b','W':'tc-e','@':'tc-p','i':'tc-i','o':'tc-o','g':'tc-gh'
+  'T':'tc-t','B':'tc-b','W':'tc-e','@':'tc-p','i':'tc-i','o':'tc-o','g':'tc-gh','?':'tc-unk'
 };
 
 async function pollState() {
@@ -865,9 +894,7 @@ async function pollState() {
     isThinking ? startSpinner() : stopSpinner();
 
     renderGrid(d.spatial_grid);
-    const locPanel = document.getElementById('location-panel');
-    if (d.location) { locPanel.style.display = ''; setText('location-info', d.location); }
-    else { locPanel.style.display = 'none'; }
+    renderWorldMap(d.world_map_text);
     renderBag(d.bag_summary, d.bag_items, d.dex_caught, d.trainer_name, d.trainer_id, d.play_time);
 
     const menuPanel = document.getElementById('menu-panel');
@@ -996,6 +1023,32 @@ function renderTileTableRow(tbody, line) {
   tbody.appendChild(tr);
 }
 
+function renderWorldMap(text) {
+  const panel = document.getElementById('worldmap-panel');
+  const el = document.getElementById('worldmap-grid');
+  if (!text) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  el.textContent = '';
+
+  const table = document.createElement('table');
+  table.id = 'worldmap-table';
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    const tr = document.createElement('tr');
+    for (const ch of line) {
+      const td = document.createElement('td');
+      td.className = (ch >= '1' && ch <= '9') ? 'tc-n' : (TCB[ch] || 'tc-f');
+      td.textContent = ch;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  el.appendChild(table);
+}
+
 function renderProgress(parent, line) {
   const m = line.match(/PROGRESS:\s*(\d+)\/(\d+)\s*milestones\s*\(([^)]*)\)/);
   if (!m) { mkSpan(parent, line, 'grid-header'); return; }
@@ -1082,7 +1135,7 @@ function renderBattle(el, text) {
   const lines = text.split('\n');
 
   /* Pre-scan for structured data */
-  let header='', yourLine='', yourStats='', yourMoves='', enemyLine='', enemyStats='';
+  let header='', yourLine='', yourStats='', yourMoves='', enemyLine='', enemyStats='', enemyMoves='';
   let menuLine='', tipLine='', cursorMoveIdx=-1;
   let parsingYour=false, parsingEnemy=false;
 
@@ -1093,7 +1146,7 @@ function renderBattle(el, text) {
     else if (t.startsWith('ENEMY:')) { enemyLine=t; parsingEnemy=true; parsingYour=false; }
     else if (t.startsWith('TIP:')) { tipLine=t.substring(4).trim(); parsingYour=false; parsingEnemy=false; }
     else if (t.startsWith('Stats:')) { if (parsingYour) yourStats=t; else if (parsingEnemy) enemyStats=t; }
-    else if (t.startsWith('Moves:')) yourMoves=t.substring(6).trim();
+    else if (t.startsWith('Moves:')) { if (parsingEnemy) enemyMoves=t.substring(6).trim(); else yourMoves=t.substring(6).trim(); }
     else if (t.charAt(0) === '\u2192' || t.startsWith('→')) menuLine=t;
     const cm = t.match(/Fight menu: cursor on move (\d+)/);
     if (cm) cursorMoveIdx = parseInt(cm[1]) - 1;
@@ -1131,6 +1184,10 @@ function renderBattle(el, text) {
     el.appendChild(sec);
   }
 
+  /* VS divider */
+  const vs = document.createElement('div'); vs.className='battle-vs'; vs.textContent='VS';
+  el.appendChild(vs);
+
   /* ENEMY pokemon */
   if (enemyLine) {
     const sec = document.createElement('div'); sec.className='battle-section enemy';
@@ -1138,6 +1195,22 @@ function renderBattle(el, text) {
     const m = enemyLine.match(/ENEMY:\s*(.+?)\s+Lv(\d+)\s*\[([^\]]+)\]\s*HP:(\d+)\/(\d+)\s*(.*)/);
     if (m) { renderBattlePokemon(sec,m[1],m[2],m[3],m[4],m[5],m[6]); }
     if (enemyStats) renderBattleStats(sec, enemyStats);
+    if (enemyMoves) {
+      const hr = document.createElement('hr'); hr.className='battle-moves-divider'; sec.appendChild(hr);
+      const moveParts = enemyMoves.split('|').map(function(s){return s.trim();}).filter(Boolean);
+      moveParts.forEach(function(ms) {
+        const mm = ms.match(/(.+?)\s*\((\w+),\s*(\d+|status)(?:pwr)?,\s*(\d+\/\d+)pp\)/);
+        const row = document.createElement('div'); row.className = 'move-row';
+        mkSpan(row, ' ', 'move-cursor');
+        if (mm) {
+          mkSpan(row, mm[1].trim(), 'move-name');
+          mkSpan(row, mm[2], 'type-badge type-'+mm[2].toLowerCase());
+          mkSpan(row, mm[3] === 'status' ? 'status' : mm[3]+'pwr', 'move-power');
+          mkSpan(row, mm[4]+'pp', 'move-pp');
+        } else { mkSpan(row, ms, 'move-name'); }
+        sec.appendChild(row);
+      });
+    }
     el.appendChild(sec);
   }
 
@@ -1287,6 +1360,7 @@ function renderParty(summary, mons) {
       const row = document.createElement('div');
       row.className = 'mon';
       mkSpan(row, m.name, 'mon-name');
+      if (m.nickname) mkSpan(row, '(' + m.nickname + ')', 'mon-nickname');
       mkSpan(row, 'Lv' + m.level, 'mon-level');
       const tc = document.createElement('span');
       tc.className = 'mon-types';
@@ -1363,8 +1437,7 @@ pollState();
       ['model',        c.model],
       ['max_tokens',   c.max_tokens],
       ['thinking',     c.thinking_budget],
-      ['summary interval', c.summary_interval],
-      ['summary model',    c.summary_model],
+      ['memory interval', c.memory_interval],
     ];
     defs.forEach(function([key, val]) {
       if (val === '' || val === null || val === undefined) return;

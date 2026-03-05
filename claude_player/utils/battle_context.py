@@ -718,8 +718,10 @@ def _generate_battle_tip(
         best_move, best_slot = max(damage_moves, key=_ep)
         # U L A enters fight submenu. Cursor lands on last-confirmed slot (fight_cursor).
         # Then navigate from fight_cursor to best_slot using D/U.
+        # Extra trailing A: Gen 1 fight submenu sometimes consumes the first A during
+        # the menu transition, so we send A A to ensure the move is confirmed.
         nav = _fight_nav_presses(fight_cursor, best_slot)
-        compound = f"{_ABS_NAV_FIGHT} A" + (f" {nav} A" if nav else " A")
+        compound = f"{_ABS_NAV_FIGHT} A" + (f" {nav} A A" if nav else " A A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
@@ -735,7 +737,7 @@ def _generate_battle_tip(
                     f"then D/U to pick a mon with HP > 0, then A.")
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
-        compound = f"{_ABS_NAV_FIGHT} A A"  # FIGHT, select move 0
+        compound = f"{_ABS_NAV_FIGHT} A A A"  # FIGHT, select move 0 (extra A for transition)
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 

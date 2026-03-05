@@ -24,6 +24,7 @@ Rules:
 - AUTHORITATIVE STORY PROGRESS and PARTY STATUS lines come from RAM — use their exact values.
 - Output ONLY the updated memory file content. No preamble, no explanation.
 - Stay under 1000 lines. If near the limit, aggressively consolidate older entries.
+- Maintain a ## Turn Log at the end: one short line per update block ("- **T{start}-{end}**: {summary}"). Append-only — never delete old entries. Keep each entry ~15 words. If log exceeds 50 entries, summarize the oldest 10 into one line.
 """
 
 INITIAL_MEMORY_PROMPT = """\
@@ -115,6 +116,14 @@ class MemoryManager:
                 "type": "text",
                 "text": "No existing memory file — create the initial one.",
             })
+
+        # Inject turn range so the model can write the Turn Log entry
+        prev_turn = self.game_state.memory_turn or 0
+        cur_turn = self.game_state.turn_count
+        user_block.append({
+            "type": "text",
+            "text": f"This update covers turns T{prev_turn + 1}-{cur_turn}. Add a Turn Log entry for this range.",
+        })
 
         # Inject authoritative data so the model doesn't hallucinate
         if self.game_state.story_progress and self.game_state.story_progress.get("progress_summary"):

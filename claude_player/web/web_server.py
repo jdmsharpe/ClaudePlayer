@@ -515,6 +515,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .type-badge {
     display: inline-block; padding: 1px 5px; border-radius: 3px;
     font-size: 10px; font-weight: 700; text-transform: uppercase;
+    min-width: 52px; text-align: center; box-sizing: border-box;
     letter-spacing: 0.3px; color: #fff;
   }
   .type-normal   { background: #a8a878; color: #333; }
@@ -542,9 +543,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   .move-row.active { background: #1f6feb20; border: 1px solid #1f6feb40; }
   .move-cursor { color: #58a6ff; font-weight: bold; width: 10px; text-align: center; font-size: 11px; }
-  .move-name { font-weight: 600; color: #e6edf3; min-width: 110px; }
-  .move-power { color: #8b949e; min-width: 52px; }
-  .move-pp { color: #8b949e; min-width: 52px; }
+  .move-name { font-weight: 600; color: #e6edf3; min-width: 110px; flex-shrink: 0; }
+  .move-power { color: #8b949e; min-width: 56px; text-align: right; }
+  .move-pp { color: #8b949e; min-width: 64px; text-align: right; }
   .move-hm { color: #d2a8ff; font-size: 10px; font-weight: 600; }
   .battle-menu {
     color: #d2a8ff;

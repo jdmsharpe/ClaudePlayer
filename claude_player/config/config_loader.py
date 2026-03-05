@@ -52,7 +52,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "STATE_PATH": None,
         "LOG_FILE": "game_agent.log",
         "EMULATION_SPEED": 1,
-        "CONTINUOUS_ANALYSIS_INTERVAL": 3.0,
+        "CONTINUOUS_ANALYSIS_INTERVAL": 3.5,
         "MAX_ADAPTIVE_INTERVAL": 15.0,
         "ENABLE_SPATIAL_CONTEXT": True,
         "ENABLE_SOUND": True,

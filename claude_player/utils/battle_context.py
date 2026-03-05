@@ -716,11 +716,11 @@ def _generate_battle_tip(
 
     if menu_type == "main" and damage_moves:
         best_move, best_slot = max(damage_moves, key=_ep)
-        # U L A enters fight submenu. Cursor lands on last-confirmed slot (fight_cursor).
-        # Then navigate from fight_cursor to best_slot using D/U.
+        # U L A enters fight submenu. Gen 1 ALWAYS resets wCurrentMenuItem to 0
+        # on submenu entry, regardless of wPlayerMoveListIndex. Navigate from 0.
         # Extra trailing A: Gen 1 fight submenu sometimes consumes the first A during
         # the menu transition, so we send A A to ensure the move is confirmed.
-        nav = _fight_nav_presses(fight_cursor, best_slot)
+        nav = _fight_nav_presses(0, best_slot)
         compound = f"{_ABS_NAV_FIGHT} A" + (f" {nav} A A" if nav else " A A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""

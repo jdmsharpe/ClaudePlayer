@@ -36,7 +36,7 @@ _DIR_BUTTONS: Dict[Tuple[int, int], str] = {
 }
 
 # Max rendered dimension before we crop around the player
-_MAX_RENDER_SIZE = 30
+_MAX_RENDER_SIZE = 40
 
 # Max steps in a world-map A* path before we truncate
 _MAX_PATH_STEPS = 30
@@ -191,13 +191,21 @@ class WorldMap:
                     for dx in range(-2, 3):
                         dead_end_tiles.add((dz_x + dx, dz_y + dy))
 
-        # Always center on player
+        # Crop to explored bounds (+ 1 tile margin), capped at max render size.
+        # Small maps (gates, houses) shrink to fit; large maps (forest, routes)
+        # center on the player within the max window.
         px, py = player_pos
+        all_positions = set(tile_map.keys()) | set(warp_map.keys()) | {(px, py)}
+        exp_min_x = min(p[0] for p in all_positions) - 1
+        exp_max_x = max(p[0] for p in all_positions) + 1
+        exp_min_y = min(p[1] for p in all_positions) - 1
+        exp_max_y = max(p[1] for p in all_positions) + 1
+
         half = _MAX_RENDER_SIZE // 2
-        min_x = px - half
-        max_x = px + half
-        min_y = py - half
-        max_y = py + half
+        min_x = max(exp_min_x, px - half)
+        max_x = min(exp_max_x, px + half)
+        min_y = max(exp_min_y, py - half)
+        max_y = min(exp_max_y, py + half)
 
         warp_map = self.warps.get(map_id, {})
         lines = []

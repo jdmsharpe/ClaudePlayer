@@ -333,7 +333,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
   .grid-panel .panel-label::before { background: #7ee787; }
   .worldmap-panel .panel-label::before { background: #58a6ff; }
-  .worldmap-panel { flex-shrink: 0; overflow: auto; max-height: 300px; margin-top: auto; }
+  .worldmap-panel { flex-shrink: 0; overflow: auto; margin-top: auto; }
   #worldmap-grid {
     font-family: "Cascadia Mono", "Fira Code", "Consolas", monospace;
     font-size: 11px;
@@ -418,9 +418,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* World map table (smaller tiles for zoomed-out view) */
   #worldmap-table { border-collapse: collapse; margin: 4px 0; white-space: nowrap; }
   #worldmap-table td, #worldmap-table th {
-    width: 10px; height: 10px;
+    width: 12px; height: 12px;
     text-align: center; vertical-align: middle;
-    font-size: 7px; padding: 0;
+    font-size: 8px; padding: 0;
     border: 1px solid #080b10; line-height: 1;
   }
   #worldmap-table .row-num {

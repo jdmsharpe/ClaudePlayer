@@ -1732,16 +1732,9 @@ def _overlay_warps_on_grid(
     grid_w = len(grid[0]) if grid else 0
     px, py = player_screen
 
-    mh = warp_data.get("map_height", 0)
-    bottom_row = mh * 2 - 1 if mh else 999
-
     for w in warp_data["warps"]:
         gx = px + w["dx"] * scale
         gy = py + w["dy"] * scale
-        # Bottom-row warps (building exits) are reported 1 tile above
-        # their actual position in RAM.  Shift the overlay down by 1.
-        if w.get("map_y", -1) >= bottom_row:
-            gy += 1 * scale
         if 0 <= gx < grid_w and 0 <= gy < grid_h:
             # Skip player tile — overlaying W on @ breaks A* (W is blocked,
             # so pathfinding can't start and all NPCs become UNREACHABLE)

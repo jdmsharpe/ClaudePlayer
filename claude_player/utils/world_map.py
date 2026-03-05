@@ -337,21 +337,21 @@ class WorldMap:
             else:
                 fallback_warps.append((warp_pos, dest_name))
 
-        # Try preferred first, then fallback
+        # Try preferred warps only.  If preferred warps exist but have no
+        # A* path (unexplored maze), do NOT fall back to other warps — that
+        # would route the agent backward (e.g. south gate in Viridian Forest
+        # when the goal is north).  Only use all warps when no preferred set.
         best_path: Optional[List[Tuple[int, int]]] = None
         best_name: Optional[str] = None
         best_len = float("inf")
 
-        for warp_list in ([preferred_warps, fallback_warps] if preferred_warps
-                          else [list(warp_map.items())]):
-            for warp_pos, dest_name in warp_list:
-                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
-                if path and len(path) < best_len:
-                    best_path = path
-                    best_name = dest_name
-                    best_len = len(path)
-            if best_path:
-                break  # found a path in preferred set, don't try fallback
+        candidates = preferred_warps if preferred_warps else list(warp_map.items())
+        for warp_pos, dest_name in candidates:
+            path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200)
+            if path and len(path) < best_len:
+                best_path = path
+                best_name = dest_name
+                best_len = len(path)
 
         if not best_path or not best_name:
             return None

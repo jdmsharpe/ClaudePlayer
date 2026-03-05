@@ -668,6 +668,11 @@ def _generate_battle_tip(
                 "Skip fainted mons — selecting one shows 'There's no will to fight!'."
             )
 
+    # --- All TIPs below use B prefix for robustness ---
+    # B is a no-op on the main battle menu but returns to main from the
+    # fight submenu.  This sidesteps the unreliable main-vs-fight detection
+    # (wTopMenuItemY/X are stale RAM after submenu transitions).
+
     # Catch suggestion: wild battle + have balls + favorable conditions
     if battle_type == 1 and pokeball_count > 0 and enemy["max_hp"] > 0:
         enemy_hp_pct = 100 * enemy["hp"] // enemy["max_hp"]
@@ -680,24 +685,16 @@ def _generate_battle_tip(
             should_catch = True
             reason = "HP very low"
 
-        if should_catch:
-            if menu_type == "main":
-                return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
-                        f"— send: {_ABS_NAV_ITEM} A A")
-            elif menu_type == "fight":
-                return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
-                        f"— send: B {_ABS_NAV_ITEM} A A")
+        if should_catch and menu_type in ("main", "fight"):
+            return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
+                    f"— send: B {_ABS_NAV_ITEM} A A")
 
     # Wild battle + critically low HP → running is safer than fighting
     if battle_type == 1 and player["hp"] > 0 and player["max_hp"] > 0:
         hp_pct = player["hp"] * 100 // player["max_hp"]
-        if hp_pct <= 20:
-            if menu_type == "main":
-                return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
-                        f"Send: {_ABS_NAV_RUN} A")
-            elif menu_type == "fight":
-                return (f"HP critical ({hp_pct}%) — send: B {_ABS_NAV_RUN} A "
-                        f"(B=back, navigate to RUN, confirm).")
+        if hp_pct <= 20 and menu_type in ("main", "fight"):
+            return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
+                    f"Send: B {_ABS_NAV_RUN} A")
 
     # Find the strongest usable damage move, weighted by type effectiveness
     etypes = enemy_types or []
@@ -714,49 +711,34 @@ def _generate_battle_tip(
             if m["power"] > 0 and m["pp"] > 0
         ]
 
-    if menu_type == "main" and damage_moves:
+    if menu_type in ("main", "fight") and damage_moves:
         best_move, best_slot = max(damage_moves, key=_ep)
-        # U L A enters fight submenu. Gen 1 ALWAYS resets wCurrentMenuItem to 0
-        # on submenu entry, regardless of wPlayerMoveListIndex. Navigate from 0.
-        # Extra trailing A: Gen 1 fight submenu sometimes consumes the first A during
-        # the menu transition, so we send A A to ensure the move is confirmed.
-        nav = _fight_nav_presses(0, best_slot)
-        compound = f"{_ABS_NAV_FIGHT} A" + (f" {nav} A A" if nav else " A A")
+        # B ensures we're on main menu, U L A enters fight submenu.
+        # Gen 1 fight submenu cursor initialises to wPlayerMoveListIndex
+        # (last confirmed move), NOT always 0. Navigate from fight_cursor.
+        # The A that enters the submenu is consumed by the menu transition,
+        # so only one confirming A is needed after navigation.
+        nav = _fight_nav_presses(fight_cursor, best_slot)
+        compound = f"B {_ABS_NAV_FIGHT} A" + (f" {nav} A" if nav else " A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
 
-    if menu_type == "main" and not damage_moves:
+    if menu_type in ("main", "fight") and not damage_moves:
         if battle_type == 1:  # wild — RUN is an option
-            return f"No usable damage moves — RUN from this wild battle! Send: {_ABS_NAV_RUN} A"
+            return f"No usable damage moves — RUN from this wild battle! Send: B {_ABS_NAV_RUN} A"
         # Trainer battle: cannot RUN. Check if switching to a mon with damage moves is viable.
         can_switch = alive_count > 1
         if can_switch:
             return (f"Trainer battle — no damage moves on this mon. "
-                    f"Switch to one with damage moves! Send: {_ABS_NAV_PKMN} A, "
+                    f"Switch to one with damage moves! Send: B {_ABS_NAV_PKMN} A, "
                     f"then D/U to pick a mon with HP > 0, then A.")
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
-        compound = f"{_ABS_NAV_FIGHT} A A A"  # FIGHT, select move 0 (extra A for transition)
+        nav = _fight_nav_presses(fight_cursor, 0)
+        compound = f"B {_ABS_NAV_FIGHT} A" + (f" {nav} A" if nav else " A")
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
-
-    if menu_type == "fight" and damage_moves:
-        best_move, best_slot = max(damage_moves, key=_ep)
-        eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
-        eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
-        # cursor = wCurrentMenuItem = actual current slot in the single-column fight list.
-        # Navigate directly from current cursor position to best slot.
-        nav = _fight_nav_presses(cursor, best_slot)
-        inputs = (nav + " A").strip() if nav else "A"
-        return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — cursor at slot {cursor+1}, send: {inputs}"
-
-    if menu_type == "fight" and not damage_moves:
-        if battle_type == 1:
-            return f"No usable damage moves in fight menu — press B then RUN. Send: B {_ABS_NAV_RUN} A"
-        # Trainer + no damage: use first available move
-        first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
-        return f"No damage moves — use {first_move} to continue. Press A."
 
     # Low HP
     if player["hp"] > 0 and player["hp"] <= player["max_hp"] // 4:

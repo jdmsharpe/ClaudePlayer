@@ -37,7 +37,7 @@ _DIR_BUTTONS: Dict[Tuple[int, int], str] = {
 
 # Max rendered dimension before we crop around the player
 _MAX_RENDER_SIZE = 40       # AI context (full exploration visible)
-_MAX_DISPLAY_SIZE = 20      # Web/terminal display (compact, player-centred)
+_MAX_DISPLAY_SIZE = 20     # Web/terminal display — large enough to show full explored maps (panel scrolls)
 
 # Max steps in a world-map A* path before we truncate
 _MAX_PATH_STEPS = 30
@@ -51,6 +51,8 @@ class WorldMap:
         self.tiles: Dict[int, Dict[Tuple[int, int], str]] = {}
         # map_id → {(abs_x, abs_y): dest_name}
         self.warps: Dict[int, Dict[Tuple[int, int], str]] = {}
+        # map_id → [(abs_x, abs_y), ...] — positions where cycling was detected
+        self.dead_ends: Dict[int, List[Tuple[int, int]]] = {}
 
     def update(
         self,
@@ -90,9 +92,13 @@ class WorldMap:
             mw = warp_data.get("map_width", 0)
             mh = warp_data.get("map_height", 0)
             for w in warp_data.get("warps", []):
-                # dy/dx are already corrected in _extract_warp_data
-                wx = px_map + w["dx"]
-                wy = py_map + w["dy"]
+                # Use raw absolute RAM coordinates directly — map_x/map_y are
+                # the actual tile positions.  The dy/dx fields carry a ±1
+                # viewport correction that is only valid for the overlay grid;
+                # applying it here would push warps 1 tile outside map bounds
+                # and stretch the render window.
+                wx = w["map_x"]
+                wy = w["map_y"]
                 # Skip warps on wall tiles — ROM defines warps on both
                 # sides of gate corridors but only one may be walkable.
                 # Directional warps (boundary exits) may land on edge tiles.
@@ -139,6 +145,11 @@ class WorldMap:
                 str(mid): {f"{x},{y}": name for (x, y), name in wmap.items()}
                 for mid, wmap in self.warps.items()
             },
+            "dead_ends": {
+                str(mid): [[x, y] for x, y in zones]
+                for mid, zones in self.dead_ends.items()
+                if zones
+            },
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -166,6 +177,9 @@ class WorldMap:
                 for key, name in wmap.items():
                     x, y = map(int, key.split(","))
                     self.warps[mid][(x, y)] = name
+            for mid_str, zones in data.get("dead_ends", {}).items():
+                mid = int(mid_str)
+                self.dead_ends[mid] = [tuple(z) for z in zones]
             logger.info(f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles across {len(self.tiles)} maps")
         except Exception as e:
             logger.warning(f"WorldMap load failed: {e}")

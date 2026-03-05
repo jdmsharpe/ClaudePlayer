@@ -110,9 +110,9 @@ class GameAgent:
         self._last_move_direction: str | None = None  # Last directional token (U/D/L/R)
         self._consecutive_reversals = 0  # Count of back-to-back direction reversals
 
-        # Dead-end memory: positions where CYCLING was detected
-        # List of (map_x, map_y) absolute positions confirmed as dead ends
-        self._dead_end_zones: list[tuple[int, int]] = []
+        # Dead-end memory is stored directly in self._world_map.dead_ends so it
+        # persists across sessions (serialized alongside tiles/warps in world_map.json).
+        self._current_map_id: int | None = None  # tracks map changes for reset
 
         # Current context mode — drives which system prompt block to include
         self._in_battle = False
@@ -135,6 +135,10 @@ class GameAgent:
         # Periodic emulator state saving
         self._last_save_turn = 0
         self._save_interval = 100  # Save every N turns
+
+        # World map saves more frequently (JSON only — no emulator state risk)
+        self._last_world_map_save_turn = 0
+        self._world_map_save_interval = 20
         self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
         self._save_path = os.path.join(self._save_dir, "autosave.state")
 
@@ -280,6 +284,7 @@ class GameAgent:
         """
         # Periodic autosave (main thread only, skips during battles)
         self._maybe_save_state()
+        self._maybe_save_world_map()
 
         screenshot = take_screenshot(self.pyboy, True)
         # Feed raw frame to display for web streaming
@@ -290,6 +295,7 @@ class GameAgent:
                 self.pyboy,
                 self._previous_visible_tilemap,
                 previous_player_pos=self._previous_player_pos,
+                visited_maps=self.game_state.visited_maps,
             )
             # Stuck detection: only count when in overworld AND screen is static.
             # Some scripted dialogue (e.g. "Wild POKEMON live in tall grass!")
@@ -320,13 +326,19 @@ class GameAgent:
                 self._stuck_count = 0
             self._previous_player_pos = current_pos
             # Track visited positions for exploration analysis
+            new_map_id = spatial_data.get("map_number")
             if current_pos is not None:
-                # Clear history on map change (large position jump)
-                if (self._visited_positions
+                # Detect map change: map_id changed OR large position jump
+                map_changed = (
+                    (new_map_id is not None and new_map_id != self._current_map_id)
+                    or (self._visited_positions
                         and abs(current_pos[0] - self._visited_positions[-1][0])
-                        + abs(current_pos[1] - self._visited_positions[-1][1]) > 10):
+                        + abs(current_pos[1] - self._visited_positions[-1][1]) > 10)
+                )
+                if map_changed:
                     self._visited_positions.clear()
-                    self._dead_end_zones.clear()  # new map — reset dead ends
+                if new_map_id is not None:
+                    self._current_map_id = new_map_id
                 self._visited_positions.append(current_pos)
 
             # Accumulate tiles into persistent world map
@@ -359,24 +371,34 @@ class GameAgent:
                 x_range = max(xs) - min(xs)
                 y_range = max(ys) - min(ys)
 
-                is_cycling = (len(self._visited_positions) >= 8
-                              and most_visited_count >= 4)
-                is_small_area = (len(self._visited_positions) >= 15
-                                 and x_range <= 6 and y_range <= 6)
-                is_thrashing = (len(self._visited_positions) >= 15
-                                and x_range > 8 and y_range <= 3)
+                _sc = getattr(self.config, "STUCK", {})
+                _cycling_min = _sc.get("CYCLING_MIN_VISITS", 4)
+                _small_x     = _sc.get("SMALL_AREA_X", 6)
+                _small_y     = _sc.get("SMALL_AREA_Y", 6)
+                _thrash_x    = _sc.get("THRASH_X", 8)
+                _thrash_y    = _sc.get("THRASH_Y", 3)
 
-                # Record dead-end zone when cycling detected
+                is_cycling = (len(self._visited_positions) >= 8
+                              and most_visited_count >= _cycling_min)
+                is_small_area = (len(self._visited_positions) >= 15
+                                 and x_range <= _small_x and y_range <= _small_y)
+                is_thrashing = (len(self._visited_positions) >= 15
+                                and x_range > _thrash_x and y_range <= _thrash_y)
+
+                # Record dead-end zone when cycling detected (per-map)
+                map_dead_ends = self._world_map.dead_ends.setdefault(
+                    self._current_map_id if self._current_map_id is not None else -1, []
+                )
                 if is_cycling:
                     if not any(abs(cx - dz[0]) + abs(cy - dz[1]) <= 6
-                              for dz in self._dead_end_zones):
-                        self._dead_end_zones.append((cx, cy))
+                              for dz in map_dead_ends):
+                        map_dead_ends.append((cx, cy))
                         logging.info(f"DEAD-END ZONE recorded at ({cx},{cy})")
 
-                # Compute avoid/suggest directions from dead-end zones
+                # Compute avoid/suggest directions from dead-end zones (current map only)
                 avoid_dirs: list[str] = []
                 at_dead_end = False
-                for dz_x, dz_y in self._dead_end_zones:
+                for dz_x, dz_y in map_dead_ends:
                     dist = abs(cx - dz_x) + abs(cy - dz_y)
                     if dist <= 3:
                         at_dead_end = True
@@ -723,7 +745,7 @@ class GameAgent:
                 from claude_player.utils.world_map import _MAX_DISPLAY_SIZE
                 world_map_text = self._world_map.render(
                     map_id, player_pos,
-                    dead_end_zones=self._dead_end_zones,
+                    dead_end_zones=self._world_map.dead_ends.get(map_id, []),
                     max_size=_MAX_DISPLAY_SIZE,
                 ) or ""
 
@@ -762,7 +784,7 @@ class GameAgent:
                 player_pos = spatial_data["player_pos"]
                 world_map_text = self._world_map.render(
                     map_id, player_pos,
-                    dead_end_zones=self._dead_end_zones,
+                    dead_end_zones=self._world_map.dead_ends.get(map_id, []),
                 )
                 if world_map_text:
                     spatial_text += "\n" + world_map_text
@@ -791,7 +813,7 @@ class GameAgent:
                     map_id, player_pos,
                     preferred_dest=preferred_dest,
                     preferred_direction=preferred_direction,
-                    dead_end_zones=self._dead_end_zones,
+                    dead_end_zones=self._world_map.dead_ends.get(map_id, []),
                     npc_positions=spatial_data.get("npc_abs_positions"),
                 )
                 if wm_nav:
@@ -1247,6 +1269,21 @@ class GameAgent:
         except Exception as e:
             logging.warning(f"Failed to autosave: {e}")
 
+    def _maybe_save_world_map(self):
+        """Save world map JSON every _world_map_save_interval turns.
+
+        Separate from emulator autosave — no battle restriction, no 100-turn wait.
+        Dead-end zones are included since they live in self._world_map.dead_ends.
+        """
+        turn = self.game_state.turn_count
+        if turn <= 0 or turn - self._last_world_map_save_turn < self._world_map_save_interval:
+            return
+        try:
+            self._world_map.save(self._world_map_path)
+            self._last_world_map_save_turn = turn
+        except Exception as e:
+            logging.warning(f"Failed to save world map: {e}")
+
     def _save_state_now(self, reason: str = "manual"):
         """Unconditionally save emulator state (used on shutdown)."""
         try:
@@ -1461,10 +1498,14 @@ class GameAgent:
         # KeyboardInterrupt.  The event is also passed to press_and_release_buttons
         # so long button holds (e.g. D64) can be interrupted immediately.
         shutdown_event = threading.Event()
+        # Separate event for mid-action battle/map transitions — aborts current
+        # press_and_release_buttons immediately without triggering full shutdown.
+        state_change_event = threading.Event()
         prev_handler = signal.getsignal(signal.SIGINT)
 
         def _shutdown_handler(signum, frame):
             shutdown_event.set()
+            state_change_event.set()  # also abort any running action
 
         signal.signal(signal.SIGINT, _shutdown_handler)
 
@@ -1490,7 +1531,9 @@ class GameAgent:
                     try:
                         from claude_player.utils.game_utils import press_and_release_buttons
                         frame_cb = self.display.set_frame if self.web_streamer else None
-                        press_and_release_buttons(self.pyboy, action, settle_frames=0, stop_event=shutdown_event, frame_callback=frame_cb)
+                        # Clear state_change_event before executing so mid-action transitions can abort it
+                        state_change_event.clear()
+                        press_and_release_buttons(self.pyboy, action, settle_frames=0, stop_event=state_change_event, frame_callback=frame_cb)
                     except Exception as e:
                         logging.error(f"Error executing inputs '{action}': {str(e)}")
                         # Continue with next actions rather than crashing
@@ -1575,6 +1618,9 @@ class GameAgent:
                     tracked_battle_state = cur_battle
                     tracked_map_id = cur_map
 
+                    # Abort any currently-running button sequence (e.g. D64 mid-walk)
+                    state_change_event.set()
+
                     with lock:
                         if ai_is_analyzing and not interrupt_fired:
                             # Stale analysis in flight — discard its future actions
@@ -1582,11 +1628,18 @@ class GameAgent:
                             pending_actions.clear()
                             logging.info(f"INTERRUPT: {reason} — discarding pending actions, will re-analyze immediately")
                             self.display.print_event(f"Interrupt: {reason}")
-                        elif not ai_is_analyzing and pending_actions:
-                            # Actions queued from a now-stale analysis
+                        else:
+                            # Either not analyzing, or already interrupted.
+                            # Clear stale actions and accelerate re-analysis regardless.
                             discarded = len(pending_actions)
                             pending_actions.clear()
-                            logging.info(f"INTERRUPT: {reason} — discarded {discarded} stale queued actions")
+                            adaptive_interval = 0.5
+                            last_action_time = 0  # bypass settle check
+                            if discarded:
+                                logging.info(f"INTERRUPT: {reason} — discarded {discarded} stale queued actions, re-analyzing soon")
+                            else:
+                                logging.info(f"INTERRUPT: {reason} — idle transition, scheduling immediate re-analysis")
+                            self.display.print_event(f"Interrupt: {reason}")
 
                     # Immediately refresh display context so dashboard reflects new state
                     try:

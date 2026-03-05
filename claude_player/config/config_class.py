@@ -38,3 +38,4 @@ class ConfigClass:
     MODEL_DEFAULTS: ModelConfig
     ACTION: ActionConfig
     MEMORY: MemoryConfig
+    STUCK: dict

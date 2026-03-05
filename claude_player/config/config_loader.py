@@ -76,6 +76,17 @@ def load_config(config_file='config.json') -> ConfigClass:
         "MEMORY": {
             "MEMORY_INTERVAL": 20,
         },
+
+        "STUCK": {
+            # Minimum visit count to a single tile before it's "cycling"
+            "CYCLING_MIN_VISITS": 4,
+            # x/y range thresholds for "confined to small area" detection
+            "SMALL_AREA_X": 6,
+            "SMALL_AREA_Y": 6,
+            # x/y range thresholds for lateral "thrashing" detection
+            "THRASH_X": 8,
+            "THRASH_Y": 3,
+        },
     }
 
     config = ConfigClass()

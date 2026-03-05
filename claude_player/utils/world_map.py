@@ -195,6 +195,7 @@ class WorldMap:
         # Small maps (gates, houses) shrink to fit; large maps (forest, routes)
         # center on the player within the max window.
         px, py = player_pos
+        warp_map = self.warps.get(map_id, {})
         all_positions = set(tile_map.keys()) | set(warp_map.keys()) | {(px, py)}
         exp_min_x = min(p[0] for p in all_positions) - 1
         exp_max_x = max(p[0] for p in all_positions) + 1
@@ -206,8 +207,6 @@ class WorldMap:
         max_x = min(exp_max_x, px + half)
         min_y = max(exp_min_y, py - half)
         max_y = min(exp_max_y, py + half)
-
-        warp_map = self.warps.get(map_id, {})
         lines = []
 
         for y in range(min_y, max_y + 1):

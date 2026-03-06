@@ -740,6 +740,8 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         if num_warps > _MAX_WARPS or map_height == 0 or map_width == 0:
             return None
 
+        from claude_player.utils.warp_overrides import WARP_POSITION_OVERRIDES
+
         warps = []
         for i in range(num_warps):
             base = _ADDR_WARP_ENTRIES + (i * 4)
@@ -747,6 +749,11 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             wx = pyboy.memory[base + 1]
             dest_warp = pyboy.memory[base + 2]
             dest_map = pyboy.memory[base + 3]
+
+            # Apply per-map warp position correction if configured.
+            override = WARP_POSITION_OVERRIDES.get((map_number, i))
+            if override:
+                wy, wx = override
 
             dy = wy - player_y   # +south / -north
             dx = wx - player_x   # +east  / -west
@@ -800,13 +807,14 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
+def _extract_npc_data(pyboy: PyBoy, map_number: Optional[int] = None) -> Optional[List[Dict[str, Any]]]:
     """Read NPC/item sprite data from Pokemon Red RAM.
 
     Returns a list of dicts with name, relative position (dy/dx in map tiles),
     picture ID, and an is_item flag.  Returns None when unavailable.
     """
     try:
+        from claude_player.utils.npc_overrides import NPC_NAME_OVERRIDES
         player_y = pyboy.memory[_ADDR_PLAYER_Y]
         player_x = pyboy.memory[_ADDR_PLAYER_X]
         num_sprites = pyboy.memory[_ADDR_NUM_SPRITES]
@@ -867,7 +875,7 @@ def _extract_npc_data(pyboy: PyBoy) -> Optional[List[Dict[str, Any]]]:
             npc_x = raw_x - offset_x
             dy = npc_y - player_y
             dx = npc_x - player_x
-            name = _SPRITE_NAMES.get(pic_id, "NPC")
+            name = NPC_NAME_OVERRIDES.get((map_number, n), _SPRITE_NAMES.get(pic_id, "NPC"))
 
             sprite_log(
                 f"Sprite {n}: {name} (pic=0x{pic_id:02X}) "
@@ -1682,7 +1690,7 @@ def extract_spatial_context(
         terrain = _extract_terrain_data(pyboy)
         cut_tree_pos = _extract_cut_tree_positions(pyboy)
         warp_data = _extract_warp_data(pyboy)
-        npc_data = _extract_npc_data(pyboy)
+        npc_data = _extract_npc_data(pyboy, map_number=warp_data["map_number"] if warp_data else None)
         # Track current map in visited_maps for visit-check milestones
         if visited_maps is not None and warp_data:
             visited_maps.add(warp_data["map_number"])

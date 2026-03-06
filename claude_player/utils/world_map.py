@@ -92,18 +92,11 @@ class WorldMap:
             mw = warp_data.get("map_width", 0)
             mh = warp_data.get("map_height", 0)
             for w in warp_data.get("warps", []):
-                # Use raw absolute RAM coordinates directly — map_x/map_y are
-                # the actual tile positions.  The dy/dx fields carry a ±1
-                # viewport correction that is only valid for the overlay grid;
-                # applying it here would push warps 1 tile outside map bounds
-                # and stretch the render window.
                 wx = w["map_x"]
                 wy = w["map_y"]
-                # Skip warps on wall tiles — ROM defines warps on both
-                # sides of gate corridors but only one may be walkable.
-                # Directional warps (boundary exits) may land on edge tiles.
-                is_directional = w["dx"] != 0 or w["dy"] != 0
-                if not is_directional and tile_map.get((wx, wy)) in ('#', 'T', 'B', '='):
+                # Skip warps on wall tiles — ROM defines warps on both sides of
+                # gate corridors but only one may be walkable.
+                if tile_map.get((wx, wy)) in ('#', 'T', 'B', '='):
                     continue
                 warp_map[(wx, wy)] = w.get("dest_name", "?")
 
@@ -281,16 +274,24 @@ class WorldMap:
             return None
         if start == goal:
             return [start]
-        # Goal must be in explored territory (or adjacent to it)
-        if goal not in tile_map:
-            return None
         _extra_blocked = blocked or set()
+        warp_map = self.warps.get(map_id, {})
+        # Goal must be in explored territory OR be a known warp.
+        # Warps are ROM-sourced and added to warp_map even if the player has
+        # never rendered that exact tile into tile_map (it shows as 'W' in the
+        # explored-map display but tile_map has no entry).  _passable() already
+        # grants the goal unconditional passage, so A* can reach it from its
+        # explored neighbours regardless.
+        if goal not in tile_map and goal not in warp_map:
+            return None
 
         def _passable(x: int, y: int, dx: int, dy: int) -> bool:
             if (x, y) == goal or (x, y) == start:
                 return True  # player is standing here / goal always reachable
             if (x, y) in _extra_blocked:
                 return False  # NPC or other temporary obstacle
+            if (x, y) in warp_map:
+                return False  # stepping on a non-goal warp tile would teleport us
             ch = tile_map.get((x, y))
             if ch is None:
                 return False  # unexplored = can't path through
@@ -367,6 +368,7 @@ class WorldMap:
         _WALKABLE = frozenset(".,")
         _dead = dead_end_tiles or set()
         _extra_blocked = blocked or set()
+        warp_map = self.warps.get(map_id, {})
 
         # Precompute frontier set: walkable tiles with ≥1 unexplored neighbor
         frontiers: Set[Tuple[int, int]] = set()
@@ -400,6 +402,8 @@ class WorldMap:
                 return True
             if (x, y) in _extra_blocked:
                 return False
+            if (x, y) in warp_map:
+                return False  # stepping on a non-start warp tile would teleport us
             ch = tile_map.get((x, y))
             if ch is None:
                 return False

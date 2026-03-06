@@ -341,9 +341,13 @@ class GameAgent:
                     self._current_map_id = new_map_id
                 self._visited_positions.append(current_pos)
 
-            # Accumulate tiles into persistent world map
+            # Accumulate tiles into persistent world map.
+            # Skip the first turn after a map transition — the base_grid may
+            # still show warp animation / black-screen tiles that would corrupt
+            # the new map's tile record.  Stable tiles arrive the next turn.
             if (current_pos is not None
                     and in_overworld
+                    and not map_changed
                     and spatial_data.get("base_grid")
                     and spatial_data.get("player_screen_pos")
                     and spatial_data.get("map_number") is not None):
@@ -789,26 +793,49 @@ class GameAgent:
                 if world_map_text:
                     spatial_text += "\n" + world_map_text
                 # World-map A* NAV: replace viewport-only NAV with full-map path
-                # Extract preferred destination from compass targets
-                # Compass lines are sorted furthest-first in spatial_context,
-                # so the FIRST indented compass line is the goal destination.
+                # Derive preferred direction from the current goal text, then
+                # find the compass warp that matches that direction.  This is
+                # goal-driven: the MAP_HINT encodes which direction to travel
+                # (e.g. "HEAD NORTH"), so we don't rely on compass display order.
+                goal_upper = (self.game_state.current_goal or "").upper()
+                preferred_direction = next(
+                    (d for d in ("NORTH", "SOUTH", "EAST", "WEST") if d in goal_upper),
+                    None,
+                )
+                _dir_to_compass_kw = {
+                    "NORTH": "UP", "SOUTH": "DOWN",
+                    "EAST": "RIGHT", "WEST": "LEFT",
+                }
                 preferred_dest = None
-                preferred_direction = None
+                first_compass_dest = None
                 in_compass = False
                 for line in spatial_text.split("\n"):
                     if line.startswith("COMPASS"):
                         in_compass = True
                         continue
                     if in_compass and line.startswith("  ") and ":" in line:
-                        preferred_dest = line.strip().split(":")[0].strip()
-                        # Extract direction keyword (NORTH/SOUTH/EAST/WEST)
-                        for d in ("NORTH", "SOUTH", "EAST", "WEST"):
-                            if d in line.upper():
-                                preferred_direction = d
+                        dest = line.strip().split(":")[0].strip()
+                        if first_compass_dest is None:
+                            first_compass_dest = dest
+                        if preferred_direction:
+                            kw = _dir_to_compass_kw.get(preferred_direction, "")
+                            if kw and kw in line.upper():
+                                preferred_dest = dest
                                 break
-                        break  # first = furthest = goal-aligned
                     elif in_compass and not line.startswith("  "):
                         in_compass = False
+                # Fallback: no direction match → use first compass entry
+                if not preferred_dest:
+                    preferred_dest = first_compass_dest
+                    if preferred_dest and not preferred_direction:
+                        # Extract direction from fallback line
+                        for line in spatial_text.split("\n"):
+                            if line.startswith("  ") and preferred_dest in line:
+                                for d in ("NORTH", "SOUTH", "EAST", "WEST"):
+                                    if d in line.upper():
+                                        preferred_direction = d
+                                        break
+                                break
                 wm_nav = self._world_map.find_nav_hint(
                     map_id, player_pos,
                     preferred_dest=preferred_dest,

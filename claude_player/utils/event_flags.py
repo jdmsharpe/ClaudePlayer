@@ -207,20 +207,20 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     # Through Viridian Forest (-1)
     (  -1,  0x00): "Head NORTH through Route 1 toward Viridian City.",
     (  -1,  0x0C): "Continue NORTH to Viridian City.",
-    (  -1,  0x01): "Head WEST and NORTH toward Route 2 and Viridian Forest.",
-    (  -1,  0x0D): "Enter the gatehouse to reach Viridian Forest.",
+    (  -1,  0x01): "Head WEST and then NORTH toward Viridian Forest South Gate.",
+    (  -1,  0x0D): "Continue NORTH to Pewter City.",
     (  -1,  0x32): "Walk NORTH through the gate to enter Viridian Forest.",
     (  -1,  0x33): (
-        "Viridian Forest is a winding maze. "
+        "Viridian Forest is a winding maze — HEAD NORTH to reach Viridian Forest North Gate. "
         "Use the COMPASS bearings to track distance to exits and explore methodically, ruling out dead ends. "
-        "Trust your NAV to find the correct path through the maze to reach Pewter City on the other side."
+        "Trust your NAV to find the correct path through the maze."
     ),
     (  -1,  0x2F): "Exit NORTH through Route 2 to reach Pewter City.",
     # Beat Brock (0x077)
-    (0x077, 0x02): "Enter Pewter Gym (the building in the north part of the city) and defeat Brock.",
-    (0x077, 0x36): "Battle the trainers and defeat Brock at the back of the gym.",
+    (0x077, 0x02): "Enter Pewter Gym by going WEST in town to find the path and defeat Brock.",
+    (0x077, 0x36): "Battle the trainers and defeat Brock at the back of the gym. Head NORTH!",
     # Through Mt. Moon (-2)
-    (  -2,  0x02): "Head EAST from Pewter City to Route 3.",
+    (  -2,  0x02): "Stock up at Pewter City Poke Mart (Potions, Antidotes) before leaving — Mt. Moon has no shop. Then head EAST to Route 3.",
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
     (  -2,  0x44): "Optional Pokemon Center rest stop. Exit EAST to enter Mt. Moon.",
     (  -2,  0x3B): "Navigate through Mt. Moon 1F. Find the stairs down to the basement floors.",
@@ -249,7 +249,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     # Got Silph Scope (-4)
     (  -4,  0x04): "Head WEST from Lavender Town toward Celadon City via Route 8.",
     (  -4,  0x05): "Head NORTH from Vermilion through Routes 6 and 5 toward Celadon City.",
-    (  -4,  0x06): "Find the Game Corner (northeast area of Celadon City) and enter.",
+    (  -4,  0x06): "Stock up at Celadon Dept Store (Super Potions, Antidotes) before heading underground — Rocket Hideout has no shop. Then find the Game Corner and enter.",
     (  -4,  0x87): "Find the hidden stairs to the Rocket Hideout (a Rocket Grunt near the poster in the corner conceals the switch).",
     (  -4,  0xC7): "You're in Rocket Hideout B1F — head deeper, find stairs to B2F.",
     (  -4,  0xC8): "Continue to Rocket Hideout B3F.",
@@ -259,7 +259,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (0x1A9, 0x06): "Enter Celadon Gym (west side of Celadon City — enter through the tree passage in the back) and defeat Erika.",
     (0x1A9, 0x86): "Navigate through the grass trainers and defeat Erika at the back of the gym.",
     # Got Poke Flute (0x128)
-    (0x128, 0x04): "Enter Pokemon Tower (the tall building in Lavender Town) and climb to the 7th floor.",
+    (0x128, 0x04): "Stock up at Lavender Town Poke Mart (Potions, Antidotes) before climbing — Pokemon Tower has no shop. Then enter the tower and climb to the 7th floor.",
     (0x128, 0x8E): "Climb Pokemon Tower — ascend floor by floor, battling Rocket Grunts.",
     (0x128, 0x8F): "Continue up Pokemon Tower to 3F.",
     (0x128, 0x90): "Continue up Pokemon Tower to 4F.",
@@ -292,7 +292,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -7,  0x7E): "Buy a FRESH WATER, SODA POP, or LEMONADE from the vending machines — needed to bribe Saffron City guards.",
     # Cleared Silph Co. (-8)
     (  -8,  0x06): "Head EAST from Celadon to Saffron City — show a drink to the guard at the gate to enter.",
-    (  -8,  0x0A): "Find Silph Co. (the large tower in the center of Saffron City) and enter.",
+    (  -8,  0x0A): "Stock up at Saffron City Poke Mart (Hyper Potions, Revives, Full Heals) before entering — Silph Co. is a long multi-floor gauntlet with no shop. Then find Silph Co. (the large tower in the center of Saffron City) and enter.",
     (  -8,  0xB5): "Work through Silph Co. — use the Lift Key to access upper floors and defeat Rocket Grunts.",
     (  -8,  0xCF): "Continue through Silph Co. 2F — find the Lift Key if you haven't already.",
     (  -8,  0xD0): "Continue through Silph Co. 3F.",
@@ -310,7 +310,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -9,  0x1F): "Continue WEST through Route 20 (Seafoam Islands are here).",
     (  -9,  0x20): "Continue SOUTH through Route 21 to reach Cinnabar Island.",
     # Got Secret Key from Pokemon Mansion (-10)
-    ( -10,  0x08): "Enter Pokemon Mansion (the ruined building in north Cinnabar Island) and navigate to the basement.",
+    ( -10,  0x08): "Stock up at Cinnabar Island Poke Mart (Hyper Potions, Revives, Antidotes) before entering — Pokemon Mansion has no shop. Then enter the Mansion (the ruined building in north Cinnabar Island) and navigate to the basement.",
     ( -10,  0xA5): "Explore Pokemon Mansion 1F — find the stairs to upper floors and down to B1F.",
     ( -10,  0xD6): "Continue through Pokemon Mansion 2F.",
     ( -10,  0xD7): "Continue through Pokemon Mansion 3F — find the stairs down to B1F.",
@@ -326,13 +326,13 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     ( -11,  0x21): "Continue NORTH through Route 22 to the Pokemon League gatehouse.",
     ( -11,  0x22): "Head NORTH through Route 23 — badge checkers verify all 8 badges at each gate.",
     # Through Victory Road (-12)
-    ( -12,  0x22): "Enter Victory Road cave at the north end of Route 23.",
+    ( -12,  0x22): "Last chance to stock up — buy Full Restores, Hyper Potions, and Revives from Viridian City before entering Victory Road (no shops inside). Then enter the cave at the north end of Route 23.",
     ( -12,  0x6C): "Navigate Victory Road 1F — use HM04 Strength to push boulders blocking the path.",
     ( -12,  0xC2): "Continue through Victory Road 2F.",
     ( -12,  0xC6): "Continue through Victory Road 3F to the exit.",
     ( -12,  0x09): "You've reached Indigo Plateau! Enter the Pokemon League building to face the Elite Four.",
     # Beat Lance / Elite Four (0x8FE)
-    (0x8FE, 0x09): "Heal your team at the Pokemon Center, then enter the Pokemon League and face the Elite Four.",
+    (0x8FE, 0x09): "Heal at the Pokemon Center, then buy Full Restores, Max Potions, and Revives from the Indigo Plateau Mart before entering the Pokemon League to face the Elite Four.",
     (0x8FE, 0xAE): "Heal at the Pokemon Center, then face: Lorelei (Ice), Bruno (Fighting), Agatha (Ghost), Lance (Dragon).",
 }
 

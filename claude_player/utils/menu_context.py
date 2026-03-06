@@ -218,7 +218,7 @@ def _format_item_list(
             item = items[i]
             lines.append(f"  {item.get('name', '???')} x{item.get('qty', '?')}{marker}")
     else:
-        lines.append(f"  Cursor at position {cursor}")
+        lines.append(f"  Cursor at position {cursor+1} (0-indexed {cursor})")
 
     lines.append("TIP: A to select item, B to close bag.")
 
@@ -280,7 +280,7 @@ def _format_options_menu(cursor: int, max_item: int) -> str:
     lines = [
         "=== MENU CONTEXT ===",
         "MENU: Options",
-        f"  Cursor: {cursor}/{max_item}",
+        f"  Cursor: slot {cursor+1} of {max_item+1}",
         "TIP: Press B to close options and return to START menu.",
     ]
     return "\n".join(lines)
@@ -323,7 +323,7 @@ def _format_unknown_menu(cursor: int, max_item: int, top_y: int, top_x: int) -> 
     lines = [
         "=== MENU CONTEXT ===",
         f"MENU: Unknown (Y={top_y}, X={top_x})",
-        f"  Cursor: {cursor}/{max_item}",
+        f"  Cursor: slot {cursor+1} of {max_item+1}",
         "TIP: Use D/U to navigate, A to select, B to cancel/close.",
     ]
     return "\n".join(lines)

@@ -64,6 +64,9 @@ _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
 _ADDR_PLAYER_MOVE_LIST_IDX = 0xCC2F  # wPlayerMoveListIndex: last A-confirmed fight slot (0-3)
 
+# Pokedex ownership bitfield — bit N set = national dex #N is owned (caught)
+_ADDR_POKEDEX_OWNED = 0xD2F7  # wPokedexOwned: 19 bytes covering dex #1-151
+
 # Bag / party constants (battle-specific)
 _BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
@@ -423,6 +426,58 @@ _HM_MOVE_IDS: Dict[int, str] = {
 }
 
 # ---------------------------------------------------------------------------
+# Pokedex ownership check
+# ---------------------------------------------------------------------------
+
+# Gen 1 internal species ID → national dex number.
+# Internal IDs are shuffled relative to the national order (pret/pokered
+# constants/pokemon_constants.asm).  Only species that can appear in the wild
+# (or as enemies) need to be listed; the full 151 are included for safety.
+_INTERNAL_TO_DEX: Dict[int, int] = {
+    0x99: 1,   0x09: 2,   0x9A: 3,   0xB0: 4,   0xB2: 5,   0xB4: 6,
+    0xB1: 7,   0xB3: 8,   0x1C: 9,   0x7B: 10,  0x7C: 11,  0x7D: 12,
+    0x70: 13,  0x71: 14,  0x72: 15,  0x24: 16,  0x96: 17,  0x97: 18,
+    0xA5: 19,  0xA6: 20,  0x05: 21,  0x23: 22,  0x6C: 23,  0x2D: 24,
+    0x54: 25,  0x55: 26,  0x60: 27,  0x61: 28,  0x0F: 29,  0xA8: 30,
+    0x10: 31,  0x03: 32,  0xA7: 33,  0x07: 34,  0x04: 35,  0x8E: 36,
+    0x52: 37,  0x53: 38,  0x64: 39,  0x65: 40,  0x6B: 41,  0x82: 42,
+    0xB9: 43,  0xBA: 44,  0xBB: 45,  0x6D: 46,  0x2E: 47,  0x41: 48,
+    0x77: 49,  0x3B: 50,  0x76: 51,  0x4D: 52,  0x90: 53,  0x2F: 54,
+    0x80: 55,  0x39: 56,  0x75: 57,  0x21: 58,  0x14: 59,  0x47: 60,
+    0x6E: 61,  0x6F: 62,  0x94: 63,  0x26: 64,  0x95: 65,  0x6A: 66,
+    0x29: 67,  0x7E: 68,  0xBC: 69,  0xBD: 70,  0xBE: 71,  0x18: 72,
+    0x9B: 73,  0xA9: 74,  0x27: 75,  0x31: 76,  0xA3: 77,  0xA4: 78,
+    0x25: 79,  0x08: 80,  0xAD: 81,  0x36: 82,  0x40: 83,  0x46: 84,
+    0x74: 85,  0x3A: 86,  0x78: 87,  0x0D: 88,  0x88: 89,  0x17: 90,
+    0x8B: 91,  0x19: 92,  0x93: 93,  0x0E: 94,  0x22: 95,  0x30: 96,
+    0x81: 97,  0x4E: 98,  0x8A: 99,  0x06: 100, 0x8D: 101, 0x0C: 102,
+    0x0A: 103, 0x11: 104, 0x91: 105, 0x2B: 106, 0x2C: 107, 0x0B: 108,
+    0x37: 109, 0x8F: 110, 0x12: 111, 0x01: 112, 0x28: 113, 0x1E: 114,
+    0x02: 115, 0x5C: 116, 0x5D: 117, 0x9D: 118, 0x9E: 119, 0x1B: 120,
+    0x98: 121, 0x2A: 122, 0x1A: 123, 0x48: 124, 0x35: 125, 0x33: 126,
+    0x1D: 127, 0x3C: 128, 0x85: 129, 0x16: 130, 0x13: 131, 0x4C: 132,
+    0x66: 133, 0x69: 134, 0x68: 135, 0x67: 136, 0xAA: 137, 0x62: 138,
+    0x63: 139, 0x5A: 140, 0x5B: 141, 0xAB: 142, 0x84: 143, 0x4A: 144,
+    0x4B: 145, 0x49: 146, 0x58: 147, 0x59: 148, 0x42: 149, 0x83: 150,
+    0x15: 151,
+}
+
+
+def _is_dex_owned(pyboy: "PyBoy", species_id: int) -> bool:
+    """Return True if the species is already registered as caught in the Pokédex.
+
+    wPokedexOwned (0xD2F7) is a 19-byte bitfield indexed by national dex number.
+    Dex #N → byte offset (N-1)//8, bit (N-1)%8.
+    """
+    dex_num = _INTERNAL_TO_DEX.get(species_id)
+    if dex_num is None:
+        return False
+    idx = dex_num - 1  # 0-based
+    byte_val = pyboy.memory[_ADDR_POKEDEX_OWNED + idx // 8]
+    return bool(byte_val & (1 << (idx % 8)))
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -638,6 +693,7 @@ def _generate_battle_tip(
     alive_count: int = 0,
     enemy_types: Optional[List[str]] = None,
     fight_cursor: int = 0,
+    enemy_owned: bool = False,
 ) -> Optional[str]:
     """Generate a short tactical recommendation.
 
@@ -686,8 +742,12 @@ def _generate_battle_tip(
             reason = "HP very low"
 
         if should_catch and menu_type in ("main", "fight"):
+            if enemy_owned:
+                # Already in Pokédex — discourage catching, suggest fighting instead
+                return (f"{enemy['name']} already in Pokédex — fight for XP instead. "
+                        f"(Can still catch if you want a spare, but it won't help dex progress.)")
             return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
-                    f"— send: B {_ABS_NAV_ITEM} A A")
+                    f"— send: B {_ABS_NAV_ITEM} A W A")
 
     # Wild battle + critically low HP → running is safer than fighting
     if battle_type == 1 and player["hp"] > 0 and player["max_hp"] > 0:
@@ -717,9 +777,10 @@ def _generate_battle_tip(
         # Gen 1 fight submenu cursor initialises to wPlayerMoveListIndex
         # (last confirmed move), NOT always 0. Navigate from fight_cursor.
         # The fight submenu transition eats the first input after entering,
-        # so we send a throwaway A before any D/U nav, then A to confirm.
+        # so we wait W for the submenu to load, then send a throwaway A
+        # before any D/U nav, then A to confirm.
         nav = _fight_nav_presses(fight_cursor, best_slot)
-        compound = f"B {_ABS_NAV_FIGHT} A A" + (f" {nav} A" if nav else " A")
+        compound = f"B {_ABS_NAV_FIGHT} A W A" + (f" {nav} A" if nav else " A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
@@ -731,12 +792,12 @@ def _generate_battle_tip(
         can_switch = alive_count > 1
         if can_switch:
             return (f"Trainer battle — no damage moves on this mon. "
-                    f"Switch to one with damage moves! Send: B {_ABS_NAV_PKMN} A, "
+                    f"Switch to one with damage moves! Send: B {_ABS_NAV_PKMN} A W, "
                     f"then D/U to pick a mon with HP > 0, then A.")
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
         nav = _fight_nav_presses(fight_cursor, 0)
-        compound = f"B {_ABS_NAV_FIGHT} A A" + (f" {nav} A" if nav else " A")
+        compound = f"B {_ABS_NAV_FIGHT} A W A" + (f" {nav} A" if nav else " A")
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 
@@ -761,6 +822,7 @@ def _format_battle_text(
     party_count: int = 6,
     alive_count: int = 0,
     fight_cursor: int = 0,
+    enemy_owned: bool = False,
 ) -> str:
     """Assemble the battle context text block."""
     kind = "Wild" if battle_type == 1 else "Trainer"
@@ -809,7 +871,7 @@ def _format_battle_text(
         else:
             lines.append(f"  → Fight menu: cursor at slot {cursor+1}")
     elif menu_type == "faint":
-        lines.append(f"  → FAINT FLOW — cursor: {cursor}. 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
+        lines.append(f"  → FAINT FLOW — cursor on party slot {cursor+1} (0-indexed {cursor}). 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
     else:
         lines.append(f"  → In submenu/text (not main battle menu) — press B to go back, or A to advance text")
 
@@ -840,7 +902,8 @@ def _format_battle_text(
                                 party_count=party_count,
                                 alive_count=alive_count,
                                 enemy_types=enemy.get("types"),
-                                fight_cursor=fight_cursor)
+                                fight_cursor=fight_cursor,
+                                enemy_owned=enemy_owned)
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -910,6 +973,7 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False, figh
         pokeball_count = _count_pokeballs(pyboy)
         party_count = min(pyboy.memory[_ADDR_PARTY_COUNT], 6)
         alive_count = _count_alive_party(pyboy, party_count)
+        enemy_owned = _is_dex_owned(pyboy, enemy["species_id"])
 
         # Determine best move slot
         damage_moves = [(m, m["slot"]) for m in player.get("moves", [])
@@ -924,7 +988,8 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False, figh
                                    pokeball_count=pokeball_count,
                                    party_count=party_count,
                                    alive_count=alive_count,
-                                   fight_cursor=actual_fight_cursor)
+                                   fight_cursor=actual_fight_cursor,
+                                   enemy_owned=enemy_owned)
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "

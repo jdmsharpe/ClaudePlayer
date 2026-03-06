@@ -1014,15 +1014,6 @@ class GameAgent:
             self.chat_history.append(user_message)
             self.game_state.add_to_complete_history(user_message)
 
-            # Strip state header from older user messages to avoid token duplication.
-            for msg in self.chat_history[:-1]:
-                if msg["role"] == "user" and isinstance(msg["content"], list) and len(msg["content"]) > 1:
-                    first = msg["content"][0]
-                    if isinstance(first, dict) and first.get("type") == "text":
-                        text = first.get("text", "")
-                        if text.startswith("Current game:"):
-                            msg["content"].pop(0)
-
         # Apply the screenshot limit
         self._limit_screenshots_in_history()
 
@@ -1056,10 +1047,7 @@ class GameAgent:
 
         for attempt in range(max_retries + 1):
             try:
-                # Generate system prompt with context-appropriate guidance block
-                system_prompt = self.claude.generate_system_prompt(
-                    in_battle=self._in_battle, in_menu=self._in_menu,
-                )
+                system_prompt = self.claude.get_system_prompt()
 
                 # Get tools
                 tools = self.tool_registry.get_tools()

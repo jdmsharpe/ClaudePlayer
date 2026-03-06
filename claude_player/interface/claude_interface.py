@@ -25,19 +25,16 @@ class ClaudeInterface:
         )
         self.config = config  # Store the config object
         self._logged_config = False
+        self._system_prompt = self._build_system_prompt()
     
-    def generate_system_prompt(self, in_battle: bool = False, in_menu: bool = False) -> list:
-        """Generate the system prompt as a list of content blocks for caching.
+    def _build_system_prompt(self) -> list:
+        """Build the static system prompt once at startup.
 
-        Returns a list of dicts with "type"/"text" and optional "cache_control".
-        The static preamble (rules, notation) is marked cacheable; dynamic context is not.
-
-        Args:
-            in_battle: When True, include battle guidance instead of spatial.
-            in_menu: When True, include menu navigation guidance.
+        All context blocks (spatial, battle, menu) are included unconditionally so
+        the prompt hash never changes between turns — the cache entry stays warm and
+        every API call pays the cheap cache-read rate rather than the 1.25x
+        cache-creation rate on battle/menu transitions.
         """
-
-        # --- Static block (identical every turn — cacheable) ---
         static_parts = [f"""You play a video game in real-time. The game continues between turns — act quickly.
 CORE RULE: When a TIP is present, send its exact button sequence via send_inputs. Do not overthink or try alternatives.
 
@@ -53,22 +50,22 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
 
         has_spatial = self.config and getattr(self.config, 'ENABLE_SPATIAL_CONTEXT', False)
         if has_spatial:
-            if in_battle:
-                static_parts.append("""
-<battle_context>
-Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
-Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.
-FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with HP>0, or D A=NO (wild only).
-</battle_context>""")
-            else:
-                static_parts.append("""
+            static_parts.append("""
 <spatial_context>
 Grid legend: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost. 1 cell=16 frames.
 FOLLOW [path:] hints — they route around walls. NAV(map) = A* through explored map (best signal). If [no path found], try 1-tile steps.
 MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A).
 Use large moves (D96, R128) to cover ground fast. NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
 NAME ENTRY: START to finalize. If RAM says dialogue but nothing visible, try movement.
-</spatial_context>""")
+</spatial_context>
+<battle_context>
+Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
+Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.
+FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with HP>0, or D A=NO (wild only).
+</battle_context>
+<menu_context>
+Shows menu type, cursor, options, and a TIP. B closes menus, START toggles start menu.
+</menu_context>""")
 
             static_parts.append("""
 <authority>
@@ -80,28 +77,23 @@ You have persistent memory (saves/MEMORY.md) updated automatically in the backgr
 Use read_from_memory when stuck, lost, or entering a familiar area — it may contain routes, dead ends, puzzle hints, and past mistakes.
 </memory>""")
 
-            if in_menu:
-                static_parts.append("""
-<menu_context>
-Shows menu type, cursor, options, and a TIP. B closes menus, START toggles start menu.
-</menu_context>""")
-
         # Custom instructions from config
         if self.config and hasattr(self.config, 'CUSTOM_INSTRUCTIONS') and self.config.CUSTOM_INSTRUCTIONS:
             static_parts.append(f"\n{self.config.CUSTOM_INSTRUCTIONS}")
 
         static_parts.append("\nAlways use send_inputs to act. Be concise — send compound inputs, not one button at a time.")
 
-        static_text = "\n".join(static_parts)
-
-        # Return as content blocks: static block with cache_control
         return [
             {
                 "type": "text",
-                "text": static_text,
+                "text": "\n".join(static_parts),
                 "cache_control": {"type": "ephemeral"},
             },
         ]
+
+    def get_system_prompt(self) -> list:
+        """Return the pre-built static system prompt."""
+        return self._system_prompt
     
     def _prepare_tools_cached(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Add cache_control to the last tool definition for prompt caching.

@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 
 from claude_player.utils.terminal_display import _encode_jpeg
 
@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 class WebStreamer:
     """Lightweight web dashboard that mirrors the terminal display."""
 
-    def __init__(self, display, port: int = 5555, config=None):
+    def __init__(self, display, port: int = 5555, config=None, sound=None):
         self.display = display
         self.port = port
         self.config = config
+        self._sound = sound
         self._app = Flask(__name__)
         self._setup_routes()
 
@@ -98,6 +99,19 @@ class WebStreamer:
             return Response(
                 self._mjpeg_generator(),
                 mimetype="multipart/x-mixed-replace; boundary=frame",
+            )
+
+        @app.route("/audio/chunk")
+        def audio_chunk():
+            if self._sound is None:
+                return Response(b"", status=204)
+            chunk = self._sound.get_chunk(timeout=1.5)
+            if chunk is None:
+                return Response(b"", status=204)
+            return Response(
+                chunk,
+                mimetype="audio/wav",
+                headers={"Cache-Control": "no-cache"},
             )
 
     # ------------------------------------------------------------------
@@ -778,6 +792,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <span class="pill-value"><span id="fps">0</span> FPS</span>
   </div>
   <span class="spacer"></span>
+  <div id="sound-controls" style="display:flex;align-items:center;gap:6px;margin-right:4px;">
+    <button id="mute-btn" onclick="toggleSound()" title="Click to enable sound" style="background:none;border:1px solid #30363d;border-radius:6px;color:#6e7681;cursor:pointer;font-size:14px;padding:2px 7px;line-height:1.4;">&#128263;</button>
+    <input id="vol-slider" type="range" min="0" max="100" value="70" oninput="setVolume(this.value)" style="width:64px;accent-color:#58a6ff;cursor:pointer;" title="Volume">
+  </div>
   <div id="cfg-badges" style="display:none;align-items:center;gap:6px;"></div>
   <div class="pill error" id="error-pill" style="display:none">
     <span class="pill-value" id="error-count"></span>
@@ -1444,6 +1462,72 @@ function renderParty(summary, mons) {
     mkSpan(row, pm[3] + '/' + pm[4], 'hp-text');
     el.appendChild(row);
   });
+}
+
+/* ---- Web Audio streaming ---- */
+let _audioCtx = null, _gainNode = null, _nextPlayTime = 0;
+let _audioRunning = false, _audioMuted = false;
+
+function _ensureCtx() {
+  if (_audioCtx) return;
+  _audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+  _gainNode = _audioCtx.createGain();
+  _gainNode.gain.value = document.getElementById('vol-slider').value / 100;
+  _gainNode.connect(_audioCtx.destination);
+}
+
+async function _audioLoop() {
+  while (_audioRunning) {
+    try {
+      const res = await fetch('/audio/chunk');
+      if (res.status === 204) { await new Promise(r => setTimeout(r, 80)); continue; }
+      const buf = await res.arrayBuffer();
+      const decoded = await _audioCtx.decodeAudioData(buf);
+      const src = _audioCtx.createBufferSource();
+      src.buffer = decoded;
+      src.connect(_gainNode);
+      const now = _audioCtx.currentTime;
+      if (_nextPlayTime < now + 0.05) _nextPlayTime = now + 0.05;
+      src.start(_nextPlayTime);
+      _nextPlayTime += decoded.duration;
+    } catch(e) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+}
+
+function toggleSound() {
+  _ensureCtx();
+  const btn = document.getElementById('mute-btn');
+  if (!_audioRunning) {
+    _audioCtx.resume();
+    _audioRunning = true;
+    _audioMuted = false;
+    _gainNode.gain.value = document.getElementById('vol-slider').value / 100;
+    btn.textContent = '\uD83D\uDD0A';  // 🔊
+    btn.style.color = '#58a6ff';
+    btn.style.borderColor = '#1f6feb';
+    btn.title = 'Mute';
+    _audioLoop();
+  } else if (!_audioMuted) {
+    _audioMuted = true;
+    _gainNode.gain.value = 0;
+    btn.textContent = '\uD83D\uDD07';  // 🔇
+    btn.style.color = '#6e7681';
+    btn.style.borderColor = '#30363d';
+    btn.title = 'Unmute';
+  } else {
+    _audioMuted = false;
+    _gainNode.gain.value = document.getElementById('vol-slider').value / 100;
+    btn.textContent = '\uD83D\uDD0A';  // 🔊
+    btn.style.color = '#58a6ff';
+    btn.style.borderColor = '#1f6feb';
+    btn.title = 'Mute';
+  }
+}
+
+function setVolume(v) {
+  if (_gainNode && !_audioMuted) _gainNode.gain.value = v / 100;
 }
 
 setInterval(pollState, STATE_MS);

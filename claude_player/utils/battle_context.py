@@ -71,6 +71,32 @@ _ADDR_POKEDEX_OWNED = 0xD2F7  # wPokedexOwned: 19 bytes covering dex #1-151
 _BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
 
+# Gen 1 item IDs → (display name, HP restored).  9999 = full HP.
+# Sourced from pret/pokered constants/item_constants.asm
+_HP_ITEMS: Dict[int, Tuple[str, int]] = {
+    0x14: ("Potion",       20),
+    0x1D: ("Super Potion", 50),
+    0x1C: ("Hyper Potion", 200),
+    0x1B: ("Max Potion",   9999),
+    0x1A: ("Full Restore", 9999),  # also cures status
+    0x21: ("Fresh Water",  50),
+    0x22: ("Soda Pop",     60),
+    0x23: ("Lemonade",     80),
+}
+
+# Status cure items: item_id → (name, set of statuses cured).
+# Status strings match _decode_status output (e.g. "BRN", "PSN", "PAR", "FRZ").
+# SLP is matched with startswith("SLP") so stored as "SLP" sentinel here.
+_STATUS_CURE_ITEMS: Dict[int, Tuple[str, frozenset]] = {
+    0x15: ("Antidote",    frozenset({"PSN"})),
+    0x16: ("Burn Heal",   frozenset({"BRN"})),
+    0x17: ("Ice Heal",    frozenset({"FRZ"})),
+    0x18: ("Awakening",   frozenset({"SLP"})),
+    0x19: ("Parlyz Heal", frozenset({"PAR"})),
+    0x1E: ("Full Heal",   frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
+    0x1A: ("Full Restore",frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
+}
+
 # ---------------------------------------------------------------------------
 # Gen 1 type system
 # ---------------------------------------------------------------------------
@@ -148,12 +174,42 @@ def _type_effectiveness(move_type: str, defend_types: List[str]) -> float:
     return mult
 
 
-def _effective_power(move_slot_pair, enemy_types=None) -> float:
-    """Weighted move power accounting for type effectiveness."""
+# In Gen 1, move damage category is determined by the move's type (not per-move).
+# Special types use Special vs Special; all others use Attack vs Defense.
+_SPECIAL_TYPES = {"Fire", "Water", "Grass", "Electric", "Ice", "Psychic", "Dragon"}
+
+
+def _effective_power(
+    move_slot_pair,
+    enemy_types=None,
+    player_stats: Optional[Dict[str, int]] = None,
+    enemy_stats: Optional[Dict[str, int]] = None,
+    player_types: Optional[List[str]] = None,
+    player_status: str = "OK",
+) -> float:
+    """Estimated damage score accounting for Gen 1 mechanics:
+    - Type effectiveness vs defender
+    - STAB (1.5x when move type matches user's type)
+    - Physical/Special stat split (Attack+Defense vs Special+Special)
+    - Burn penalty (halves physical offense in Gen 1 damage calc)
+    """
     m = move_slot_pair[0]
     base = m["power"]
+    if base <= 0:
+        return 0.0
     eff = _type_effectiveness(m["type"], enemy_types) if enemy_types else 1.0
-    return base * eff
+    stab = 1.5 if (player_types and m["type"] in player_types) else 1.0
+    if player_stats and enemy_stats:
+        is_special = m["type"] in _SPECIAL_TYPES
+        offense = player_stats["spc"] if is_special else player_stats["atk"]
+        # Gen 1: burn halves physical damage during the damage formula, not in
+        # the shown stat — so we apply it manually here.
+        if not is_special and player_status == "BRN":
+            offense = offense // 2
+        defense = enemy_stats["spc"] if is_special else enemy_stats["def"]
+        if defense > 0:
+            return base * eff * stab * offense / defense
+    return base * eff * stab
 
 
 # Main battle menu nav: column-major layout
@@ -599,7 +655,7 @@ _MAIN_MENU_ITEMS = ["FIGHT", "ITEM", "PKMN", "RUN"]
 def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
     """Detect which battle sub-menu is active from cursor position metadata.
 
-    Returns "main", "fight", "faint", or "unknown".
+    Returns "main", "fight", "faint", "pkmn", or "unknown".
     """
     top_y = pyboy.memory[_ADDR_MENU_TOP_Y]
     top_x = pyboy.memory[_ADDR_MENU_TOP_X]
@@ -624,6 +680,14 @@ def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
     # (YES/NO prompt or party select screen)
     if player_hp == 0:
         return "faint"
+    # Party switch screen (opened via PKMN from main battle menu): top_y is
+    # very small (~2) because the party list is drawn near the top of the
+    # screen. This is distinct from text messages — text_box_active may be set
+    # when "CHARMANDER is already out!" dismissal text is showing, but the
+    # underlying state is still the party menu. In both cases B escapes back
+    # to main; pressing A re-selects the already-active mon → infinite loop.
+    if top_y <= 8 and top_x <= 3 and not text_box_active:
+        return "pkmn"
     return "unknown"
 
 
@@ -678,9 +742,63 @@ def _count_pokeballs(pyboy: PyBoy) -> int:
     return total
 
 
+def _read_battle_items(pyboy: PyBoy) -> Dict[str, Any]:
+    """Scan the bag for HP healing and status cure items.
+
+    Returns:
+        {
+          "best_hp_item": (name, heals, bag_slot) | None,
+          "status_cures": {status_key: (name, bag_slot)},  # status_key: "PSN","BRN",etc.
+        }
+    Bag slots are 1-indexed (slot 1 = top of bag).
+    """
+    count = pyboy.memory[_ADDR_NUM_BAG_ITEMS]
+    best_hp: Optional[Tuple[str, int, int]] = None   # (name, heal, slot)
+    status_cures: Dict[str, Tuple[str, int]] = {}
+
+    if count == 0 or count > 20:
+        return {"best_hp_item": None, "status_cures": {}}
+
+    for i in range(count):
+        addr = _ADDR_BAG_ITEMS + (i * 2)
+        item_id = pyboy.memory[addr]
+        if item_id == 0xFF:
+            break
+        qty = pyboy.memory[addr + 1]
+        if qty == 0:
+            continue
+        slot = i + 1  # 1-indexed
+
+        # HP healing
+        if item_id in _HP_ITEMS:
+            name, heals = _HP_ITEMS[item_id]
+            if best_hp is None or heals > best_hp[1]:
+                best_hp = (name, heals, slot)
+
+        # Status cures
+        if item_id in _STATUS_CURE_ITEMS:
+            name, cures_set = _STATUS_CURE_ITEMS[item_id]
+            for status_key in cures_set:
+                # Prefer the item that cures more (Full Heal > specific cure)
+                if status_key not in status_cures:
+                    status_cures[status_key] = (name, slot)
+
+    return {"best_hp_item": best_hp, "status_cures": status_cures}
+
+
 # ---------------------------------------------------------------------------
 # Battle tip
 # ---------------------------------------------------------------------------
+
+def _item_use_compound(bag_slot: int) -> str:
+    """Compound input to open the bag and navigate to a specific slot.
+
+    Sequence: B (→main) D L (→ITEM) A (open bag) W (wait) + D×(slot-1) + A (select) A (use on active mon).
+    Bag cursor position in Gen 1 is unpredictable — agent may need to adjust D/U.
+    """
+    nav = (" " + " ".join(["D"] * (bag_slot - 1))) if bag_slot > 1 else ""
+    return f"B {_ABS_NAV_ITEM} A W{nav} A A"
+
 
 def _generate_battle_tip(
     player: Dict[str, Any],
@@ -694,6 +812,7 @@ def _generate_battle_tip(
     enemy_types: Optional[List[str]] = None,
     fight_cursor: int = 0,
     enemy_owned: bool = False,
+    battle_items: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Generate a short tactical recommendation.
 
@@ -707,9 +826,6 @@ def _generate_battle_tip(
 
     # Player fainted — give specific YES/NO and party-select guidance
     if player["hp"] == 0:
-        # alive_count from party data may be inflated by 1 (the current battler's
-        # party slot HP may not have synced to 0 yet), so threshold is > 1.
-        has_others = alive_count > 1
         if battle_type == 1:  # wild battle — can run via NO
             return (
                 "FAINT FLOW: 'Use next POKEMON?' prompt. "
@@ -724,17 +840,84 @@ def _generate_battle_tip(
                 "Skip fainted mons — selecting one shows 'There's no will to fight!'."
             )
 
+    # Party switch screen — agent can intentionally switch, or press B to cancel.
+    # Warn about the already-active-mon loop so they navigate off that slot first.
+    if menu_type == "pkmn":
+        return (
+            f"PKMN SWITCH SCREEN (cursor on slot {cursor+1}). "
+            "D/U to navigate party, A to switch in that Pokemon, B to cancel. "
+            "WARNING: pressing A on the already-active Pokemon shows 'already out!' "
+            "and loops back here — navigate to a different slot first."
+        )
+
+    # Unknown battle state (text message over an unrecognised menu).
+    # B is the safe escape when stuck; A may confirm an unintended selection.
+    if menu_type == "unknown" and player["hp"] > 0 and enemy["hp"] > 0:
+        return (
+            "Unknown battle state — likely a submenu or text overlay. "
+            "Press A to advance text, or B to return to main battle menu if stuck. Send: B"
+        )
+
     # --- All TIPs below use B prefix for robustness ---
     # B is a no-op on the main battle menu but returns to main from the
     # fight submenu.  This sidesteps the unreliable main-vs-fight detection
     # (wTopMenuItemY/X are stale RAM after submenu transitions).
 
+    pstatus = player.get("status", "OK")
+
+    items = battle_items or {}
+    status_cures = items.get("status_cures", {})
+    best_hp_item = items.get("best_hp_item")  # (name, heals, bag_slot) or None
+
+    # Sleep/Freeze: player cannot act — suggest cure item if available, else press A.
+    if pstatus.startswith("SLP"):
+        turns_left = pstatus[4:-1] if len(pstatus) > 3 else "?"
+        cure = status_cures.get("SLP")
+        if cure and menu_type in ("main", "fight"):
+            cname, cslot = cure
+            return (f"YOU ARE ASLEEP ({turns_left} turns left)! Use {cname} (bag slot {cslot}) to wake up now "
+                    f"— send: {_item_use_compound(cslot)}")
+        return f"YOU ARE ASLEEP ({turns_left} turns left) — can't use moves! Press A to advance the turn. Send: A"
+    if pstatus == "FRZ":
+        cure = status_cures.get("FRZ")
+        if cure and menu_type in ("main", "fight"):
+            cname, cslot = cure
+            return (f"YOU ARE FROZEN! Use {cname} (bag slot {cslot}) to thaw immediately "
+                    f"— send: {_item_use_compound(cslot)}")
+        return "YOU ARE FROZEN — can't move until thawed (random each turn)! Press A to advance. Send: A"
+
+    # For other serious statuses in trainer battles, suggest curing with an item
+    # (BRN halves physical damage; PAR causes 25% paralysis; PSN adds HP pressure)
+    if menu_type in ("main", "fight") and pstatus in ("BRN", "PAR", "PSN"):
+        cure = status_cures.get(pstatus)
+        if cure and battle_type != 1:  # trainer battle — conserving HP matters more
+            cname, cslot = cure
+            status_desc = {"BRN": "BURNED (physical moves halved!)", "PAR": "PARALYZED (25% skip chance!)", "PSN": "POISONED (chip damage each turn)"}[pstatus]
+            return (f"You are {status_desc} Use {cname} (bag slot {cslot}) to cure it "
+                    f"— send: {_item_use_compound(cslot)}")
+
+    # Low HP in trainer battle — suggest healing item if available
+    if (menu_type in ("main", "fight") and battle_type != 1
+            and best_hp_item and player["max_hp"] > 0):
+        hp_pct = player["hp"] * 100 // player["max_hp"]
+        if hp_pct <= 40:
+            hname, heals, hslot = best_hp_item
+            heals_str = "full HP" if heals >= 9999 else f"+{heals} HP"
+            return (f"HP LOW ({hp_pct}%, trainer battle) — use {hname} ({heals_str}, bag slot {hslot}) "
+                    f"— send: {_item_use_compound(hslot)}")
+
     # Catch suggestion: wild battle + have balls + favorable conditions
     if battle_type == 1 and pokeball_count > 0 and enemy["max_hp"] > 0:
         enemy_hp_pct = 100 * enemy["hp"] // enemy["max_hp"]
+        enemy_status = enemy.get("status", "OK")
+        enemy_asleep = enemy_status.startswith("SLP") or enemy_status == "FRZ"
         should_catch = False
         reason = ""
-        if party_count < 6 and enemy_hp_pct <= 40:
+        # Sleeping/frozen enemies: always worth catching (highest catch rate bonus)
+        if enemy_asleep and not enemy_owned:
+            should_catch = True
+            reason = f"SLP/FRZ = max catch rate bonus!"
+        elif party_count < 6 and enemy_hp_pct <= 40:
             should_catch = True
             reason = f"party {party_count}/6"
         elif enemy_hp_pct <= 20:
@@ -742,7 +925,7 @@ def _generate_battle_tip(
             reason = "HP very low"
 
         if should_catch and menu_type in ("main", "fight"):
-            if enemy_owned:
+            if enemy_owned and not enemy_asleep:
                 # Already in Pokédex — discourage catching, suggest fighting instead
                 return (f"{enemy['name']} already in Pokédex — fight for XP instead. "
                         f"(Can still catch if you want a spare, but it won't help dex progress.)")
@@ -756,9 +939,13 @@ def _generate_battle_tip(
             return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
                     f"Send: B {_ABS_NAV_RUN} A")
 
-    # Find the strongest usable damage move, weighted by type effectiveness
+    # Find the strongest usable damage move, weighted by Gen 1 damage mechanics
     etypes = enemy_types or []
-    _ep = lambda pair: _effective_power(pair, etypes)
+    ps = player.get("stats") or {}
+    es = enemy.get("stats") or {}
+    ptypes = player.get("types") or []
+    # pstatus already defined above
+    _ep = lambda pair: _effective_power(pair, etypes, ps or None, es or None, ptypes, pstatus)
 
     damage_moves = [
         (m, m["slot"]) for m in player["moves"]
@@ -776,14 +963,46 @@ def _generate_battle_tip(
         # B ensures we're on main menu, U L A enters fight submenu.
         # Gen 1 fight submenu cursor initialises to wPlayerMoveListIndex
         # (last confirmed move), NOT always 0. Navigate from fight_cursor.
-        # The fight submenu transition eats the first input after entering,
-        # so we wait W for the submenu to load, then send a throwaway A
-        # before any D/U nav, then A to confirm.
+        # W waits for the fight submenu draw animation. Navigate from fight_cursor
+        # (wPlayerMoveListIndex), then A to confirm. No throwaway A needed.
         nav = _fight_nav_presses(fight_cursor, best_slot)
-        compound = f"B {_ABS_NAV_FIGHT} A W A" + (f" {nav} A" if nav else " A")
+        compound = f"B {_ABS_NAV_FIGHT} A W" + (f" {nav} A" if nav else " A")
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
-        return f"Use {best_move['name']} ({best_move['power']}pwr{eff_tag}) — send: {compound}"
+        is_special = best_move["type"] in _SPECIAL_TYPES
+        cat = "Special" if is_special else "Physical"
+        stab_tag = " STAB" if (ptypes and best_move["type"] in ptypes) else ""
+        burn_tag = " [BRN→physical halved!]" if (pstatus == "BRN" and not is_special) else ""
+
+        # Speed tier: who attacks first this turn?
+        # PAR quarters effective speed (applied separately from shown stat in Gen 1).
+        spd_note = ""
+        if ps and es:
+            p_spd = ps["spd"] // 4 if pstatus == "PAR" else ps["spd"]
+            e_spd = es["spd"] // 4 if enemy.get("status", "OK") == "PAR" else es["spd"]
+            if p_spd > e_spd:
+                spd_note = " [YOU go first]"
+            elif e_spd > p_spd:
+                spd_note = " [ENEMY goes first]"
+            else:
+                spd_note = " [speed tie→random]"
+
+        # Enemy status advantage notes
+        estatus = enemy.get("status", "OK")
+        estatus_note = ""
+        if estatus.startswith("SLP"):
+            estatus_note = " [enemy asleep — great time to catch!]"
+        elif estatus == "FRZ":
+            estatus_note = " [enemy frozen — free hits!]"
+        elif estatus == "PAR":
+            estatus_note = " [enemy PAR — 25% skip chance]"
+        elif estatus == "PSN":
+            estatus_note = " [enemy PSN — taking chip damage each turn]"
+        elif estatus == "BRN":
+            estatus_note = " [enemy BRN — physical moves halved + chip damage]"
+
+        return (f"Use {best_move['name']} ({best_move['power']}pwr, {cat}{stab_tag}{eff_tag}{burn_tag})"
+                f"{spd_note}{estatus_note} — send: {compound}")
 
     if menu_type in ("main", "fight") and not damage_moves:
         if battle_type == 1:  # wild — RUN is an option
@@ -797,7 +1016,7 @@ def _generate_battle_tip(
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
         nav = _fight_nav_presses(fight_cursor, 0)
-        compound = f"B {_ABS_NAV_FIGHT} A W A" + (f" {nav} A" if nav else " A")
+        compound = f"B {_ABS_NAV_FIGHT} A W" + (f" {nav} A" if nav else " A")
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 
@@ -823,6 +1042,7 @@ def _format_battle_text(
     alive_count: int = 0,
     fight_cursor: int = 0,
     enemy_owned: bool = False,
+    battle_items: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Assemble the battle context text block."""
     kind = "Wild" if battle_type == 1 else "Trainer"
@@ -872,8 +1092,10 @@ def _format_battle_text(
             lines.append(f"  → Fight menu: cursor at slot {cursor+1}")
     elif menu_type == "faint":
         lines.append(f"  → FAINT FLOW — cursor on party slot {cursor+1} (0-indexed {cursor}). 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
+    elif menu_type == "pkmn":
+        lines.append(f"  → PKMN SWITCH SCREEN — party slot cursor={cursor+1}. D/U to navigate, A to switch, B to cancel")
     else:
-        lines.append(f"  → In submenu/text (not main battle menu) — press B to go back, or A to advance text")
+        lines.append(f"  → In submenu/text (not main battle menu) — press A to advance text, B to escape if stuck")
 
     # VS separator
     lines.append("──────────── VS ────────────")
@@ -903,7 +1125,8 @@ def _format_battle_text(
                                 alive_count=alive_count,
                                 enemy_types=enemy.get("types"),
                                 fight_cursor=fight_cursor,
-                                enemy_owned=enemy_owned)
+                                enemy_owned=enemy_owned,
+                                battle_items=battle_items)
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -914,7 +1137,7 @@ def _format_battle_text(
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False, fight_cursor: int = 0) -> Optional[Dict[str, Any]]:
+def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> Optional[Dict[str, Any]]:
     """Extract battle context from RAM.
 
     Must be called on the main thread (PyBoy access is not thread-safe).
@@ -971,6 +1194,7 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False, figh
         actual_fight_cursor = min(raw_fight_cursor, max(num_moves - 1, 0))
 
         pokeball_count = _count_pokeballs(pyboy)
+        battle_items = _read_battle_items(pyboy)
         party_count = min(pyboy.memory[_ADDR_PARTY_COUNT], 6)
         alive_count = _count_alive_party(pyboy, party_count)
         enemy_owned = _is_dex_owned(pyboy, enemy["species_id"])
@@ -982,14 +1206,19 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False, figh
             damage_moves = [(m, m["slot"]) for m in player.get("moves", [])
                             if m["power"] > 0 and m["pp"] > 0]
         enemy_types = enemy.get("types", [])
-        best_slot = max(damage_moves, key=lambda p: _effective_power(p, enemy_types))[1] if damage_moves else None
+        _ps = player.get("stats") or {}
+        _es = enemy.get("stats") or {}
+        _ptypes = player.get("types") or []
+        _pstatus = player.get("status", "OK")
+        best_slot = max(damage_moves, key=lambda p: _effective_power(p, enemy_types, _ps or None, _es or None, _ptypes, _pstatus))[1] if damage_moves else None
 
         text = _format_battle_text(battle_type, player, enemy, menu_type, cursor,
                                    pokeball_count=pokeball_count,
                                    party_count=party_count,
                                    alive_count=alive_count,
                                    fight_cursor=actual_fight_cursor,
-                                   enemy_owned=enemy_owned)
+                                   enemy_owned=enemy_owned,
+                                   battle_items=battle_items)
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "

@@ -24,6 +24,7 @@ from claude_player.utils.party_context import extract_party_context
 from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
+from claude_player.utils.sound_output import SoundOutput
 from claude_player.utils.ram_constants import ADDR_IS_IN_BATTLE, ADDR_CUR_MAP
 from claude_player.agent.memory_manager import MemoryManager
 
@@ -67,13 +68,15 @@ class GameAgent:
         # Initialize game components
         pyboy_kwargs = {}
 
-        # Enable sound if configured
-        if hasattr(self.config, 'ENABLE_SOUND') and self.config.ENABLE_SOUND:
-            logging.info("Sound enabled")
-            pyboy_kwargs["sound_emulated"] = True
-
         self.pyboy = PyBoy(self.config.ROM_PATH, **pyboy_kwargs)
         self.pyboy.set_emulation_speed(target_speed=self.config.EMULATION_SPEED)
+
+        # Sound output — buffers PyBoy audio frames into WAV chunks for browser streaming
+        sound_enabled = getattr(self.config, 'ENABLE_SOUND', True)
+        self.sound_output = SoundOutput(
+            sample_rate=self.pyboy.sound.sample_rate,
+            enabled=sound_enabled,
+        )
         
         # Load saved state if available
         if self.config.STATE_PATH:
@@ -178,7 +181,7 @@ class GameAgent:
         if web_port:
             try:
                 from claude_player.web.web_server import WebStreamer
-                self.web_streamer = WebStreamer(self.display, port=web_port, config=self.config)
+                self.web_streamer = WebStreamer(self.display, port=web_port, config=self.config, sound=self.sound_output)
                 self.web_streamer.start()
             except ImportError:
                 logging.warning("Flask not installed — web streamer disabled (pip install flask)")
@@ -365,6 +368,7 @@ class GameAgent:
             # contradict each other, compute ONE coherent directive.
             if (len(self._visited_positions) >= 10
                     and current_pos is not None
+                    and in_overworld
                     and spatial_data.get("text")):
                 cx, cy = current_pos
                 pos_counts = Counter(self._visited_positions)
@@ -390,12 +394,25 @@ class GameAgent:
                                 and x_range > _thrash_x and y_range <= _thrash_y)
 
                 # Record dead-end zone when cycling detected (per-map)
-                map_dead_ends = self._world_map.dead_ends.setdefault(
-                    self._current_map_id if self._current_map_id is not None else -1, []
-                )
+                _map_key = self._current_map_id if self._current_map_id is not None else -1
+                map_dead_ends = self._world_map.dead_ends.setdefault(_map_key, [])
                 if is_cycling:
-                    if not any(abs(cx - dz[0]) + abs(cy - dz[1]) <= 6
-                              for dz in map_dead_ends):
+                    # Don't mark areas near warps as dead ends — the agent
+                    # often cycles near buildings while pathfinding, and marking
+                    # those tiles as dead ends blocks the only viable routes.
+                    _warp_positions = self._world_map.warps.get(_map_key, {})
+                    near_warp = any(
+                        abs(cx - wx) + abs(cy - wy) <= 4
+                        for (wx, wy) in _warp_positions
+                    )
+                    if not near_warp and not any(
+                        abs(cx - dz[0]) + abs(cy - dz[1]) <= 6
+                        for dz in map_dead_ends
+                    ):
+                        # Cap at 4 dead-end zones per map to prevent over-coverage
+                        _MAX_DEAD_ENDS_PER_MAP = 4
+                        if len(map_dead_ends) >= _MAX_DEAD_ENDS_PER_MAP:
+                            map_dead_ends.pop(0)  # evict oldest
                         map_dead_ends.append((cx, cy))
                         logging.info(f"DEAD-END ZONE recorded at ({cx},{cy})")
 
@@ -527,7 +544,6 @@ class GameAgent:
                 battle_data = extract_battle_context(
                     self.pyboy,
                     just_entered_battle=not self._in_battle,
-                    fight_cursor=self.game_state.fight_cursor,
                 )
 
         # Extract party context (always available — overworld and battle)
@@ -807,8 +823,10 @@ class GameAgent:
                     "EAST": "RIGHT", "WEST": "LEFT",
                 }
                 preferred_dest = None
+                secondary_preferred_dest = None  # direction matches but not primary
                 first_compass_dest = None
                 in_compass = False
+                kw = _dir_to_compass_kw.get(preferred_direction, "") if preferred_direction else ""
                 for line in spatial_text.split("\n"):
                     if line.startswith("COMPASS"):
                         in_compass = True
@@ -817,13 +835,27 @@ class GameAgent:
                         dest = line.strip().split(":")[0].strip()
                         if first_compass_dest is None:
                             first_compass_dest = dest
-                        if preferred_direction:
-                            kw = _dir_to_compass_kw.get(preferred_direction, "")
-                            if kw and kw in line.upper():
+                        if kw and kw in line.upper():
+                            # Prefer entries where kw is the PRIMARY direction —
+                            # i.e. it appears before any other direction keyword.
+                            # (spatial_context now lists primary direction first.)
+                            line_upper = line.upper()
+                            kw_idx = line_upper.find(kw)
+                            other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
+                            first_other = min(
+                                (line_upper.find(d) for d in other_dirs if d in line_upper),
+                                default=9999,
+                            )
+                            if kw_idx < first_other:
                                 preferred_dest = dest
-                                break
+                                break  # primary match — stop searching
+                            elif secondary_preferred_dest is None:
+                                secondary_preferred_dest = dest
                     elif in_compass and not line.startswith("  "):
                         in_compass = False
+                # Fall back to secondary (direction present but not primary)
+                if not preferred_dest:
+                    preferred_dest = secondary_preferred_dest
                 # Fallback: no direction match → use first compass entry
                 if not preferred_dest:
                     preferred_dest = first_compass_dest
@@ -1343,6 +1375,11 @@ class GameAgent:
         interrupt_fired = False
         tracked_battle_state = self.pyboy.memory[ADDR_IS_IN_BATTLE]
         tracked_map_id = self.pyboy.memory[ADDR_CUR_MAP]
+        # Minimum settle time after a map transition before re-analyzing.
+        # ADDR_CUR_MAP changes mid-animation (after fade-to-black, before fade-in),
+        # so 15ms after interrupt detection the game is still mid-warp.
+        last_map_change_time = 0.0
+        _MAP_TRANSITION_SETTLE = 1.5  # seconds
 
         # Add threading lock for shared variables
         lock = threading.Lock()
@@ -1546,9 +1583,10 @@ class GameAgent:
                     try:
                         from claude_player.utils.game_utils import press_and_release_buttons
                         frame_cb = self.display.set_frame if self.web_streamer else None
+                        sound_cb = lambda: self.sound_output.write(self.pyboy.sound)
                         # Clear state_change_event before executing so mid-action transitions can abort it
                         state_change_event.clear()
-                        press_and_release_buttons(self.pyboy, action, settle_frames=0, stop_event=state_change_event, frame_callback=frame_cb)
+                        press_and_release_buttons(self.pyboy, action, settle_frames=0, stop_event=state_change_event, frame_callback=frame_cb, sound_callback=sound_cb)
                     except Exception as e:
                         logging.error(f"Error executing inputs '{action}': {str(e)}")
                         # Continue with next actions rather than crashing
@@ -1568,10 +1606,12 @@ class GameAgent:
                 time_since_last_action = current_time - last_action_time
 
                 start_analysis = False
+                map_settled = (current_time - last_map_change_time) >= _MAP_TRANSITION_SETTLE
                 with lock:
                     if (not ai_is_analyzing
                             and time_since_last_analysis >= adaptive_interval
-                            and time_since_last_action >= action_settle_seconds):
+                            and time_since_last_action >= action_settle_seconds
+                            and map_settled):
                         start_analysis = True
                         ai_is_analyzing = True
                         analysis_complete = False
@@ -1613,6 +1653,7 @@ class GameAgent:
                 if not self.pyboy.tick():
                     # PyBoy signal to exit
                     break
+                self.sound_output.write(self.pyboy.sound)
                 fps_frame_count += 1
 
                 # --- State-aware interrupt detection ---
@@ -1632,6 +1673,8 @@ class GameAgent:
                     reason = ", ".join(reason_parts)
                     tracked_battle_state = cur_battle
                     tracked_map_id = cur_map
+                    if map_changed:
+                        last_map_change_time = current_time
 
                     # Abort any currently-running button sequence (e.g. D64 mid-walk)
                     state_change_event.set()
@@ -1695,6 +1738,7 @@ class GameAgent:
         self._save_state_now("shutdown")
 
         # Clean up
+        self.sound_output.close()
         if ai_thread and ai_thread.is_alive():
             # Wait for AI thread to complete (with timeout)
             ai_thread.join(timeout=2.0)

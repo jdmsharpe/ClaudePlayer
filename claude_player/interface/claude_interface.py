@@ -52,7 +52,7 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
         if has_spatial:
             static_parts.append("""
 <spatial_context>
-Grid legend: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost. 1 cell=16 frames.
+Grid legend: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost s=sign P=PC. 1 cell=16 frames.
 FOLLOW [path:] hints — they route around walls. NAV(map) = A* through explored map (best signal). If [no path found], try 1-tile steps.
 MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A).
 Use large moves (D96, R128) to cover ground fast. NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.

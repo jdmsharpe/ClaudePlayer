@@ -30,6 +30,7 @@ class ConfigClass:
     MAX_ADAPTIVE_INTERVAL: float
     ENABLE_SPATIAL_CONTEXT: bool
     ENABLE_SOUND: bool
+    SOUND_VOLUME: int  # 0-100
     MAX_HISTORY_MESSAGES: int
     MAX_SCREENSHOTS: int
     BOOT_FRAMES: int

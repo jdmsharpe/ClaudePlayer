@@ -34,6 +34,14 @@ _ADDR_MAP_WIDTH = 0xD369      # In blocks
 _ADDR_NUM_WARPS = 0xD3AE
 _ADDR_WARP_ENTRIES = 0xD3AF   # 4 bytes each: Y, X, dest_warp_id, dest_map
 _MAX_WARPS = 32
+# Sign list immediately follows the variable-length warp list in RAM.
+# Address computed at runtime: D3AF + num_warps * 4
+_MAX_SIGNS = 16
+
+# Maps where signs are PC terminals (Pokemon Centers)
+_POKEMON_CENTER_MAPS = {
+    0x29, 0x3A, 0x40, 0x44, 0x51, 0x59, 0x85, 0x8D, 0x9A, 0xAB, 0xB6,
+}
 
 # Map connections — seamless edge transitions (e.g. Pallet Town ↔ Route 1)
 # wMapConnections bitfield: bit3=North, bit2=South, bit1=West, bit0=East
@@ -752,6 +760,7 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
 
             # Apply per-map warp position correction if configured.
             override = WARP_POSITION_OVERRIDES.get((map_number, i))
+            logger.debug(f"WARP_RAW map=0x{map_number:02X} warp={i} raw=({wy},{wx}) dest=0x{dest_map:02X} override={override}")
             if override:
                 wy, wx = override
 
@@ -792,6 +801,24 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         except Exception as e:
             logger.debug(f"Connection data unavailable: {e}")
 
+        # Read sign list. Follows the variable-length warp list: D3AF + num_warps * 4.
+        is_pokecenter = map_number in _POKEMON_CENTER_MAPS
+        addr_num_signs = _ADDR_WARP_ENTRIES + num_warps * 4
+        num_signs = pyboy.memory[addr_num_signs]
+        addr_sign_entries = addr_num_signs + 1
+        signs = []
+        if num_signs <= _MAX_SIGNS:
+            for i in range(num_signs):
+                base = addr_sign_entries + (i * 3)
+                sy = pyboy.memory[base]
+                sx = pyboy.memory[base + 1]
+                signs.append({
+                    "map_y": sy, "map_x": sx,
+                    "dy": sy - player_y,
+                    "dx": sx - player_x,
+                    "label": "P" if is_pokecenter else "s",
+                })
+
         return {
             "map_number": map_number,
             "map_name": _MAP_NAMES.get(map_number, f"Map 0x{map_number:02X}"),
@@ -801,6 +828,7 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             "map_width": map_width,
             "warps": warps,
             "connections": connections,
+            "signs": signs,
         }
     except Exception as e:
         logger.debug(f"Warp data unavailable: {e}")
@@ -1452,6 +1480,7 @@ def _format_spatial_text(
         if 0 <= px < grid_width and 0 <= py < grid_height:
             grid[py][px] = "@"
     _overlay_warps_on_grid(grid, warp_data, player_screen_pos, scale=1)
+    _overlay_signs_on_grid(grid, warp_data, player_screen_pos, scale=1)
 
     # Assemble output
     lines = ["=== SPATIAL CONTEXT ==="]
@@ -1487,8 +1516,9 @@ def _format_spatial_text(
 
         # Pre-compute which immediate directions are blocked (for compass warnings)
         _immediate_blocked: set = set()
+        _warp_adjacent: set = set()  # directions with a building-warp tile immediately adjacent
         _ledge_pass = {'v': (0, 1), '>': (1, 0), '<': (-1, 0)}
-        _walkable = {'.', ',', '@', 'W', 'g'}  # floor, grass, player, warp, ghost
+        _walkable = {'.', ',', '@', 'g'}  # floor, grass, player, ghost — NOT 'W' (warp teleports) or signs (solid)
         if player_screen_pos and grid:
             _cpx, _cpy = player_screen_pos
             for _lbl, _dx, _dy in [("UP", 0, -1), ("DOWN", 0, 1),
@@ -1499,6 +1529,8 @@ def _format_spatial_text(
                     if _c in _ledge_pass:
                         if (_dx, _dy) != _ledge_pass[_c]:
                             _immediate_blocked.add(_lbl)
+                    elif _c == 'W':
+                        _warp_adjacent.add(_lbl)  # building entrance — teleports, warn separately
                     elif _c not in _walkable:
                         _immediate_blocked.add(_lbl)
 
@@ -1509,23 +1541,37 @@ def _format_spatial_text(
         compass_lines: list = []
         for w in warp_data.get("warps", []):
             if abs(w["dy"]) > viewport_half_h or abs(w["dx"]) > viewport_half_w:
+                # Primary direction = axis with larger distance; list it FIRST
+                # so game_agent can identify primary vs secondary by keyword order.
+                if abs(w["dy"]) >= abs(w["dx"]):
+                    pri = "UP" if w["dy"] < 0 else "DOWN"
+                else:
+                    pri = "LEFT" if w["dx"] < 0 else "RIGHT"
                 parts = []
-                if w["dy"] < 0:
-                    parts.append(f"~{abs(w['dy'])} blocks UP")
-                elif w["dy"] > 0:
-                    parts.append(f"~{w['dy']} blocks DOWN")
-                if w["dx"] < 0:
-                    parts.append(f"~{abs(w['dx'])} blocks LEFT")
-                elif w["dx"] > 0:
-                    parts.append(f"~{w['dx']} blocks RIGHT")
+                if pri in ("UP", "DOWN"):
+                    if w["dy"] < 0:
+                        parts.append(f"~{abs(w['dy'])} blocks UP")
+                    elif w["dy"] > 0:
+                        parts.append(f"~{w['dy']} blocks DOWN")
+                    if w["dx"] < 0:
+                        parts.append(f"~{abs(w['dx'])} blocks LEFT")
+                    elif w["dx"] > 0:
+                        parts.append(f"~{w['dx']} blocks RIGHT")
+                else:
+                    if w["dx"] < 0:
+                        parts.append(f"~{abs(w['dx'])} blocks LEFT")
+                    elif w["dx"] > 0:
+                        parts.append(f"~{w['dx']} blocks RIGHT")
+                    if w["dy"] < 0:
+                        parts.append(f"~{abs(w['dy'])} blocks UP")
+                    elif w["dy"] > 0:
+                        parts.append(f"~{w['dy']} blocks DOWN")
                 if parts:
-                    # Primary direction = axis with larger distance
-                    if abs(w["dy"]) >= abs(w["dx"]):
-                        pri = "UP" if w["dy"] < 0 else "DOWN"
-                    else:
-                        pri = "LEFT" if w["dx"] < 0 else "RIGHT"
                     note = ""
-                    if pri in _immediate_blocked:
+                    if pri in _warp_adjacent:
+                        note = (f" (CAUTION: building entrance 1 step {pri}"
+                                f" — move LEFT or RIGHT first to avoid entering it)")
+                    elif pri in _immediate_blocked:
                         note = f" ({pri} blocked here — detour around obstacle)"
                     compass_lines.append(f"  {w['dest_name']}: {', '.join(parts)}{note}")
                     _compass_targets.append((pri, abs(w["dy"]) + abs(w["dx"]), w['dest_name']))
@@ -1545,7 +1591,10 @@ def _format_spatial_text(
             if dist > threshold:
                 move_dir = _DIR_MAP.get(d, d)
                 note = ""
-                if move_dir in _immediate_blocked:
+                if move_dir in _warp_adjacent:
+                    note = (f" (CAUTION: building entrance 1 step {move_dir}"
+                            f" — move LEFT or RIGHT first to avoid entering it)")
+                elif move_dir in _immediate_blocked:
                     note = f" ({move_dir} blocked here — detour around obstacle)"
                 compass_lines.append(f"  {conn['dest_name']}: ~{dist} blocks {d}{note}")
                 _compass_targets.append((move_dir, dist, conn['dest_name']))
@@ -1647,23 +1696,43 @@ def _overlay_warps_on_grid(
     px, py = player_screen
 
     for w in warp_data["warps"]:
-        # dy/dx are already corrected in _extract_warp_data
         gx = px + w["dx"] * scale
         gy = py + w["dy"] * scale
-        # Warps with non-zero dy/dx land on map-boundary tiles after correction;
-        # allow those even if the cell looks like a wall (gate corridor edge).
-        is_directional = w["dx"] != 0 or w["dy"] != 0
-        if 0 <= gx < grid_w and 0 <= gy < grid_h:
-            # Skip player tile — overlaying W on @ breaks A* (W is blocked,
-            # so pathfinding can't start and all NPCs become UNREACHABLE)
-            if (gx, gy) == (px, py):
-                continue
-            # Only overlay W on walkable tiles — some warps sit on wall tiles
-            # (e.g. gate buildings with wider warp zones than walkable exits).
-            # Exception: directional boundary warps may land on edge tiles.
-            if not is_directional and grid[gy][gx] in ('#', 'T', 'B', '='):
-                continue
+        if 0 <= gx < grid_w and 0 <= gy < grid_h and (gx, gy) != (px, py):
             grid[gy][gx] = "W"
+            # Doormat fix: the tile immediately before a directional warp may
+            # be reported as '#' by PyBoy collision but is passable in-game.
+            # Force it walkable so A* can path through to the W tile.
+            if w["dx"] != 0 or w["dy"] != 0:
+                sy = 1 if w["dy"] > 0 else -1 if w["dy"] < 0 else 0
+                sx = 1 if w["dx"] > 0 else -1 if w["dx"] < 0 else 0
+                back_gx, back_gy = gx - sx, gy - sy
+                if (0 <= back_gx < grid_w and 0 <= back_gy < grid_h
+                        and (back_gx, back_gy) != (px, py)
+                        and grid[back_gy][back_gx] == '#'):
+                    grid[back_gy][back_gx] = '.'
+
+
+def _overlay_signs_on_grid(
+    grid: List[List[str]],
+    warp_data: Optional[Dict[str, Any]],
+    player_screen: Optional[Tuple[int, int]],
+    scale: int = 1,
+) -> None:
+    """Overlay sign markers ('s' or 'P') on the grid for visible signs."""
+    if not warp_data or not player_screen:
+        return
+    signs = warp_data.get("signs", [])
+    if not signs:
+        return
+    grid_h = len(grid)
+    grid_w = len(grid[0]) if grid else 0
+    px, py = player_screen
+    for sign in signs:
+        gx = px + sign["dx"] * scale
+        gy = py + sign["dy"] * scale
+        if 0 <= gx < grid_w and 0 <= gy < grid_h and (gx, gy) != (px, py):
+            grid[gy][gx] = sign["label"]
 
 
 def extract_spatial_context(

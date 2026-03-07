@@ -31,45 +31,45 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # PALLET TOWN BUILDINGS
     # -------------------------------------------------------------------------
     # Red's House 1F (0x25) — exit at x=7
-    (0x25, 0): (2, 8), (0x25, 1): (3, 8),
+    (0x25, 0): (8, 2), (0x25, 1): (8, 3),
     # Red's House 2F (0x26) — staircase only, no outdoor exit
     # Blue's House (0x27) — exit at x=7
-    (0x27, 0): (2, 8), (0x27, 1): (3, 8),
+    (0x27, 0): (8, 2), (0x27, 1): (8, 3),
     # Oak's Lab (0x28) — exit at x=11
-    (0x28, 0): (4, 12), (0x28, 1): (5, 12),
+    (0x28, 0): (12, 4), (0x28, 1): (12, 5),
 
     # -------------------------------------------------------------------------
     # VIRIDIAN CITY BUILDINGS
     # -------------------------------------------------------------------------
     # Pokemon Center Viridian (0x29) — exit at x=7
-    (0x29, 0): (3, 8), (0x29, 1): (4, 8),
+    (0x29, 0): (8, 3), (0x29, 1): (8, 4),
     # Viridian Mart (0x2A) — exit at x=7
-    (0x2A, 0): (3, 8), (0x2A, 1): (4, 8),
+    (0x2A, 0): (8, 4), (0x2A, 1): (8, 4),
     # Viridian School House (0x2B) — exit at x=7
-    (0x2B, 0): (2, 8), (0x2B, 1): (3, 8),
+    (0x2B, 0): (8, 2), (0x2B, 1): (8, 3),
     # Viridian Nickname House (0x2C) — exit at x=7
-    (0x2C, 0): (2, 8), (0x2C, 1): (3, 8),
+    (0x2C, 0): (8, 2), (0x2C, 1): (8, 3),
     # Viridian Gym (0x2D) — exit at x=17
-    (0x2D, 0): (16, 18), (0x2D, 1): (17, 18),
+    (0x2D, 0): (18, 16), (0x2D, 1): (18, 17),
 
     # -------------------------------------------------------------------------
     # ROUTE 2 / VIRIDIAN FOREST AREA
     # -------------------------------------------------------------------------
     # Diglett's Cave Route 2 entrance (0x2E) — exit at x=7, cave warp interior
-    (0x2E, 0): (2, 8), (0x2E, 1): (3, 8),
+    (0x2E, 0): (8, 2), (0x2E, 1): (8, 3),
     # Viridian Forest North Gate (0x2F) — x=0 wall and x=7 wall
-    (0x2F, 0): (4, -1), (0x2F, 1): (5, -1),   # was (4,0) (5,0) → Route 2 north
-    (0x2F, 2): (4,  8), (0x2F, 3): (5,  8),   # was (4,7) (5,7) → Viridian Forest
+    (0x2F, 0): (-1, 5), (0x2F, 1): (-1, 5),   # was (0,4) (0,5) → Route 2 north
+    (0x2F, 2): (8, 4), (0x2F, 3): (8, 5),   # was (7,4) (7,5) → Viridian Forest
     # Route 2 Trade House (0x30) — exit at x=7
-    (0x30, 0): (2, 8), (0x30, 1): (3, 8),
-    # Route 2 Gate (0x31) — x=0 wall and x=7 wall (inward shift kept from manual edit)
-    (0x31, 0): (4, 1), (0x31, 1): (5, 1),     # was (4,0) (5,0) → Route 2 north
-    (0x31, 2): (4, 6), (0x31, 3): (5, 6),     # was (4,7) (5,7) → Route 2 south
+    (0x30, 0): (8, 2), (0x30, 1): (8, 3),
+    # Route 2 (0x31) — x=0 wall and x=7 wall (inward shift kept from manual edit)
+    (0x31, 0): (-2, 4), (0x31, 1): (-2, 5),     # was (0,4) (0,5) → Route 2 north
+    (0x31, 2): (5, 4), (0x31, 3): (5, 5),     # was (7,4) (7,5) → Route 2 south
     # Viridian Forest South Gate (0x32) — x=0 and x=7 walls
-    (0x32, 0): (4, -1), (0x32, 1): (5, -1),   # was (4,0) (5,0) → Viridian Forest
-    (0x32, 2): (4,  8), (0x32, 3): (5,  8),   # was (4,7) (5,7) → Route 2 south
+    (0x32, 0): (-1, 5), (0x32, 1): (-1, 5),   # was (0,4) (0,5) → Viridian Forest
+    (0x32, 2): (8, 4), (0x32, 3): (8, 5),   # was (7,4) (7,5) → Route 2 south
     # Viridian Forest (0x33) — west edge (x=0) and east edge (x=47)
-    (0x33, 0): ( 1, -1), (0x33, 1): ( 2, -1), # was (1,0)  (2,0)  → North Gate
+    (0x33, 0): (-1, 1), (0x33, 1): (-1, 2), # was (0,1)  (0,2)  → North Gate
     (0x33, 2): (15, 48), (0x33, 3): (16, 48), # was (15,47)(16,47)→ South Gate
     (0x33, 4): (17, 48), (0x33, 5): (18, 48), # was (17,47)(18,47)→ South Gate
 
@@ -77,18 +77,18 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # PEWTER CITY BUILDINGS
     # -------------------------------------------------------------------------
     # Museum 1F (0x34) — two exits at x=7
-    (0x34, 0): (10, 8), (0x34, 1): (11, 8),
-    (0x34, 2): (16, 8), (0x34, 3): (17, 8),
+    (0x34, 0): (8, 10), (0x34, 1): (8, 10),
+    (0x34, 2): (8, 16), (0x34, 3): (8, 17),
     # Museum 2F (0x35) — staircase only
 
     # Pewter Gym (0x36) — exit at x=14
     (0x36, 0): (14, 4), (0x36, 1): (14, 5),
     # Pewter Nidoran House (0x37) — exit at x=7
-    (0x37, 0): (2, 8), (0x37, 1): (3, 8),
+    (0x37, 0): (8, 2), (0x37, 1): (8, 3),
     # Pewter Mart (0x38) — user-adjusted values preserved
     (0x38, 0): (8, 3), (0x38, 1): (8, 4),
     # Pewter Speech House (0x39) — exit at x=7
-    (0x39, 0): (2, 8), (0x39, 1): (3, 8),
+    (0x39, 0): (8, 2), (0x39, 1): (8, 3),
     # Pokemon Center Pewter (0x3A) — user-adjusted values preserved
     (0x3A, 0): (8, 3), (0x3A, 1): (8, 4),
 
@@ -96,29 +96,29 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # MT. MOON
     # -------------------------------------------------------------------------
     # Mt. Moon 1F (0x3B) — east exit at x=35
-    (0x3B, 0): (14, 36), (0x3B, 1): (15, 36),
+    (0x3B, 0): (14, 36), (0x3B, 1): (15, 36),  # was (14,35)(15,35) → Route 4
     # Mt. Moon Pokecenter (0x44) — exit at x=7
-    (0x44, 0): (3, 8), (0x44, 1): (4, 8),
+    (0x44, 0): (8, 3), (0x44, 1): (8, 4),
 
     # -------------------------------------------------------------------------
     # CERULEAN CITY BUILDINGS
     # -------------------------------------------------------------------------
     # Cerulean Trashed House (0x3E) — exit at x=7, side exit at x=0
-    (0x3E, 0): (2, 8), (0x3E, 1): (3, 8),
-    (0x3E, 2): (3, -1),                        # was (3,0) → LAST_MAP left wall
+    (0x3E, 0): (8, 2), (0x3E, 1): (8, 3),
+    (0x3E, 2): (8, 3),                        # was (3,0) → LAST_MAP left wall
     # Cerulean Trade House (0x3F) — exit at x=7
-    (0x3F, 0): (2, 8), (0x3F, 1): (3, 8),
+    (0x3F, 0): (8, 2), (0x3F, 1): (8, 3),
     # Pokemon Center Cerulean (0x40) — exit at x=7
-    (0x40, 0): (3, 8), (0x40, 1): (4, 8),
+    (0x40, 0): (8, 3), (0x40, 1): (8, 4),
     # Cerulean Gym (0x41) — exit at x=13
-    (0x41, 0): (4, 14), (0x41, 1): (5, 14),
+    (0x41, 0): (14, 4), (0x41, 1): (14, 5),
     # Bike Shop (0x42) — exit at x=7
-    (0x42, 0): (2, 8), (0x42, 1): (3, 8),
+    (0x42, 0): (8, 2), (0x42, 1): (8, 3),
     # Cerulean Mart (0x43) — exit at x=7
-    (0x43, 0): (3, 8), (0x43, 1): (4, 8),
+    (0x43, 0): (8, 3), (0x43, 1): (8, 4),
     # Cerulean Badge House (0x E6) — exit at x=7, side at x=0
-    (0xE6, 0): (2, -1),                        # was (2,0) → left wall
-    (0xE6, 1): (2, 8), (0xE6, 2): (3, 8),
+    (0xE6, 0): (8, 2),                        # was (2,0) → left wall
+    (0xE6, 1): (8, 3), (0xE6, 2): (8, 4),
 
     # -------------------------------------------------------------------------
     # ROUTE 5/6/7/8 GATES & UNDERGROUND PATH ENTRANCES
@@ -200,7 +200,7 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # S.S. ANNE
     # -------------------------------------------------------------------------
     # Vermilion Dock (0x5E) — north exit at y=0 of tunnel
-    (0x5E, 0): (-1, 14),                       # was (14,0) → Route 6? (top wall)
+    (0x5E, 0): (-1, 14),                       # was (0,14) → Route 6? (top wall)
     # SS Anne 1F (0x5F) — exits at x=0 (gangplank)
     (0x5F, 0): (26, -1), (0x5F, 1): (27, -1), # was (26,0)(27,0) → Dock
     # SS Anne 3F (0x61) — top wall exit to bow
@@ -493,7 +493,7 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # -------------------------------------------------------------------------
 
     # --- Red's House 2F (0x26) ---
-    (0x26, 0): (8, 1),   # was (7,1) → Red's House 1F (y=7 bottom edge)
+    # Red's House 2F (0x26) — exit at (1,7)
 
     # --- Museum 2F (0x35) ---
     (0x35, 0): (8, 8),   # was (7,7) → Museum 1F (both at edge)

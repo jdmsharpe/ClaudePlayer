@@ -183,9 +183,9 @@ def check_story_progress(
 # Only shown when the milestone is next AND the player is on the matching map.
 MAP_HINTS: Dict[Tuple[int, int], str] = {
     # Oak appeared (0x027)
-    (0x027, 0x26): "Go downstairs (walk onto the staircase W tile).",
-    (0x027, 0x25): "Exit through the front door (walk onto the door W tile).",
-    (0x027, 0x00): "Walk NORTH to the map edge to enter Route 1.",
+    (0x027, 0x26): "Go downstairs (walk onto the staircase).",
+    (0x027, 0x25): "Exit through the front door.",
+    (0x027, 0x00): "Walk EAST and then NORTH to the map edge to enter Route 1.",
     (0x027, 0x0C): "Walk into the tall grass. Oak will appear automatically.",
     # Got starter (0x022)
     (0x022, 0x00): "Enter Oak's Lab (the large building in south Pallet Town).",
@@ -217,10 +217,10 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     ),
     (  -1,  0x2F): "Exit NORTH through Route 2 to reach Pewter City.",
     # Beat Brock (0x077)
-    (0x077, 0x02): "Enter Pewter Gym by going WEST in town to find the path and defeat Brock.",
+    (0x077, 0x02): "Enter Pewter Gym by going NORTH and then WEST in town to find the path and defeat Brock.",
     (0x077, 0x36): "Battle the trainers and defeat Brock at the back of the gym. Head NORTH!",
     # Through Mt. Moon (-2)
-    (  -2,  0x02): "Stock up at Pewter City Poke Mart (Potions, Antidotes) before leaving — Mt. Moon has no shop. Then head EAST to Route 3.",
+    (  -2,  0x02): "Visit Pewter Mart first (Potions, Antidotes) — Mt. Moon has no shop. Mart is EAST of gym but a wall blocks direct access; follow the NAV path around the buildings. Then head EAST to Route 3.",
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
     (  -2,  0x44): "Optional Pokemon Center rest stop. Exit EAST to enter Mt. Moon.",
     (  -2,  0x3B): "Navigate through Mt. Moon 1F. Find the stairs down to the basement floors.",

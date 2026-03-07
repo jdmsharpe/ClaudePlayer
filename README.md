@@ -73,7 +73,7 @@ Configuration is loaded from `config.json` (created automatically on first run i
   "ENABLE_SPATIAL_CONTEXT": true,         // Whether to include map/grid context in prompts
   "ENABLE_SOUND": true,                   // Whether to enable emulator sound
   "MAX_HISTORY_MESSAGES": 15,             // Max messages kept in context window
-  "MAX_SCREENSHOTS": 2,                   // Max recent screenshots kept in chat history
+  "MAX_SCREENSHOTS": 1,                   // Max recent screenshots kept in chat history
   "BOOT_FRAMES": 400,                     // Frames to tick before first analysis
   "WEB_PORT": 0,                          // HTTP dashboard port (0 = disabled)
   "CUSTOM_INSTRUCTIONS": "",              // Extra instructions injected into Claude's system prompt
@@ -85,7 +85,7 @@ Configuration is loaded from `config.json` (created automatically on first run i
     "DYNAMIC_THINKING": true,             // Allow Claude to toggle thinking on/off
     "EFFICIENT_TOOLS": true,              // Use token-efficient-tools beta
     "MAX_TOKENS": 16384,                  // Maximum tokens per response
-    "THINKING_BUDGET": 10000              // Maximum tokens for thinking
+    "THINKING_BUDGET": 11111              // Maximum tokens for thinking
   },
 
   // Action mode overrides (inherits MODEL_DEFAULTS; add keys here to override)

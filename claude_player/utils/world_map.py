@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Tile types worth stamping (static terrain only — NPCs/ghosts excluded)
 # Items (i) and objects (o) are included: items self-heal when collected
 # (next visit overwrites 'i' with '.'), objects are stationary.
-_STATIC_TILES = frozenset(".#,=v><TBWio")
+_STATIC_TILES = frozenset(".#,=v><TBio")  # W excluded: warp positions tracked in warp_map, rebuilt each turn
 
 # Impassable tiles for world-map A*
 _BLOCKED_TILES: FrozenSet[str] = frozenset("#=TBWio")
@@ -92,13 +92,7 @@ class WorldMap:
             mw = warp_data.get("map_width", 0)
             mh = warp_data.get("map_height", 0)
             for w in warp_data.get("warps", []):
-                wx = w["map_x"]
-                wy = w["map_y"]
-                # Skip warps on wall tiles — ROM defines warps on both sides of
-                # gate corridors but only one may be walkable.
-                if tile_map.get((wx, wy)) in ('#', 'T', 'B', '='):
-                    continue
-                warp_map[(wx, wy)] = w.get("dest_name", "?")
+                warp_map[(w["map_x"], w["map_y"])] = w.get("dest_name", "?")
 
             # Record map connections as edge-tile warps.
             # Connections = walk off the map edge to reach adjacent map.
@@ -513,9 +507,29 @@ class WorldMap:
                     best_name = dest_name
                     best_len = len(path)
 
-            # Only fall back to other warps when NO preferred_dest was given.
-            # If preferred_dest was set (agent has a goal direction), route to
-            # frontier instead — never send the agent to a backtrack warp.
+            # If preferred_dest matched no warps, try warps that lie in the
+            # preferred_direction from the player (furthest first so the
+            # agent makes maximal forward progress).
+            if not best_path and preferred_direction:
+                _DIR_VEC = {"NORTH": (0, -1), "SOUTH": (0, 1),
+                            "EAST": (1, 0), "WEST": (-1, 0)}
+                dvx, dvy = _DIR_VEC.get(preferred_direction, (0, 0))
+                px, py = player_pos
+                directional_warps = []
+                for warp_pos, dest_name in other_warps:
+                    score = (warp_pos[0] - px) * dvx + (warp_pos[1] - py) * dvy
+                    if score > 0:
+                        directional_warps.append((score, warp_pos, dest_name))
+                directional_warps.sort(reverse=True)
+                for _, warp_pos, dest_name in directional_warps:
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
+                    if path:
+                        best_path = path
+                        best_name = dest_name
+                        best_len = len(path)
+                        break
+
+            # Fall back to any reachable warp when no preferred_dest given.
             if not best_path and not preferred_dest:
                 for warp_pos, dest_name in other_warps:
                     path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)

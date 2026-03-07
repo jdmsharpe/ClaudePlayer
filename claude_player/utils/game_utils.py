@@ -51,7 +51,7 @@ _MAX_DIR_FRAMES = 256  # total directional frames allowed per turn
 _MAX_SINGLE_DIR = 128  # cap per directional token (8 tiles)
 
 
-def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: int = 0, stop_event=None, frame_callback=None):
+def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: int = 0, stop_event=None, frame_callback=None, sound_callback=None):
     """
     Parse a button input string and execute the button presses.
 
@@ -70,7 +70,7 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
 
     try:
         _stopping = lambda: stop_event is not None and stop_event.is_set()
-        _tick = lambda: (pyboy.tick(), frame_callback and frame_callback(pyboy.screen.image))
+        _tick = lambda: (pyboy.tick(), frame_callback and frame_callback(pyboy.screen.image), sound_callback and sound_callback())
         total_dir_frames = 0
 
         for raw_token in input_string.strip().split():

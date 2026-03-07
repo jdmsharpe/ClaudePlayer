@@ -691,23 +691,17 @@ def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
     return "unknown"
 
 
-def _fight_nav_presses(current: int, target: int) -> str:
-    """Raw D/U presses to navigate fight submenu from current slot to target slot.
+def _fight_nav_presses(target: int, num_moves: int = 4) -> str:
+    """Navigate fight submenu reliably to target slot from any cursor position.
 
-    Gen 1 fight submenu is a single-column vertical list (D/U only):
-        slot 0 (top)
-        slot 1
-        slot 2
-        slot 3 (bottom)
-
-    Returns empty string if already at target slot.
+    Presses U×num_moves to reset to slot 0 (no-op at top, cursor can't wrap),
+    then D×target to reach the desired slot.  Does NOT rely on wPlayerMoveListIndex
+    being accurate — the fight submenu appears to retain its previous cursor position
+    on re-entry rather than always restoring from wPlayerMoveListIndex.
     """
-    diff = target - current
-    if diff < 0:
-        return " ".join(["U"] * abs(diff))
-    elif diff > 0:
-        return " ".join(["D"] * diff)
-    return ""
+    reset = " ".join(["U"] * max(1, num_moves))
+    nav = " ".join(["D"] * target) if target > 0 else ""
+    return f"{reset} {nav}".strip() if nav else reset
 
 
 def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
@@ -966,13 +960,12 @@ def _generate_battle_tip(
 
     if menu_type in ("main", "fight") and damage_moves:
         best_move, best_slot = max(damage_moves, key=_ep)
-        # B ensures we're on main menu, U L A enters fight submenu.
-        # Gen 1 fight submenu cursor initialises to wPlayerMoveListIndex
-        # (last confirmed move), NOT always 0. Navigate from fight_cursor.
-        # W waits for the fight submenu draw animation. Navigate from fight_cursor
-        # (wPlayerMoveListIndex), then A to confirm. No throwaway A needed.
-        nav = _fight_nav_presses(fight_cursor, best_slot)
-        compound = f"B {_ABS_NAV_FIGHT} A W" + (f" {nav} A" if nav else " A")
+        # U×num_moves resets to slot 0 (safe no-op at top), then D×best_slot
+        # navigates to the target.  Ignores wPlayerMoveListIndex — the fight
+        # submenu retains its previous cursor position on re-entry.
+        num_moves = len(player.get("moves", [])) or 4
+        nav = _fight_nav_presses(best_slot, num_moves)
+        compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         is_special = best_move["type"] in _SPECIAL_TYPES
@@ -1021,8 +1014,9 @@ def _generate_battle_tip(
                     f"then D/U to pick a mon with HP > 0, then A.")
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
-        nav = _fight_nav_presses(fight_cursor, 0)
-        compound = f"B {_ABS_NAV_FIGHT} A W" + (f" {nav} A" if nav else " A")
+        num_moves = len(player.get("moves", [])) or 4
+        nav = _fight_nav_presses(0, num_moves)
+        compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokemon Center. Send: {compound}")
 

@@ -7,17 +7,17 @@ from pyboy.utils import WindowEvent
 
 # Define button rules documentation
 button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), X (SELECT), W (WAIT).
-Format: BUTTON[FRAMES]. Separate tokens with spaces. A bare letter (no number) = 4-frame press.
+Format: BUTTON[FRAMES]. Separate tokens with spaces. A bare letter (no number) = 8-frame press.
   Single press: A — press A once.  Hold: A16 — hold A for 16 frames.
-  Simultaneous: AB — press A and B together (4 frames). AB2 — hold both for 2 frames.
-  Wait: W — pause 4 frames. W16 — pause 16 frames with no button pressed.
+  Simultaneous: AB — press A and B together (8 frames). AB2 — hold both for 2 frames.
+  Wait: W — pause 8 frames. W16 — pause 16 frames with no button pressed.
 
 MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16. Max 128 frames/token (8 tiles), 256 total/turn.
   U16 = 1 tile, R48 = 3 tiles, D96 = 6 tiles, L128 = 8 tiles (max single token).
   Chain tokens for long moves: "R128 R64" = 12 tiles right (192 frames). Use the full 256 budget!
 CRITICAL: Counts under 16 (e.g. D10) will NOT complete a tile move. Always use multiples of 16.
 FACING: U2/D2/L2/R2 = turn to face that direction without moving (2-frame tap). Used in [path:] hints for NPC interaction — e.g. "U32 L2 A" = walk up 2 tiles, face left, press A.
-BUTTONS: Use bare A, B, S, X for single presses (4 frames). Avoid A1/B1 — 1-frame presses can be missed.
+BUTTONS: Use bare A, B, S, X for single presses (8 frames). Avoid A1/B1 — 1-frame presses can be missed.
 """
 
 # Button mappings — module-level constants (avoid rebuilding per call)
@@ -83,7 +83,7 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                 continue
 
             buttons = m.group(1).upper()
-            duration = int(m.group(2)) if m.group(2) else 4
+            duration = int(m.group(2)) if m.group(2) else 8
 
             # W = wait (no button press, just tick)
             if buttons == 'W':

@@ -783,21 +783,26 @@ def _read_battle_items(pyboy: PyBoy) -> Dict[str, Any]:
                 if status_key not in status_cures:
                     status_cures[status_key] = (name, slot)
 
-    return {"best_hp_item": best_hp, "status_cures": status_cures}
+    return {"best_hp_item": best_hp, "status_cures": status_cures, "item_count": count}
 
 
 # ---------------------------------------------------------------------------
 # Battle tip
 # ---------------------------------------------------------------------------
 
-def _item_use_compound(bag_slot: int) -> str:
+def _item_use_compound(bag_slot: int, total_items: int = 20) -> str:
     """Compound input to open the bag and navigate to a specific slot.
 
-    Sequence: B (→main) D L (→ITEM) A (open bag) W (wait) + D×(slot-1) + A (select) A (use on active mon).
-    Bag cursor position in Gen 1 is unpredictable — agent may need to adjust D/U.
+    Sequence: B (→main) D L (→ITEM) A (open bag) W (wait) + U×total_items (reset to slot 1)
+    + D×(slot-1) (navigate to target) + A (select) A (use on active mon).
+
+    Gen 1 bag cursor persists between opens (wBagSavedMenuItem).  Resetting with
+    U×total_items is safe because U at slot 1 is a no-op.
     """
-    nav = (" " + " ".join(["D"] * (bag_slot - 1))) if bag_slot > 1 else ""
-    return f"B {_ABS_NAV_ITEM} A W{nav} A A"
+    reset = " ".join(["U"] * max(1, total_items))
+    nav = " ".join(["D"] * (bag_slot - 1)) if bag_slot > 1 else ""
+    inner = f"{reset} {nav}".strip()
+    return f"B {_ABS_NAV_ITEM} A W {inner} A A"
 
 
 def _generate_battle_tip(
@@ -868,6 +873,7 @@ def _generate_battle_tip(
     items = battle_items or {}
     status_cures = items.get("status_cures", {})
     best_hp_item = items.get("best_hp_item")  # (name, heals, bag_slot) or None
+    n_items = items.get("item_count", 20)      # total bag items — used to reset cursor to slot 1
 
     # Sleep/Freeze: player cannot act — suggest cure item if available, else press A.
     if pstatus.startswith("SLP"):
@@ -876,14 +882,14 @@ def _generate_battle_tip(
         if cure and menu_type in ("main", "fight"):
             cname, cslot = cure
             return (f"YOU ARE ASLEEP ({turns_left} turns left)! Use {cname} (bag slot {cslot}) to wake up now "
-                    f"— send: {_item_use_compound(cslot)}")
+                    f"— send: {_item_use_compound(cslot, n_items)}")
         return f"YOU ARE ASLEEP ({turns_left} turns left) — can't use moves! Press A to advance the turn. Send: A"
     if pstatus == "FRZ":
         cure = status_cures.get("FRZ")
         if cure and menu_type in ("main", "fight"):
             cname, cslot = cure
             return (f"YOU ARE FROZEN! Use {cname} (bag slot {cslot}) to thaw immediately "
-                    f"— send: {_item_use_compound(cslot)}")
+                    f"— send: {_item_use_compound(cslot, n_items)}")
         return "YOU ARE FROZEN — can't move until thawed (random each turn)! Press A to advance. Send: A"
 
     # For other serious statuses in trainer battles, suggest curing with an item
@@ -894,7 +900,7 @@ def _generate_battle_tip(
             cname, cslot = cure
             status_desc = {"BRN": "BURNED (physical moves halved!)", "PAR": "PARALYZED (25% skip chance!)", "PSN": "POISONED (chip damage each turn)"}[pstatus]
             return (f"You are {status_desc} Use {cname} (bag slot {cslot}) to cure it "
-                    f"— send: {_item_use_compound(cslot)}")
+                    f"— send: {_item_use_compound(cslot, n_items)}")
 
     # Low HP in trainer battle — suggest healing item if available
     if (menu_type in ("main", "fight") and battle_type != 1
@@ -904,7 +910,7 @@ def _generate_battle_tip(
             hname, heals, hslot = best_hp_item
             heals_str = "full HP" if heals >= 9999 else f"+{heals} HP"
             return (f"HP LOW ({hp_pct}%, trainer battle) — use {hname} ({heals_str}, bag slot {hslot}) "
-                    f"— send: {_item_use_compound(hslot)}")
+                    f"— send: {_item_use_compound(hslot, n_items)}")
 
     # Catch suggestion: wild battle + have balls + favorable conditions
     if battle_type == 1 and pokeball_count > 0 and enemy["max_hp"] > 0:

@@ -62,6 +62,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "BOOT_FRAMES": 400,
         "CUSTOM_INSTRUCTIONS": "",
         "WEB_PORT": 0,
+        "GBC_COLOR_PALETTE": "red",
 
         "MODEL_DEFAULTS": {
             "MODEL": "claude-haiku-4-5",

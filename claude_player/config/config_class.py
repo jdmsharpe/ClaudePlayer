@@ -1,4 +1,4 @@
-from typing import Optional, TypedDict
+from typing import Optional, Tuple, TypedDict
 
 
 class ModelConfig(TypedDict):
@@ -23,6 +23,7 @@ class ActionConfig(ModelConfig):
 class ConfigClass:
     """Configuration settings for the game agent."""
     ROM_PATH: str
+    GBC_COLOR_PALETTE: Optional[object]  # preset name (str), custom triple, or None
     STATE_PATH: Optional[str]
     LOG_FILE: str
     EMULATION_SPEED: int

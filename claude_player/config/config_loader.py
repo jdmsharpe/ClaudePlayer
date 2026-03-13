@@ -49,6 +49,7 @@ def load_config(config_file='config.json') -> ConfigClass:
     """
     default_config = {
         "ROM_PATH": "red.gb",
+        "GBC_COLOR_PALETTE": "red",
         "STATE_PATH": None,
         "LOG_FILE": "game_agent.log",
         "EMULATION_SPEED": 1,
@@ -62,7 +63,6 @@ def load_config(config_file='config.json') -> ConfigClass:
         "BOOT_FRAMES": 400,
         "CUSTOM_INSTRUCTIONS": "",
         "WEB_PORT": 0,
-        "GBC_COLOR_PALETTE": "red",
 
         "MODEL_DEFAULTS": {
             "MODEL": "claude-haiku-4-5",

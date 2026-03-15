@@ -1504,7 +1504,7 @@ def _format_spatial_text(
             lines.append(f"HINT: {hint}")
 
     # Absolute map position + compass for off-screen exits
-    _compass_targets: list = []  # (direction_label, manhattan_dist, dest_name)
+    _compass_targets: list = []  # (direction_label, manhattan_dist, dest_name, is_pokecenter)
     if warp_data:
         px_abs = warp_data["player_x"]
         py_abs = warp_data["player_y"]
@@ -1574,7 +1574,8 @@ def _format_spatial_text(
                     elif pri in _immediate_blocked:
                         note = f" ({pri} blocked here — detour around obstacle)"
                     compass_lines.append(f"  {w['dest_name']}: {', '.join(parts)}{note}")
-                    _compass_targets.append((pri, abs(w["dy"]) + abs(w["dx"]), w['dest_name']))
+                    _is_pc = w.get("dest_map") in _POKEMON_CENTER_MAPS
+                    _compass_targets.append((pri, abs(w["dy"]) + abs(w["dx"]), w['dest_name'], _is_pc))
         for conn in warp_data.get("connections", []):
             d = conn["direction"]
             if d == "NORTH":
@@ -1597,7 +1598,7 @@ def _format_spatial_text(
                 elif move_dir in _immediate_blocked:
                     note = f" ({move_dir} blocked here — detour around obstacle)"
                 compass_lines.append(f"  {conn['dest_name']}: ~{dist} blocks {d}{note}")
-                _compass_targets.append((move_dir, dist, conn['dest_name']))
+                _compass_targets.append((move_dir, dist, conn['dest_name'], False))
         if compass_lines:
             lines.append("COMPASS (off-screen exits — crow-flies bearing, NOT a path — follow NAV below):")
             lines.extend(compass_lines)
@@ -1615,12 +1616,13 @@ def _format_spatial_text(
     if (_compass_targets and player_screen_pos and grid
             and (has_collision or terrain is not None)):
         from claude_player.utils.pathfinding import find_path_to_edge, path_to_buttons
-        # Sort furthest-first: the farthest exit is almost always the goal destination;
-        # nearby exits are usually backtracks. This prevents the South Gate from
-        # being the primary NAV hint when the goal is the North Gate.
-        _compass_targets.sort(key=lambda t: t[1], reverse=True)
+        # Sort: non-Pokemon-Centers first (caves, gyms, connections are real goals),
+        # then furthest-first within each group. This prevents the NAV from
+        # directing toward a Pokemon Center when a cave entrance or route exit
+        # is the actual navigation target.
+        _compass_targets.sort(key=lambda t: (t[3], -t[1]))
         _nav_shown = False
-        for _ct_dir, _ct_dist, _ct_name in _compass_targets:
+        for _ct_dir, _ct_dist, _ct_name, _ct_pc in _compass_targets:
             edge_name = _MOVE_TO_EDGE.get(_ct_dir)
             if not edge_name:
                 continue

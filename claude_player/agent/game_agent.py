@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import logging
@@ -49,6 +50,38 @@ def _is_fatal_error(error: Exception) -> bool:
     error_str = str(error)
     return any(pattern in error_str for pattern in FATAL_ERROR_PATTERNS)
 
+# Per-MTok pricing (USD).  Extend as new models are added.
+_MODEL_PRICING = {
+    # (input, output, cache_read, cache_write) per million tokens
+    "claude-haiku-4-5":  (0.80,  4.00,  0.08,  1.00),
+    "claude-sonnet-4-5": (3.00, 15.00,  0.30,  3.75),
+    "claude-opus-4":     (15.00, 75.00, 1.50, 18.75),
+}
+
+def _estimate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_create_tokens: int = 0,
+) -> float:
+    """Estimate USD cost for a single API call based on model pricing."""
+    # Match by substring so "claude-haiku-4-5-20251001" still hits "claude-haiku-4-5"
+    pricing = None
+    for key, rates in _MODEL_PRICING.items():
+        if key in model:
+            pricing = rates
+            break
+    if pricing is None:
+        pricing = _MODEL_PRICING["claude-haiku-4-5"]  # default fallback
+    inp_rate, out_rate, cache_r_rate, cache_w_rate = pricing
+    return (
+        input_tokens * inp_rate
+        + output_tokens * out_rate
+        + cache_read_tokens * cache_r_rate
+        + cache_create_tokens * cache_w_rate
+    ) / 1_000_000
+
 class GameAgent:
     """Main game agent class that orchestrates the AI gameplay."""
     
@@ -67,6 +100,13 @@ class GameAgent:
         
         # Initialize game components
         pyboy_kwargs = {}
+
+        # Apply GBC color palette if configured (requires CGB mode for DMG games)
+        from claude_player.config.gbc_palettes import resolve_palette
+        palette = resolve_palette(getattr(self.config, 'GBC_COLOR_PALETTE', None))
+        if palette is not None:
+            pyboy_kwargs['cgb'] = True
+            pyboy_kwargs['cgb_color_palette'] = palette
 
         self.pyboy = PyBoy(self.config.ROM_PATH, **pyboy_kwargs)
         self.pyboy.set_emulation_speed(target_speed=self.config.EMULATION_SPEED)
@@ -125,6 +165,13 @@ class GameAgent:
         self._battle_stuck_count = 0
         self._last_battle_snapshot = None  # (player_hp, enemy_hp, menu_type, cursor)
 
+        # Cumulative token/cost tracking (path + load deferred until after _save_dir)
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
+        self._total_cache_read_tokens = 0
+        self._total_cache_create_tokens = 0
+        self._total_cost_usd = 0.0
+
         # Party context: only inject when meaningful changes occur or periodically
         self._last_party_snapshot = None  # (hp, status) tuples for change detection
         self._last_party_inject_turn = 0  # Turn when party text was last injected
@@ -144,6 +191,8 @@ class GameAgent:
         self._world_map_save_interval = 20
         self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
         self._save_path = os.path.join(self._save_dir, "autosave.state")
+        self._session_stats_path = os.path.join(self._save_dir, "session_stats.json")
+        self._load_session_stats()
 
         # Persistent world map: accumulates explored tiles across turns
         self._world_map = WorldMap()
@@ -788,11 +837,27 @@ class GameAgent:
             trainer_id=trainer_id,
             play_time=play_time,
             badges=badges_list,
+            session_cost=self._total_cost_usd,
         )
+
+        # Inject persistent memory into user content (avoids read_from_memory tool call)
+        memory_text = ""
+        mem_path = self.memory_manager.memory_path
+        if os.path.exists(mem_path):
+            with open(mem_path, "r") as f:
+                memory_text = f.read().strip()
+        if memory_text:
+            turns_since_update = self.game_state.turn_count - self.game_state.memory_turn
+            staleness = f" (updated {turns_since_update} turns ago)" if turns_since_update > 0 else ""
+            memory_block = f"<memory{staleness}>\n{memory_text}\n</memory>"
+        else:
+            memory_block = ""
 
         # Build user content from pre-captured data
         screenshot = captured_state["screenshot"]
         user_content = [screenshot]
+        if memory_block:
+            user_content.append({"type": "text", "text": memory_block})
         if battle_data and battle_data.get("text"):
             # In battle: use battle context instead of spatial grid
             user_content.append({"type": "text", "text": battle_data["text"]})
@@ -1112,16 +1177,32 @@ class GameAgent:
 
                 message_content = MessageUtils.print_and_extract_message_content(message)
 
-                # Log cache usage stats
+                # Log token usage and cost
                 usage = getattr(message, 'usage', None)
                 if usage:
                     cache_create = getattr(usage, 'cache_creation_input_tokens', 0) or 0
                     cache_read = getattr(usage, 'cache_read_input_tokens', 0) or 0
                     input_tok = getattr(usage, 'input_tokens', 0) or 0
-                    if cache_create or cache_read:
-                        total_input = cache_create + cache_read + input_tok
-                        pct = (cache_read / total_input * 100) if total_input else 0
-                        logging.info(f"CACHE: read={cache_read} create={cache_create} uncached={input_tok} ({pct:.0f}% cached)")
+                    output_tok = getattr(usage, 'output_tokens', 0) or 0
+
+                    # Compute turn cost (Haiku: $0.80/$4.00 per MTok, cache read 0.1x, cache write 1.25x)
+                    model = action_config.get("MODEL", "")
+                    turn_cost = _estimate_cost(model, input_tok, output_tok, cache_read, cache_create)
+
+                    # Accumulate totals
+                    self._total_input_tokens += input_tok
+                    self._total_output_tokens += output_tok
+                    self._total_cache_read_tokens += cache_read
+                    self._total_cache_create_tokens += cache_create
+                    self._total_cost_usd += turn_cost
+
+                    total_input = cache_create + cache_read + input_tok
+                    pct = (cache_read / total_input * 100) if total_input else 0
+                    logging.info(
+                        f"TOKENS: in={input_tok} out={output_tok} "
+                        f"cache_read={cache_read} cache_create={cache_create} ({pct:.0f}% cached) "
+                        f"| turn=${turn_cost:.4f} session=${self._total_cost_usd:.4f}"
+                    )
 
                 # Detect thinking-only responses (no text or tool output)
                 if not message_content["text_blocks"] and not message_content["tool_use_blocks"]:
@@ -1327,6 +1408,7 @@ class GameAgent:
             return
         try:
             self._world_map.save(self._world_map_path)
+            self._save_session_stats()
             self._last_world_map_save_turn = turn
         except Exception as e:
             logging.warning(f"Failed to save world map: {e}")
@@ -1338,11 +1420,44 @@ class GameAgent:
             with open(self._save_path, "wb") as f:
                 self.pyboy.save_state(f)
             self._world_map.save(self._world_map_path)
+            self._save_session_stats()
             turn = self.game_state.turn_count
             logging.info(f"Saved state on {reason} at turn {turn} → {self._save_path}")
             self.display.print_event(f"Saved on {reason} (turn {turn})")
         except Exception as e:
             logging.warning(f"Failed to save state on {reason}: {e}")
+
+    def _load_session_stats(self):
+        """Load cumulative cost/token stats from JSON."""
+        if not os.path.exists(self._session_stats_path):
+            return
+        try:
+            with open(self._session_stats_path) as f:
+                data = json.load(f)
+            self._total_input_tokens = data.get("input_tokens", 0)
+            self._total_output_tokens = data.get("output_tokens", 0)
+            self._total_cache_read_tokens = data.get("cache_read_tokens", 0)
+            self._total_cache_create_tokens = data.get("cache_create_tokens", 0)
+            self._total_cost_usd = data.get("cost_usd", 0.0)
+            logging.info(f"Session stats loaded: ${self._total_cost_usd:.4f} cumulative")
+        except Exception as e:
+            logging.warning(f"Failed to load session stats: {e}")
+
+    def _save_session_stats(self):
+        """Save cumulative cost/token stats to JSON."""
+        try:
+            os.makedirs(self._save_dir, exist_ok=True)
+            data = {
+                "input_tokens": self._total_input_tokens,
+                "output_tokens": self._total_output_tokens,
+                "cache_read_tokens": self._total_cache_read_tokens,
+                "cache_create_tokens": self._total_cache_create_tokens,
+                "cost_usd": round(self._total_cost_usd, 6),
+            }
+            with open(self._session_stats_path, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logging.warning(f"Failed to save session stats: {e}")
 
     def run_continuous(self):
         """Run the game agent in continuous mode where the emulator runs at 1x speed continuously."""
@@ -1732,6 +1847,12 @@ class GameAgent:
             signal.signal(signal.SIGINT, prev_handler)
 
         logging.info("Shutting down emulation")
+        logging.info(
+            f"SESSION TOTALS: turns={self.game_state.turn_count} "
+            f"input={self._total_input_tokens} output={self._total_output_tokens} "
+            f"cache_read={self._total_cache_read_tokens} cache_create={self._total_cache_create_tokens} "
+            f"cost=${self._total_cost_usd:.4f}"
+        )
         self.display.print_event("Stopping emulation...")
 
         # Save state on exit so no progress is lost

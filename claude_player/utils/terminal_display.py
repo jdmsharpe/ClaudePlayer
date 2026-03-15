@@ -50,6 +50,7 @@ class TerminalDisplay:
         self.trainer_id = 0
         self.play_time = ""
         self.badges = []
+        self.session_cost = 0.0
         self._raw_frame = None   # latest raw PIL image (stored cheaply; encoding is off-thread)
         self._frame_seq = 0     # increments on each new frame, for MJPEG change detection
 
@@ -157,7 +158,8 @@ class TerminalDisplay:
 
             error_str = f"  errors: {self.error_count}" if self.error_count else ""
             fps_str = f"  {self.fps:.0f} FPS" if self.fps else ""
-            status_line = f" Turn {self.turn} │ {self.status} │ {self._elapsed()}{fps_str}{error_str} "
+            cost_str = f"  ${self.session_cost:.2f}" if self.session_cost >= 0.01 else ""
+            status_line = f" Turn {self.turn} │ {self.status} │ {self._elapsed()}{fps_str}{cost_str}{error_str} "
 
             lines = [
                 f"┌{sep}┐",

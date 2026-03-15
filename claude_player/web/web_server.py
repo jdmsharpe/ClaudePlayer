@@ -66,6 +66,7 @@ class WebStreamer:
                     "play_time": d.play_time,
                     "badges": d.badges,
                     "world_map_text": d.world_map_text,
+                    "session_cost": round(d.session_cost, 4),
                 }
             return jsonify(data)
 
@@ -791,6 +792,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   <div class="pill">
     <span class="pill-value"><span id="fps">0</span> FPS</span>
   </div>
+  <div class="pill" id="cost-pill" style="display:none">
+    <span class="pill-label">Cost</span>
+    <span class="pill-value" id="session-cost">$0.00</span>
+  </div>
   <span class="spacer"></span>
   <div id="sound-controls" style="display:flex;align-items:center;gap:6px;margin-right:4px;">
     <button id="mute-btn" onclick="toggleSound()" title="Click to enable sound" style="background:none;border:1px solid #30363d;border-radius:6px;color:#6e7681;cursor:pointer;font-size:14px;padding:2px 7px;line-height:1.4;">&#128263;</button>
@@ -901,6 +906,12 @@ async function pollState() {
     setText('status', d.status || '-');
     setText('elapsed', d.elapsed || '-');
     setText('fps', d.fps ? d.fps.toFixed(0) : '0');
+    // Session cost pill (hidden until cost accumulates)
+    const costPill = document.getElementById('cost-pill');
+    if (d.session_cost && d.session_cost >= 0.01) {
+      costPill.style.display = '';
+      setText('session-cost', '$' + d.session_cost.toFixed(2));
+    }
     // Parse [done/total] prefix from goal text for progress bar
     const goalRaw = d.goal || '-';
     const gm = goalRaw.match(/^\[(\d+)\/(\d+)\]\s*(.*)/);

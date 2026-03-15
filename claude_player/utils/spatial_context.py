@@ -1732,7 +1732,10 @@ def _overlay_signs_on_grid(
         gx = px + sign["dx"] * scale
         gy = py + sign["dy"] * scale
         if 0 <= gx < grid_w and 0 <= gy < grid_h and (gx, gy) != (px, py):
-            grid[gy][gx] = sign["label"]
+            existing = grid[gy][gx]
+            # Don't overwrite NPC numbers, items, boulders, or ghosts
+            if existing not in ('i', 'B', 'g') and not existing.isdigit():
+                grid[gy][gx] = sign["label"]
 
 
 def extract_spatial_context(

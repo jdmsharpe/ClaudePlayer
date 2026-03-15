@@ -72,7 +72,7 @@ def _identify_menu(top_y: int, top_x: int, max_item: int) -> str:
     if 0 <= top_y <= 1 and top_x == 0:
         # X=0 is party list territory; mart uses X=1-2
         return "party_list"
-    if 0 <= top_y <= 2 and 1 <= top_x <= 2 and max_item == 2:
+    if top_y == 2 and top_x == 1 and max_item == 2:
         return "mart_menu"
 
     # Item list (bag): Y=2-3, X=3-6

@@ -7,28 +7,34 @@ from claude_player.interface.claude_interface import ClaudeInterface
 from claude_player.state.game_state import GameState
 from claude_player.utils.message_utils import MessageUtils
 
-MEMORY_MAX_LINES = 1000
-MEMORY_WARN_LINES = 800
+MEMORY_MAX_LINES = 80
+MEMORY_WARN_LINES = 60
 
 MEMORY_SYSTEM_PROMPT = """\
-You maintain a persistent MEMORY file for a Pokemon Red AI agent. The file records what the agent has learned across gameplay sessions.
+You maintain a concise MEMORY file for a Pokemon Red AI agent. The agent reads this \
+file via a tool call, so every line costs a turn — keep it SHORT.
 
-Your job: read the current memory (if any) and the recent gameplay, then produce an UPDATED memory file.
+Your job: read the current memory and recent gameplay, then produce an UPDATED file.
+
+HARD LIMIT: 80 lines max. Aim for 40-60 lines.
+
+Sections (use exactly these):
+## STATUS — 2-3 lines: milestone progress (from AUTHORITATIVE data), current location, immediate goal
+## PARTY — 1 line per Pokemon: name, level, type, key moves. No HP (read from RAM live)
+## INVENTORY — 1-2 lines: badges, money, key items only
+## MAP KNOWLEDGE — Routes discovered, verified paths, dead ends. One line per location. Drop locations no longer relevant to current goal
+## STRATEGY — 2-5 lines: current plan, what to try next, mistakes to avoid RIGHT NOW
+## LESSONS — 3-5 bullet points: hard-won insights that prevent repeating past failures
 
 Rules:
-- Organize by topic: ## Locations, ## Routes, ## Puzzles, ## Items, ## Mistakes, ## Progress, etc.
-- Update existing sections — don't just append. Consolidate redundant info.
-- Prioritize: routes discovered, dead ends found, puzzle/maze progress, NPC hints, item locations, mistakes to avoid.
-- Remove stale info (e.g. "currently at X" becomes irrelevant after moving).
-- Keep factual and concise. No filler, no speculation.
-- AUTHORITATIVE STORY PROGRESS and PARTY STATUS lines come from RAM — use their exact values.
-- Output ONLY the updated memory file content. No preamble, no explanation.
-- Stay under 1000 lines. If near the limit, aggressively consolidate older entries.
-- Maintain a ## Turn Log at the end: one short line per update block ("- **T{start}-{end}**: {summary}"). Append-only — never delete old entries. Keep each entry ~15 words. If log exceeds 50 entries, summarize the oldest 10 into one line.
+- AUTHORITATIVE STORY PROGRESS and PARTY STATUS come from RAM — use exact values
+- Consolidate aggressively. Remove stale info. No turn-by-turn logs
+- No filler, no speculation, no battle play-by-play
+- Output ONLY the file content. No preamble
 """
 
 INITIAL_MEMORY_PROMPT = """\
-The agent just started playing. Create an initial memory file with what's known so far.
+The agent just started playing. Create a concise initial memory file (under 40 lines).
 Output ONLY the memory file content.
 """
 
@@ -117,12 +123,11 @@ class MemoryManager:
                 "text": "No existing memory file — create the initial one.",
             })
 
-        # Inject turn range so the model can write the Turn Log entry
-        prev_turn = self.game_state.memory_turn or 0
+        # Inject current turn for context
         cur_turn = self.game_state.turn_count
         user_block.append({
             "type": "text",
-            "text": f"This update covers turns T{prev_turn + 1}-{cur_turn}. Add a Turn Log entry for this range.",
+            "text": f"Current turn: T{cur_turn}. Keep the file under {MEMORY_MAX_LINES} lines.",
         })
 
         # Inject authoritative data so the model doesn't hallucinate
@@ -154,6 +159,21 @@ class MemoryManager:
 
             response = self.client.send_request(memory_config, system, messages, [])
             content = MessageUtils.print_and_extract_message_content(response)
+
+            # Log memory subagent token usage
+            usage = getattr(response, 'usage', None)
+            if usage:
+                from claude_player.agent.game_agent import _estimate_cost
+                m_in = getattr(usage, 'input_tokens', 0) or 0
+                m_out = getattr(usage, 'output_tokens', 0) or 0
+                m_cr = getattr(usage, 'cache_read_input_tokens', 0) or 0
+                m_cw = getattr(usage, 'cache_creation_input_tokens', 0) or 0
+                m_cost = _estimate_cost(memory_config.get("MODEL", ""), m_in, m_out, m_cr, m_cw)
+                logging.info(
+                    f"MEMORY TOKENS: in={m_in} out={m_out} "
+                    f"cache_read={m_cr} cache_create={m_cw} "
+                    f"| cost=${m_cost:.4f}"
+                )
 
             new_memory = ""
             for block in content["text_blocks"]:

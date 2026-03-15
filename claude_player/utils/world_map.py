@@ -489,6 +489,9 @@ class WorldMap:
         best_name: Optional[str] = None
         best_len = float("inf")
 
+        _DIR_VEC = {"NORTH": (0, -1), "SOUTH": (0, 1),
+                    "EAST": (1, 0), "WEST": (-1, 0)}
+
         if warp_map:
             # Split warps into preferred and other sets
             preferred_warps: List[Tuple[Tuple[int, int], str]] = []
@@ -499,8 +502,15 @@ class WorldMap:
                 else:
                     other_warps.append((warp_pos, dest_name))
 
-            # Always try preferred warps first.
+            # Try preferred warps, but skip any that lie in the opposite
+            # direction from preferred_direction (prevents e.g. pathing to
+            # Pewter City WEST when the goal says EAST).
             for warp_pos, dest_name in preferred_warps:
+                if preferred_direction:
+                    dvx, dvy = _DIR_VEC.get(preferred_direction, (0, 0))
+                    score = (warp_pos[0] - player_pos[0]) * dvx + (warp_pos[1] - player_pos[1]) * dvy
+                    if score < 0:
+                        continue  # warp is behind us relative to goal direction
                 path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
                 if path and len(path) < best_len:
                     best_path = path
@@ -511,8 +521,6 @@ class WorldMap:
             # preferred_direction from the player (furthest first so the
             # agent makes maximal forward progress).
             if not best_path and preferred_direction:
-                _DIR_VEC = {"NORTH": (0, -1), "SOUTH": (0, 1),
-                            "EAST": (1, 0), "WEST": (-1, 0)}
                 dvx, dvy = _DIR_VEC.get(preferred_direction, (0, 0))
                 px, py = player_pos
                 directional_warps = []

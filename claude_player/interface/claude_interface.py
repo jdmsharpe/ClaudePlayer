@@ -73,8 +73,8 @@ PARTY STATUS, SPATIAL/BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Trust ov
 HEAL line = prioritize Pokemon Center. WARNING = address before main goal.
 </authority>
 <memory>
-You have persistent memory (saves/MEMORY.md) updated automatically in the background.
-Use read_from_memory when stuck, lost, or entering a familiar area — it may contain routes, dead ends, puzzle hints, and past mistakes.
+Your persistent memory is auto-injected each turn as <memory> in the user message.
+It may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM) over memory when they conflict.
 </memory>""")
 
         # Custom instructions from config

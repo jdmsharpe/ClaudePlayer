@@ -53,25 +53,8 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         logging.info(f"GOAL SET TO: {self.game_state.current_goal}")
         return [{"type": "text", "text": f"Current goal set to {self.game_state.current_goal}"}]
 
-    # --- Memory tools (read-only for main agent; subagent handles writes) ---
+    # --- Memory tools (read_from_memory removed — now auto-injected into user message) ---
     memory_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "saves", "MEMORY.md")
-
-    @registry.register(
-        name="read_from_memory",
-        description="Read your persistent memory file. Use this when stuck, entering a familiar area, or needing to recall routes, puzzle progress, or past mistakes. Memory is updated automatically in the background.",
-        input_schema={
-            "type": "object",
-            "properties": {},
-        }
-    )
-    def handle_read_from_memory(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if not os.path.exists(memory_path):
-            return [{"type": "text", "text": "No memory file exists yet. It will be created automatically after a few turns."}]
-        with open(memory_path, "r") as f:
-            content = f.read()
-        line_count = len(content.split("\n"))
-        logging.info(f"Memory read ({line_count} lines)")
-        return [{"type": "text", "text": content}]
 
     @registry.register(
         name="delete_memory",

@@ -192,6 +192,7 @@ class GameAgent:
         self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
         self._save_path = os.path.join(self._save_dir, "autosave.state")
         self._session_stats_path = os.path.join(self._save_dir, "session_stats.json")
+        self._visited_maps_path = os.path.join(self._save_dir, "visited_maps.json")
         self._load_session_stats()
 
         # Persistent world map: accumulates explored tiles across turns
@@ -207,7 +208,8 @@ class GameAgent:
         if not self.game_state.identified_game and self.pyboy.cartridge_title:
             self.game_state.identified_game = self.pyboy.cartridge_title
         self.game_state.runtime_thinking_enabled = self.config.ACTION.get("THINKING", True)
-        
+        self._load_visited_maps()
+
         # Initialize tool registry
         self.tool_registry = setup_tool_registry(self.pyboy, self.game_state, self.config)
         
@@ -1391,6 +1393,7 @@ class GameAgent:
             with open(self._save_path, "wb") as f:
                 self.pyboy.save_state(f)
             self._world_map.save(self._world_map_path)
+            self._save_visited_maps()
             self._last_save_turn = turn
             logging.info(f"Autosaved emulator state at turn {turn} → {self._save_path}")
             self.display.print_event(f"Autosaved at turn {turn}")
@@ -1408,6 +1411,7 @@ class GameAgent:
             return
         try:
             self._world_map.save(self._world_map_path)
+            self._save_visited_maps()
             self._save_session_stats()
             self._last_world_map_save_turn = turn
         except Exception as e:
@@ -1420,6 +1424,7 @@ class GameAgent:
             with open(self._save_path, "wb") as f:
                 self.pyboy.save_state(f)
             self._world_map.save(self._world_map_path)
+            self._save_visited_maps()
             self._save_session_stats()
             turn = self.game_state.turn_count
             logging.info(f"Saved state on {reason} at turn {turn} → {self._save_path}")
@@ -1442,6 +1447,26 @@ class GameAgent:
             logging.info(f"Session stats loaded: ${self._total_cost_usd:.4f} cumulative")
         except Exception as e:
             logging.warning(f"Failed to load session stats: {e}")
+
+    def _load_visited_maps(self):
+        """Load visited_maps set from JSON."""
+        if not os.path.exists(self._visited_maps_path):
+            return
+        try:
+            with open(self._visited_maps_path) as f:
+                data = json.load(f)
+            self.game_state.visited_maps = set(data)
+            logging.info(f"Loaded {len(self.game_state.visited_maps)} visited maps from disk")
+        except Exception as e:
+            logging.warning(f"Failed to load visited maps: {e}")
+
+    def _save_visited_maps(self):
+        """Save visited_maps set to JSON."""
+        try:
+            with open(self._visited_maps_path, "w") as f:
+                json.dump(sorted(self.game_state.visited_maps), f)
+        except Exception as e:
+            logging.warning(f"Failed to save visited maps: {e}")
 
     def _save_session_stats(self):
         """Save cumulative cost/token stats to JSON."""

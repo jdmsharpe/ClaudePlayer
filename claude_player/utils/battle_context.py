@@ -15,6 +15,7 @@ from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
     ADDR_IS_IN_BATTLE as _ADDR_IS_IN_BATTLE,
+    ADDR_CUR_MAP as _ADDR_CUR_MAP,
     ADDR_STATUS_FLAGS5 as _ADDR_STATUS_FLAGS5,
     ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT,
     ADDR_PARTY_BASE as _ADDR_PARTY_BASE,
@@ -62,7 +63,40 @@ _ADDR_ENEMY_SPD      = 0xCFFA
 _ADDR_ENEMY_SPC      = 0xCFFC
 _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
-_ADDR_PLAYER_MOVE_LIST_IDX = 0xCC2F  # wPlayerMoveListIndex: last A-confirmed fight slot (0-3)
+# CC2F is dual-purpose in battle: it stores the party index of the currently-sent-out
+# Pokemon (0-5) for the send-out flow, AND the last A-confirmed fight-menu slot (0-3).
+# We clamp to num_moves-1 and use it as a ground-truth check only — don't rely on it
+# for navigation (see _fight_nav_presses which resets cursor position explicitly).
+_ADDR_PLAYER_MOVE_LIST_IDX = 0xCC2F
+
+# Safari Zone
+_SAFARI_ZONE_MAPS      = frozenset({0xD9, 0xDA, 0xDB, 0xDC})  # wCurMap values (outdoor areas only)
+_ADDR_SAFARI_STEPS     = 0xD21B  # wSafariSteps: 2-byte big-endian, total steps remaining
+_ADDR_NUM_SAFARI_BALLS = 0xD21D  # wNumSafariBalls: Safari Balls left (0-30)
+_ADDR_SAFARI_BAIT      = 0xD21E  # wSafariBaitThrowCount: bait throws on current encounter
+_ADDR_SAFARI_ROCK      = 0xD21F  # wSafariRockThrowCount: rock throws on current encounter
+
+# Battle turn state
+_ADDR_BATTLE_TURN_COUNT  = 0xCCD5  # Turns elapsed in current battle
+_ADDR_MOVE_MENU_TYPE     = 0xCCDB  # Move menu type: 0=regular, 1=mimic, other=text/PP-fill
+_ADDR_PLAYER_MOVE_CHOSEN = 0xCCDC  # Move the player confirmed this turn (0-3 index)
+_ADDR_ENEMY_MOVE_CHOSEN  = 0xCCDD  # Move the enemy confirmed this turn (0-3 index)
+_ADDR_BATTLE_WHOSE_TURN  = 0xFFF3  # Current battle half-turn: 0=player, 1=opponent
+
+# In-battle stat stage modifiers — stored as 0-12 where 7 = neutral; stage = value - 7
+_ADDR_PLAYER_ATK_MOD = 0xCD1A
+_ADDR_PLAYER_DEF_MOD = 0xCD1B
+_ADDR_PLAYER_SPD_MOD = 0xCD1C
+_ADDR_PLAYER_SPC_MOD = 0xCD1D
+_ADDR_PLAYER_ACC_MOD = 0xCD1E
+_ADDR_PLAYER_EVA_MOD = 0xCD1F
+# CD2D = engaged trainer class / legendary Pokemon ID (not a stage modifier)
+_ADDR_ENEMY_ATK_MOD  = 0xCD2E  # Enemy ATK stage (or trainer roster ID outside battle)
+_ADDR_ENEMY_DEF_MOD  = 0xCD2F
+_ADDR_ENEMY_SPD_MOD  = 0xCD30
+_ADDR_ENEMY_SPC_MOD  = 0xCD31
+_ADDR_ENEMY_ACC_MOD  = 0xCD32
+_ADDR_ENEMY_EVA_MOD  = 0xCD33
 
 # Pokedex ownership bitfield — bit N set = national dex #N is owned (caught)
 _ADDR_POKEDEX_OWNED = 0xD2F7  # wPokedexOwned: 19 bytes covering dex #1-151
@@ -537,6 +571,15 @@ def _is_dex_owned(pyboy: "PyBoy", species_id: int) -> bool:
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Gen 1 stat stage multipliers (×/100), indexed by stage+6 (0=stage-6 … 6=neutral … 12=stage+6)
+_STAGE_MULTS = [25, 28, 33, 40, 50, 66, 100, 150, 200, 250, 300, 350, 400]
+
+
+def _apply_stage(base: int, stage: int) -> int:
+    """Apply a Gen 1 stat stage multiplier to a base in-battle stat."""
+    return base * _STAGE_MULTS[max(0, min(12, stage + 6))] // 100
+
+
 def _read_word(pyboy: PyBoy, addr: int) -> int:
     """Read a 2-byte big-endian value."""
     return (pyboy.memory[addr] << 8) | pyboy.memory[addr + 1]
@@ -780,6 +823,49 @@ def _read_battle_items(pyboy: PyBoy) -> Dict[str, Any]:
     return {"best_hp_item": best_hp, "status_cures": status_cures, "item_count": count}
 
 
+def _read_safari_state(pyboy: PyBoy) -> Dict[str, int]:
+    """Read Safari Zone encounter state from RAM.
+
+    Returns dict with balls, steps, bait_count, rock_count.
+    """
+    steps_hi = pyboy.memory[_ADDR_SAFARI_STEPS]
+    steps_lo = pyboy.memory[_ADDR_SAFARI_STEPS + 1]
+    return {
+        "balls":      pyboy.memory[_ADDR_NUM_SAFARI_BALLS],
+        "steps":      (steps_hi << 8) | steps_lo,
+        "bait_count": pyboy.memory[_ADDR_SAFARI_BAIT],
+        "rock_count": pyboy.memory[_ADDR_SAFARI_ROCK],
+    }
+
+
+def _read_stat_modifiers(pyboy: PyBoy) -> Dict[str, Dict[str, int]]:
+    """Read in-battle stat stage modifiers for player and enemy.
+
+    Returns stages as integers (-6 to +6), where 0 = neutral.
+    Raw RAM values are 0-12 (neutral=7); we subtract 7 before returning.
+    """
+    def s(addr: int) -> int:
+        return pyboy.memory[addr] - 7
+    return {
+        "player": {
+            "atk": s(_ADDR_PLAYER_ATK_MOD),
+            "def": s(_ADDR_PLAYER_DEF_MOD),
+            "spd": s(_ADDR_PLAYER_SPD_MOD),
+            "spc": s(_ADDR_PLAYER_SPC_MOD),
+            "acc": s(_ADDR_PLAYER_ACC_MOD),
+            "eva": s(_ADDR_PLAYER_EVA_MOD),
+        },
+        "enemy": {
+            "atk": s(_ADDR_ENEMY_ATK_MOD),
+            "def": s(_ADDR_ENEMY_DEF_MOD),
+            "spd": s(_ADDR_ENEMY_SPD_MOD),
+            "spc": s(_ADDR_ENEMY_SPC_MOD),
+            "acc": s(_ADDR_ENEMY_ACC_MOD),
+            "eva": s(_ADDR_ENEMY_EVA_MOD),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Battle tip
 # ---------------------------------------------------------------------------
@@ -812,6 +898,7 @@ def _generate_battle_tip(
     fight_cursor: int = 0,
     enemy_owned: bool = False,
     battle_items: Optional[Dict[str, Any]] = None,
+    stat_mods: Optional[Dict[str, Dict[str, int]]] = None,
 ) -> Optional[str]:
     """Generate a short tactical recommendation.
 
@@ -974,11 +1061,17 @@ def _generate_battle_tip(
         burn_tag = " [BRN→physical halved!]" if (pstatus == "BRN" and not is_special) else ""
 
         # Speed tier: who attacks first this turn?
-        # PAR quarters effective speed (applied separately from shown stat in Gen 1).
+        # Apply stat stage modifiers first, then PAR halving (Gen 1 order).
         spd_note = ""
         if ps and es:
-            p_spd = ps["spd"] // 4 if pstatus == "PAR" else ps["spd"]
-            e_spd = es["spd"] // 4 if enemy.get("status", "OK") == "PAR" else es["spd"]
+            pmods = (stat_mods or {}).get("player", {})
+            emods = (stat_mods or {}).get("enemy", {})
+            p_spd = _apply_stage(ps["spd"], pmods.get("spd", 0))
+            e_spd = _apply_stage(es["spd"], emods.get("spd", 0))
+            if pstatus == "PAR":
+                p_spd //= 4
+            if enemy.get("status", "OK") == "PAR":
+                e_spd //= 4
             if p_spd > e_spd:
                 spd_note = " [YOU go first]"
             elif e_spd > p_spd:
@@ -1027,6 +1120,62 @@ def _generate_battle_tip(
     return None
 
 
+def _generate_safari_tip(
+    enemy: Dict[str, Any],
+    menu_type: str,
+    safari_state: Dict[str, int],
+) -> Optional[str]:
+    """Generate a tactical tip for Safari Zone battles.
+
+    Safari menu cursor layout (same 2×2 grid as normal battle menu):
+      BALL(0)=U L A  |  BAIT(2)=U R A
+      THROW ROCK(1)=D L A  |  RUN(3)=D R A
+
+    Safari mechanics:
+      THROW ROCK: raises catch rate, but also raises the wild Pokemon's flee chance.
+      BAIT:       lowers flee chance, but also lowers the catch rate.
+      BALL:       attempt capture using current modified catch rate.
+
+    Args:
+        enemy:        Enemy Pokemon data dict (name, level, status, etc.)
+        menu_type:    "main", "unknown", etc. (from _detect_battle_submenu)
+        safari_state: Dict from _read_safari_state (balls, steps, bait_count, rock_count).
+
+    Returns:
+        Tip string, or None if no actionable advice.
+    """
+    balls      = safari_state["balls"]
+    steps      = safari_state["steps"]
+    bait_count = safari_state["bait_count"]
+    rock_count = safari_state["rock_count"]
+
+    if menu_type not in ("main", "unknown"):
+        return None
+
+    if balls == 0:
+        return "No Safari Balls left — must RUN! Send: D R A"
+
+    if steps <= 10:
+        return f"Only {steps} steps left before ejected — throw BALL now! Send: U L A"
+
+    # TODO: implement Safari catch strategy (5-10 lines)
+    # Decide the best action given rock_count, bait_count, and balls remaining.
+    # Trade-offs to consider:
+    #   - rock_count == 0: catch rate is base; throwing rock improves it but adds flee risk
+    #   - rock_count >= 1: catch rate is already boosted; may be good time to throw BALL
+    #   - bait_count > 0 and rock_count == 0: catch rate is reduced; may want rock to recover
+    #   - With few balls (e.g. <= 5), prioritise the throw-immediately approach
+    #   - enemy already in dex (enemy_owned not available here, consider passing it if needed)
+    # Replace the fallback line below with your strategy.
+
+    return (
+        f"Safari: {balls} balls, {steps} steps. "
+        f"THROW ROCK (raises catch, raises flee): D L A | "
+        f"BAIT (lowers flee, lowers catch): U R A | "
+        f"BALL (catch attempt): U L A"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Formatter
 # ---------------------------------------------------------------------------
@@ -1043,59 +1192,101 @@ def _format_battle_text(
     fight_cursor: int = 0,
     enemy_owned: bool = False,
     battle_items: Optional[Dict[str, Any]] = None,
+    safari_state: Optional[Dict[str, int]] = None,
+    stat_mods: Optional[Dict[str, Dict[str, int]]] = None,
+    turn_count: int = 0,
+    whose_turn: int = 0,
 ) -> str:
     """Assemble the battle context text block."""
-    kind = "Wild" if battle_type == 1 else "Trainer"
-    wild_prefix = "wild " if battle_type == 1 else ""
+    if safari_state:
+        kind = "Safari Zone"
+        wild_prefix = "wild "
+    else:
+        kind = "Wild" if battle_type == 1 else "Trainer"
+        wild_prefix = "wild " if battle_type == 1 else ""
 
-    lines = ["=== BATTLE CONTEXT ==="]
+    turn_str = f" | Turn {turn_count}" if turn_count > 0 else ""
+    whose_str = " | Opponent acting" if whose_turn == 1 else ""
+    lines = [f"=== BATTLE CONTEXT{turn_str}{whose_str} ==="]
     lines.append(
         f"{kind} battle — {player['name']} Lv{player['level']} "
         f"vs {wild_prefix}{enemy['name']} Lv{enemy['level']}"
     )
 
-    # Player Pokemon
-    status_str = f" {player['status']}" if player["status"] != "OK" else ""
-    player_type_str = f" [{'/'.join(player.get('types', []))}]" if player.get("types") else ""
-    lines.append(
-        f"YOUR: {player['name']} Lv{player['level']}{player_type_str} "
-        f"HP:{player['hp']}/{player['max_hp']}{status_str}"
-    )
-
-    # Stats
-    ps = player.get("stats", {})
-    if ps:
-        lines.append(f"  Stats: Atk:{ps['atk']} Def:{ps['def']} Spd:{ps['spd']} Spc:{ps['spc']}")
-
-    # Moves (mark HMs)
-    move_parts = []
-    for m in player["moves"]:
-        pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
-        hm_tag = " [HM]" if m.get("is_hm") else ""
-        move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp){hm_tag}")
-    lines.append(f"  Moves: {' | '.join(move_parts)}")
-
-    # HM summary
-    if player.get("hm_moves"):
-        lines.append(f"  HMs: {', '.join(player['hm_moves'])}")
-
-    # Cursor
-    if menu_type == "main":
-        item_name = _MAIN_MENU_ITEMS[cursor] if cursor < 4 else f"#{cursor}"
-        nav_hints = _MAIN_MENU_NAV.get(cursor, {})
-        nav_str = " | ".join(f"{k}:{v}" for k, v in nav_hints.items())
-        lines.append(f"  → Main menu: cursor on {item_name} (to reach: {nav_str})")
-    elif menu_type == "fight":
-        if cursor < len(player["moves"]):
-            lines.append(f"  → Fight menu: cursor on slot {cursor+1} ({player['moves'][cursor]['name']})")
-        else:
-            lines.append(f"  → Fight menu: cursor at slot {cursor+1}")
-    elif menu_type == "faint":
-        lines.append(f"  → FAINT FLOW — cursor on party slot {cursor+1} (0-indexed {cursor}). 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
-    elif menu_type == "pkmn":
-        lines.append(f"  → PKMN SWITCH SCREEN — party slot cursor={cursor+1}. D/U to navigate, A to switch, B to cancel")
+    if safari_state:
+        # Safari Zone: show resource state and menu navigation instead of moves
+        balls      = safari_state["balls"]
+        steps      = safari_state["steps"]
+        bait_count = safari_state["bait_count"]
+        rock_count = safari_state["rock_count"]
+        lines.append(f"  Safari Balls: {balls} | Steps left: {steps}")
+        modifiers = []
+        if bait_count > 0:
+            modifiers.append(f"Bait thrown: {bait_count}x (flee chance ↓, catch rate ↓)")
+        if rock_count > 0:
+            modifiers.append(f"Rock thrown: {rock_count}x (flee chance ↑, catch rate ↑)")
+        if modifiers:
+            lines.append("  " + " | ".join(modifiers))
+        # Safari menu cursor (same 2×2 layout: BALL=0, THROW ROCK=1, BAIT=2, RUN=3)
+        _safari_items = {0: "BALL", 1: "THROW ROCK", 2: "BAIT", 3: "RUN"}
+        cur_name = _safari_items.get(cursor, f"#{cursor}")
+        lines.append(
+            f"  → Safari menu: cursor on {cur_name} | "
+            f"BALL: U L A | THROW ROCK: D L A | BAIT: U R A | RUN: D R A"
+        )
     else:
-        lines.append(f"  → In submenu/text (not main battle menu) — press A to advance text, B to escape if stuck")
+        # Player Pokemon
+        status_str = f" {player['status']}" if player["status"] != "OK" else ""
+        player_type_str = f" [{'/'.join(player.get('types', []))}]" if player.get("types") else ""
+        lines.append(
+            f"YOUR: {player['name']} Lv{player['level']}{player_type_str} "
+            f"HP:{player['hp']}/{player['max_hp']}{status_str}"
+        )
+
+        # Stats (show stage modifier in parens when non-neutral)
+        ps = player.get("stats", {})
+        if ps:
+            pmods = (stat_mods or {}).get("player", {})
+            def _fmt(key: str, val: int) -> str:
+                st = pmods.get(key, 0)
+                return f"{key.capitalize()}:{val}" + (f"({'+' if st > 0 else ''}{st})" if st else "")
+            lines.append(f"  Stats: {_fmt('atk', ps['atk'])} {_fmt('def', ps['def'])} "
+                         f"{_fmt('spd', ps['spd'])} {_fmt('spc', ps['spc'])}")
+            p_acc = pmods.get("acc", 0)
+            p_eva = pmods.get("eva", 0)
+            if p_acc or p_eva:
+                lines.append(f"  Accuracy stage: {'+' if p_acc > 0 else ''}{p_acc} | "
+                             f"Evasion stage: {'+' if p_eva > 0 else ''}{p_eva}")
+
+        # Moves (mark HMs)
+        move_parts = []
+        for m in player["moves"]:
+            pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
+            hm_tag = " [HM]" if m.get("is_hm") else ""
+            move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp){hm_tag}")
+        lines.append(f"  Moves: {' | '.join(move_parts)}")
+
+        # HM summary
+        if player.get("hm_moves"):
+            lines.append(f"  HMs: {', '.join(player['hm_moves'])}")
+
+        # Cursor
+        if menu_type == "main":
+            item_name = _MAIN_MENU_ITEMS[cursor] if cursor < 4 else f"#{cursor}"
+            nav_hints = _MAIN_MENU_NAV.get(cursor, {})
+            nav_str = " | ".join(f"{k}:{v}" for k, v in nav_hints.items())
+            lines.append(f"  → Main menu: cursor on {item_name} (to reach: {nav_str})")
+        elif menu_type == "fight":
+            if cursor < len(player["moves"]):
+                lines.append(f"  → Fight menu: cursor on slot {cursor+1} ({player['moves'][cursor]['name']})")
+            else:
+                lines.append(f"  → Fight menu: cursor at slot {cursor+1}")
+        elif menu_type == "faint":
+            lines.append(f"  → FAINT FLOW — cursor on party slot {cursor+1} (0-indexed {cursor}). 'Use next POKEMON?' or party select. DO NOT mash A blindly!")
+        elif menu_type == "pkmn":
+            lines.append(f"  → PKMN SWITCH SCREEN — party slot cursor={cursor+1}. D/U to navigate, A to switch, B to cancel")
+        else:
+            lines.append(f"  → In submenu/text (not main battle menu) — press A to advance text, B to escape if stuck")
 
     # VS separator
     lines.append("──────────── VS ────────────")
@@ -1109,24 +1300,40 @@ def _format_battle_text(
     )
     es = enemy.get("stats", {})
     if es:
-        lines.append(f"  Stats: Atk:{es['atk']} Def:{es['def']} Spd:{es['spd']} Spc:{es['spc']}")
-    enemy_move_parts = []
-    for m in enemy.get("moves", []):
-        pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
-        enemy_move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp)")
-    if enemy_move_parts:
-        lines.append(f"  Moves: {' | '.join(enemy_move_parts)}")
+        emods = (stat_mods or {}).get("enemy", {})
+        def _efmt(key: str, val: int) -> str:
+            st = emods.get(key, 0)
+            return f"{key.capitalize()}:{val}" + (f"({'+' if st > 0 else ''}{st})" if st else "")
+        lines.append(f"  Stats: {_efmt('atk', es['atk'])} {_efmt('def', es['def'])} "
+                     f"{_efmt('spd', es['spd'])} {_efmt('spc', es['spc'])}")
+        e_acc = emods.get("acc", 0)
+        e_eva = emods.get("eva", 0)
+        if e_acc or e_eva:
+            lines.append(f"  Accuracy stage: {'+' if e_acc > 0 else ''}{e_acc} | "
+                         f"Evasion stage: {'+' if e_eva > 0 else ''}{e_eva}")
+    if not safari_state:
+        # Enemy moves are only shown in normal battles (Safari uses different mechanics)
+        enemy_move_parts = []
+        for m in enemy.get("moves", []):
+            pwr = f"{m['power']}pwr" if m["power"] > 0 else "status"
+            enemy_move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp)")
+        if enemy_move_parts:
+            lines.append(f"  Moves: {' | '.join(enemy_move_parts)}")
 
     # Tip
-    tip = _generate_battle_tip(player, enemy, menu_type, cursor,
-                                battle_type=battle_type,
-                                pokeball_count=pokeball_count,
-                                party_count=party_count,
-                                alive_count=alive_count,
-                                enemy_types=enemy.get("types"),
-                                fight_cursor=fight_cursor,
-                                enemy_owned=enemy_owned,
-                                battle_items=battle_items)
+    if safari_state:
+        tip = _generate_safari_tip(enemy, menu_type, safari_state)
+    else:
+        tip = _generate_battle_tip(player, enemy, menu_type, cursor,
+                                    battle_type=battle_type,
+                                    pokeball_count=pokeball_count,
+                                    party_count=party_count,
+                                    alive_count=alive_count,
+                                    enemy_types=enemy.get("types"),
+                                    fight_cursor=fight_cursor,
+                                    enemy_owned=enemy_owned,
+                                    battle_items=battle_items,
+                                    stat_mods=stat_mods)
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -1155,6 +1362,9 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
         battle_type = pyboy.memory[_ADDR_IS_IN_BATTLE]
         if battle_type == 0:
             return None
+
+        is_safari = pyboy.memory[_ADDR_CUR_MAP] in _SAFARI_ZONE_MAPS
+        safari_state = _read_safari_state(pyboy) if is_safari else None
 
         player = _read_pokemon(
             pyboy,
@@ -1186,12 +1396,16 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
         if menu_type == "main" and just_entered_battle:
             cursor = 0
 
-        # wPlayerMoveListIndex: last A-confirmed move slot in the fight submenu (0-3).
-        # Read directly from RAM — more reliable than fight_cursor (which was
-        # optimistically set to best_slot regardless of what the agent actually chose).
+        # CC2F: last A-confirmed move slot in the fight submenu (0-3), clamped to num_moves-1.
         num_moves = len(player.get("moves", []))
         raw_fight_cursor = pyboy.memory[_ADDR_PLAYER_MOVE_LIST_IDX]
         actual_fight_cursor = min(raw_fight_cursor, max(num_moves - 1, 0))
+
+        stat_mods = _read_stat_modifiers(pyboy)
+        turn_count = pyboy.memory[_ADDR_BATTLE_TURN_COUNT]
+        whose_turn = pyboy.memory[_ADDR_BATTLE_WHOSE_TURN]
+        player_move_chosen = pyboy.memory[_ADDR_PLAYER_MOVE_CHOSEN]
+        enemy_move_chosen = pyboy.memory[_ADDR_ENEMY_MOVE_CHOSEN]
 
         pokeball_count = _count_pokeballs(pyboy)
         battle_items = _read_battle_items(pyboy)
@@ -1218,7 +1432,11 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
                                    alive_count=alive_count,
                                    fight_cursor=actual_fight_cursor,
                                    enemy_owned=enemy_owned,
-                                   battle_items=battle_items)
+                                   battle_items=battle_items,
+                                   safari_state=safari_state,
+                                   stat_mods=stat_mods,
+                                   turn_count=turn_count,
+                                   whose_turn=whose_turn)
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "
@@ -1235,6 +1453,13 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
             "battle_type": battle_type,
             "best_slot": best_slot,
             "num_moves": num_moves,
+            "is_safari": is_safari,
+            "safari_state": safari_state,
+            "stat_mods": stat_mods,
+            "turn_count": turn_count,
+            "whose_turn": whose_turn,
+            "player_move_chosen": player_move_chosen,
+            "enemy_move_chosen": enemy_move_chosen,
         }
     except Exception as e:
         logger.error(f"Error extracting battle context: {e}", exc_info=True)

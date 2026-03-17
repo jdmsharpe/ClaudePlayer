@@ -6,6 +6,8 @@ from claude_player.utils.ram_constants import (
     ADDR_IS_IN_BATTLE,
     ADDR_STATUS_FLAGS5,
     ADDR_WINDOW_Y,
+    ADDR_TILE_PLAYER_ON,
+    ADDR_DISABLE_JOYPAD,
 )
 
 # Game Boy visible screen: 160x144 pixels = 20x18 tiles of 8x8 pixels
@@ -75,10 +77,12 @@ _ADDR_JOY_IGNORE     = 0xCC6B   # wJoyIgnore – button ignore bitmask (retained
 _ADDR_STATUS_FLAGS5  = ADDR_STATUS_FLAGS5
 _ADDR_WINDOW_Y       = ADDR_WINDOW_Y
 _ADDR_SIM_JOYPAD_IDX = 0xCD38   # wSimulatedJoypadStatesIndex – non-zero = game running scripted input
+_ADDR_DISABLE_JOYPAD = ADDR_DISABLE_JOYPAD   # hDisableJoypadPolling – HRAM-level joypad disable flag
+_ADDR_TILE_PLAYER_ON = ADDR_TILE_PLAYER_ON   # hTilePlayerStandingOn – metatile block ID under player
 
 # Terrain classification RAM addresses
 _ADDR_GRASS_TILE       = 0xD535   # wGrassTile — grass tile value for current map
-_ADDR_TILESET_TYPE     = 0xFFD7   # Tileset type: 0=indoor, >0=outdoor (has grass)
+_ADDR_TILESET_TYPE     = 0xFFD7   # Tileset type: 0=indoor/building, 1=cave/dungeon, 2=outdoor (grass+water animations)
 _ADDR_TILESET_COLL_PTR = 0xD530   # wTilesetCollisionPtr (2 bytes LE) → ROM collision pairs
 
 # Ledge tile → direction (VRAM IDs = raw byte + 0x100)
@@ -545,77 +549,82 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
         '=' = water (blocked without Surf)
         'T' = cuttable tree (blocked, need Cut HM)
 
-    Uses the same bottom-left-of-metatile sampling as PyBoy's collision
-    system for exact alignment with the walkability grid.
+    Walkability uses wTileMap (0xC3A0) raw tile IDs compared directly against
+    the raw collision table — the same comparison CheckForCollision performs,
+    with no VRAM addressing involved.  VRAM tile IDs are still read for ledge
+    and water detection, which only applies on the OVERWORLD tileset.
     """
     try:
-        # Read the VRAM background tilemap
-        (scx_px, scy_px), _ = pyboy.screen.get_tilemap_position()
-        scx = scx_px // 8
-        scy = scy_px // 8
-        bg = pyboy.tilemap_background[:, :]
-
-        # Sample bottom-left tile of each 2x2 metatile (same as PyBoy collision)
-        # Grid is 10 wide x 9 tall (metatile resolution)
         grid_w = SCREEN_TILES_X // 2   # 10
         grid_h = SCREEN_TILES_Y // 2   # 9
 
-        metatile_ids = []
+        # wTileMap at 0xC3A0: 18 rows × 20 cols of raw tile IDs (0x00-0xFF),
+        # already scroll-adjusted by the game engine.  Sample bottom-left tile
+        # of each 2×2 metatile: row = my*2+1, col = mx*2.
+        wmap_raw: List[List[int]] = []
         for my in range(grid_h):
-            row = []
+            row: List[int] = []
             for mx in range(grid_w):
-                # Bottom-left = odd row (y*2+1), even col (x*2)
-                ty = (my * 2 + 1 + scy) % TILEMAP_SIZE
-                tx = (mx * 2 + scx) % TILEMAP_SIZE
-                row.append(bg[ty][tx])
-            metatile_ids.append(row)
+                idx = 0xC3A0 + (my * 2 + 1) * SCREEN_TILES_X + mx * 2
+                row.append(pyboy.memory[idx])
+            wmap_raw.append(row)
 
-        # Read terrain-classification RAM values
+        # VRAM tilemap — only needed for ledge/water tile detection (overworld).
         tileset_type = pyboy.memory[_ADDR_TILESET_TYPE]
-        map_tileset = pyboy.memory[_ADDR_MAP_TILESET]  # 0=OVERWORLD, 3=FOREST, etc.
-        grass_tile_vram = None
-        if tileset_type > 0:  # Outdoor tileset has grass
-            grass_raw = pyboy.memory[_ADDR_GRASS_TILE]
-            if grass_raw != 0xFF:
-                grass_tile_vram = grass_raw + 0x100
+        map_tileset  = pyboy.memory[_ADDR_MAP_TILESET]
+        need_vram = tileset_type > 0  # outdoor tileset: ledges, water, grass possible
+        metatile_ids: List[List[int]] = []
+        if need_vram:
+            (scx_px, scy_px), _ = pyboy.screen.get_tilemap_position()
+            scx = scx_px // 8
+            scy = scy_px // 8
+            bg = pyboy.tilemap_background[:, :]
+            for my in range(grid_h):
+                row_v: List[int] = []
+                for mx in range(grid_w):
+                    ty = (my * 2 + 1 + scy) % TILEMAP_SIZE
+                    tx = (mx * 2 + scx) % TILEMAP_SIZE
+                    row_v.append(bg[ty][tx])
+                metatile_ids.append(row_v)
 
-        # Build walkable tile set from collision pointer table
-        coll_ptr_lo = pyboy.memory[_ADDR_TILESET_COLL_PTR]
-        coll_ptr_hi = pyboy.memory[_ADDR_TILESET_COLL_PTR + 1]
-        coll_ptr = coll_ptr_lo | (coll_ptr_hi << 8)
-        walkable_set: set = set()
-        if grass_tile_vram is not None:
-            walkable_set.add(grass_tile_vram)
-        # Read collision pairs (each pair = 2 bytes, terminated by 0xFF)
-        for i in range(0, 0x180, 2):
+        # Build walkable set from raw collision table (no +0x100 offset).
+        # The game engine compares raw wTileMap values directly against these.
+        coll_ptr = (pyboy.memory[_ADDR_TILESET_COLL_PTR]
+                    | (pyboy.memory[_ADDR_TILESET_COLL_PTR + 1] << 8))
+        walkable_raw: set = set()
+        for i in range(0x180):
             tile_val = pyboy.memory[coll_ptr + i]
             if tile_val == 0xFF:
                 break
-            walkable_set.add(tile_val + 0x100)
-            # Second byte of pair is also walkable
-            tile_val2 = pyboy.memory[coll_ptr + i + 1]
-            if tile_val2 != 0xFF:
-                walkable_set.add(tile_val2 + 0x100)
+            walkable_raw.add(tile_val)
+
+        # Grass tile (raw ID, only on outdoor tilesets)
+        grass_raw = 0xFF
+        if need_vram:
+            grass_raw = pyboy.memory[_ADDR_GRASS_TILE]
+            if grass_raw != 0xFF:
+                walkable_raw.add(grass_raw)  # grass is walkable
 
         # Classify each metatile
         terrain: List[List[str]] = []
         for my in range(grid_h):
-            row: List[str] = []
+            row_out: List[str] = []
             for mx in range(grid_w):
-                tid = metatile_ids[my][mx]
-                if grass_tile_vram is not None and tid == grass_tile_vram:
-                    row.append(',')
-                elif tileset_type > 0 and map_tileset == 0 and tid in _LEDGE_TILES:
+                raw = wmap_raw[my][mx]
+                tid = metatile_ids[my][mx] if need_vram else 0
+
+                if need_vram and grass_raw != 0xFF and raw == grass_raw:
+                    row_out.append(',')
+                elif (need_vram and map_tileset == 0 and tid in _LEDGE_TILES):
                     # Ledge VRAM IDs only mean ledges in the OVERWORLD tileset (ID=0).
-                    # Forest/cave tilesets reuse the same VRAM IDs for tree/wall graphics.
-                    row.append(_LEDGE_TILES[tid])
-                elif tileset_type > 0 and tid == _WATER_TILE_VRAM:
-                    row.append('=')
-                elif tid in walkable_set:
-                    row.append('.')
+                    row_out.append(_LEDGE_TILES[tid])
+                elif need_vram and tid == _WATER_TILE_VRAM:
+                    row_out.append('=')
+                elif raw in walkable_raw:
+                    row_out.append('.')
                 else:
-                    row.append('#')
-            terrain.append(row)
+                    row_out.append('#')
+            terrain.append(row_out)
 
         return terrain
     except Exception as e:
@@ -955,7 +964,8 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
             }
 
         status5 = pyboy.memory[_ADDR_STATUS_FLAGS5]
-        if status5 & 0x20:  # bit 5 – joypad disabled
+        disable_joy = pyboy.memory[_ADDR_DISABLE_JOYPAD]  # hDisableJoypadPolling
+        if (status5 & 0x20) or disable_joy:  # WRAM bit5 or HRAM joypad-disable flag
             scripted = "scripted movement" if status5 & 0x80 else "cutscene"
             return {
                 "state": "scripted_event",
@@ -1387,6 +1397,7 @@ def _format_spatial_text(
     terrain: Optional[List[List[str]]] = None,
     cut_tree_positions: Optional[set] = None,
     player_facing: Optional[str] = None,
+    tile_terrain: Optional[str] = None,
 ) -> str:
     """Build simplified spatial context for continuous mode.
 
@@ -1403,36 +1414,9 @@ def _format_spatial_text(
     grid_width = src_width // 2
 
     grid = []
-    if terrain is not None and has_collision:
-        # Use collision as walkability ground truth, overlay terrain types.
-        # The terrain VRAM sampling can misclassify walkability (e.g. fence
-        # tiles whose IDs appear in the collision pointer's walkable list),
-        # but terrain accurately identifies grass/water/ledge tile types.
-        grid_height = len(terrain)
-        grid_width = len(terrain[0]) if terrain else 0
-        for y in range(grid_height):
-            row = []
-            for x in range(grid_width):
-                terrain_type = terrain[y][x]
-                cy, cx = y * 2, x * 2
-                if cy + 1 < src_height and cx + 1 < src_width:
-                    coll_walkable = all(
-                        collision[cy + dy][cx + dx] != 0
-                        for dy in range(2) for dx in range(2)
-                    )
-                else:
-                    coll_walkable = terrain_type not in ('#',)
-                # Preserve special terrain markers (grass, water, ledge);
-                # for plain walkable/blocked, defer to collision data.
-                if terrain_type in (',', '=', 'v', '>', '<'):
-                    row.append(terrain_type)
-                elif coll_walkable:
-                    row.append('.')
-                else:
-                    row.append('#')
-            grid.append(row)
-    elif terrain is not None:
-        # No collision data — use terrain classification as-is
+    if terrain is not None:
+        # Terrain is walkability ground truth: _extract_terrain_data now uses
+        # the correct $8800 VRAM ID conversion, so it matches the game engine.
         grid = [row[:] for row in terrain]
         grid_height = len(grid)
         grid_width = len(grid[0]) if grid else 0
@@ -1463,14 +1447,15 @@ def _format_spatial_text(
                     grid[y][x] = 'T'
 
     # Player screen position from OAM sprite 0
-    # Pokemon uses 8x16 sprites — the OAM Y is the sprite top, but we need
-    # the feet (collision) position which is 16px (2 tiles = 1 metatile) lower.
-    # We must add +1 AFTER the //2 division, not before, so integer division
-    # doesn't absorb the offset when tile_y is even.
+    # Pokemon uses 8x16 sprites — the OAM Y is the sprite top.  The feet
+    # (collision point) are in the LOWER 8px of the sprite = tile_y + 1.
+    # We must add +1 BEFORE the //2 division so that even tile_y values
+    # (e.g. tile_y=10, feet at tile 11 = metatile 5) don't get bumped to
+    # the next metatile (10//2+1=6 is wrong; (10+1)//2=5 is correct).
     player_screen_pos = None
     if sprites:
         tx = sprites[0]["tile_x"] // 2
-        ty = sprites[0]["tile_y"] // 2 + 1
+        ty = (sprites[0]["tile_y"] + 1) // 2
         player_screen_pos = (tx, ty)
 
     # Overlay order: NPCs → player (@) → warps (W)
@@ -1512,7 +1497,11 @@ def _format_spatial_text(
         mh = warp_data["map_height"]
         # Player coords are in step units (2 steps per map block), map dims are in blocks.
         # Multiply dims by 2 so the coordinate spaces match (avoids "at edge" confusion).
-        lines.append(f"Map position: ({px_abs}, {py_abs}) of {mw*2}x{mh*2}")
+        map_name = warp_data["map_name"]
+        map_line = f"MAP (RAM): {map_name} | Position: ({px_abs}, {py_abs}) of {mw*2}x{mh*2} — trust this over visual appearance"
+        if tile_terrain:
+            map_line += f" | on: {tile_terrain}"
+        lines.append(map_line)
 
         # Pre-compute which immediate directions are blocked (for compass warnings)
         _immediate_blocked: set = set()
@@ -1711,6 +1700,7 @@ def _overlay_warps_on_grid(
                 back_gx, back_gy = gx - sx, gy - sy
                 if (0 <= back_gx < grid_w and 0 <= back_gy < grid_h
                         and (back_gx, back_gy) != (px, py)
+                        and abs(back_gx - px) + abs(back_gy - py) > 1
                         and grid[back_gy][back_gx] == '#'):
                     grid[back_gy][back_gx] = '.'
 
@@ -1802,6 +1792,15 @@ def extract_spatial_context(
         game_state_info = _detect_game_state(pyboy)
         player_facing = _extract_player_facing(pyboy)
 
+        tile_terrain = None
+        try:
+            tile_under = pyboy.memory[_ADDR_TILE_PLAYER_ON]
+            grass_tile = pyboy.memory[_ADDR_GRASS_TILE]
+            if tile_under == grass_tile:
+                tile_terrain = "tall grass"
+        except Exception:
+            pass
+
         text = _format_spatial_text(
             collision=collision,
             visible=visible,
@@ -1814,6 +1813,7 @@ def extract_spatial_context(
             terrain=terrain,
             cut_tree_positions=cut_tree_pos,
             player_facing=player_facing,
+            tile_terrain=tile_terrain,
         )
 
         # Player screen position (metatile coords) for world map accumulator
@@ -1821,34 +1821,13 @@ def extract_spatial_context(
         if sprites:
             player_screen_pos = (
                 sprites[0]["tile_x"] // 2,
-                sprites[0]["tile_y"] // 2 + 1,
+                (sprites[0]["tile_y"] + 1) // 2,
             )
 
         # Base terrain grid (no NPC/player overlays) for world map accumulator
         base_grid = None
-        if terrain is not None and collision is not None:
-            src_h = len(collision)
-            src_w = len(collision[0]) if collision else 0
-            base_grid = []
-            for y in range(len(terrain)):
-                row = []
-                for x in range(len(terrain[0]) if terrain else 0):
-                    t = terrain[y][x]
-                    cy, cx = y * 2, x * 2
-                    if cy + 1 < src_h and cx + 1 < src_w:
-                        coll_walk = all(
-                            collision[cy + dy][cx + dx] != 0
-                            for dy in range(2) for dx in range(2)
-                        )
-                    else:
-                        coll_walk = t not in ('#',)
-                    if t in (',', '=', 'v', '>', '<'):
-                        row.append(t)
-                    elif coll_walk:
-                        row.append('.')
-                    else:
-                        row.append('#')
-                base_grid.append(row)
+        if terrain is not None:
+            base_grid = [row[:] for row in terrain]
             # Overlay cut trees
             if cut_tree_pos:
                 for y in range(len(base_grid)):

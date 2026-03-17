@@ -32,3 +32,11 @@ ADDR_BAG_ITEMS      = 0xD31E   # wBagItems: (item_id, qty) pairs, 2 bytes each
 ADDR_MENU_ITEM      = 0xCC26   # wCurrentMenuItem (0-based)
 ADDR_MENU_TOP_Y     = 0xCC24   # wTopMenuItemY (screen tile row)
 ADDR_MENU_TOP_X     = 0xCC25   # wTopMenuItemX (screen tile col)
+
+# ---------------------------------------------------------------------------
+# HRAM addresses (hram.asm — 0xFF80-0xFFFE, accessed via LDH instructions)
+# ---------------------------------------------------------------------------
+ADDR_TILE_PLAYER_ON  = 0xFF93  # hTilePlayerStandingOn: metatile block ID currently under player
+ADDR_JOY_HELD        = 0xFFB4  # hJoyHeld: currently held button bitmask (A=0x01, B=0x02, SEL=0x04, START=0x08, RIGHT=0x10, LEFT=0x20, UP=0x40, DOWN=0x80)
+ADDR_UI_LAYOUT_FLAGS = 0xFFF6  # hUILayoutFlags: bit0=HP bar right (party menu), bit1=double-spaced menu
+ADDR_DISABLE_JOYPAD  = 0xFFF9  # hDisableJoypadPolling: nonzero = joypad ISR skips hardware read

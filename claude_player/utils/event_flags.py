@@ -222,7 +222,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     # Through Mt. Moon (-2)
     (  -2,  0x02): "Visit Pewter Mart first (Potions, Antidotes) — Mt. Moon has no shop. Mart is EAST of gym but a wall blocks direct access; follow the NAV path around the buildings. Then head EAST to Route 3.",
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
-    (  -2,  0x44): "Optional Pokemon Center rest stop. Exit EAST to enter Mt. Moon.",
+    (  -2,  0x44): "Pokemon Center rest stop.",
     (  -2,  0x3B): "Navigate through Mt. Moon 1F. Find the stairs down to the basement floors.",
     (  -2,  0x3C): "Continue through Mt. Moon B1F. Find the stairs down to B2F.",
     (  -2,  0x3D): "Navigate Mt. Moon B2F east to the exit. Rocket Grunts guard the fossils — fight through or go around. Exit EAST to Route 4.",

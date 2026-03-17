@@ -96,7 +96,7 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # MT. MOON
     # -------------------------------------------------------------------------
     # Mt. Moon 1F (0x3B) — east exit at x=35
-    (0x3B, 0): (14, 36), (0x3B, 1): (15, 36),  # was (14,35)(15,35) → Route 4
+    (0x3B, 0): (36, 14), (0x3B, 1): (36, 15),  # was (14,35)(15,35) → Route 4
     # Mt. Moon Pokecenter (0x44) — exit at x=7
     (0x44, 0): (8, 3), (0x44, 1): (8, 4),
 
@@ -587,13 +587,13 @@ WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     (0xEB, 2): (5, 5),   (0xEB, 3): (3, 2),
 
     # --- Mt. Moon B1F (0x3C) — cave stairs, all interior positions ---
-    (0x3C, 0): (5, 5),   (0x3C, 1): (17, 11), (0x3C, 2): (25, 9),
-    (0x3C, 3): (25, 15), (0x3C, 4): (21, 17), (0x3C, 5): (13, 27),
-    (0x3C, 6): (23, 3),  (0x3C, 7): (27, 3),  # warp 7 is Route 4 exit
+    (0x3C, 0): (5, 5),   (0x3C, 1): (11, 17), (0x3C, 2): (9, 25),
+    (0x3C, 3): (15, 25), (0x3C, 4): (17, 21), (0x3C, 5): (27, 13),
+    (0x3C, 6): (3, 23),  (0x3C, 7): (3, 27),  # warp 7 is Route 4 exit
 
     # --- Mt. Moon B2F (0x3D) ---
-    (0x3D, 0): (25, 9),  (0x3D, 1): (21, 17), (0x3D, 2): (15, 27),
-    (0x3D, 3): (5, 7),
+    (0x3D, 0): (9, 25),  (0x3D, 1): (17, 21), (0x3D, 2): (27, 15),
+    (0x3D, 3): (7, 5),
 
     # --- Rock Tunnel B1F (0xE8) — cave stairs ---
     (0xE8, 0): (33, 25), (0xE8, 1): (27, 3),  (0xE8, 2): (23, 11),

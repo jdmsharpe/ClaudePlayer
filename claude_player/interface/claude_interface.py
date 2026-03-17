@@ -138,12 +138,8 @@ It may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM) 
                 logging.info(f"  Prompt caching: {isinstance(system_prompt, list)}")
                 self._logged_config = True
 
-            # Normalise system_prompt: accept plain string (memory manager)
-            # or list of content blocks (main agent with caching)
-            if isinstance(system_prompt, str):
-                system_value = system_prompt
-            else:
-                system_value = system_prompt  # list of content blocks
+            # system_prompt: plain string (memory manager) or list of content blocks (main agent with caching)
+            system_value = system_prompt
 
             # Create API request params
             request_params = {

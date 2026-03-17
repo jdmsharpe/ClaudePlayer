@@ -5,8 +5,7 @@ import logging
 import time
 import signal
 import threading
-import collections
-from collections import Counter
+from collections import Counter, deque
 import re
 from datetime import datetime
 from pyboy import PyBoy
@@ -182,6 +181,8 @@ class GameAgent:
         # Dead-end memory is stored directly in self._world_map.dead_ends so it
         # persists across sessions (serialized alongside tiles/warps in world_map.json).
         self._current_map_id: int | None = None  # tracks map changes for reset
+        self._current_map_name: str | None = None  # current map name (snapshot before each update)
+        self._last_map_name: str | None = None  # name of previous map (shown after warp for orientation)
 
         # Current context mode — drives which system prompt block to include
         self._in_battle = False
@@ -417,6 +418,11 @@ class GameAgent:
                 )
                 if map_changed:
                     self._visited_positions.clear()
+                    # Snapshot the name of the map we just left for orientation context
+                    if self._current_map_name:
+                        self._last_map_name = self._current_map_name
+                # Keep current map name in sync (spatial_data reflects latest RAM read)
+                self._current_map_name = spatial_data.get("map_name")
                 if new_map_id is not None:
                     self._current_map_id = new_map_id
                 self._visited_positions.append(current_pos)
@@ -891,6 +897,10 @@ class GameAgent:
             user_content.append({"type": "text", "text": battle_data["text"]})
         elif spatial_data and spatial_data["text"]:
             spatial_text = spatial_data["text"]
+            # Prepend "entered from" note so the agent always knows which map
+            # it transitioned from (helps orient after warps/connections).
+            if self._last_map_name:
+                spatial_text = f"[Entered from: {self._last_map_name}]\n" + spatial_text
             # Append accumulated world map (overworld only, when enough tiles explored)
             if spatial_data.get("map_number") is not None and spatial_data.get("player_pos"):
                 map_id = spatial_data["map_number"]

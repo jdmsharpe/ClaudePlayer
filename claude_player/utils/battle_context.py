@@ -246,25 +246,6 @@ def _effective_power(
     return base * eff * stab
 
 
-# Main battle menu nav: column-major layout
-#   FIGHT(0)  PKMN(2)
-#   ITEM(1)   RUN(3)
-# U/D = vertical within column; L/R = switch columns
-_NAV_TO_ITEM: Dict[int, str] = {
-    0: "D",      # FIGHT → ITEM
-    1: "",       # already on ITEM
-    2: "L D",    # PKMN → ITEM
-    3: "L",      # RUN → ITEM
-}
-
-# Navigation from each main menu cursor position to every other option
-_MAIN_MENU_NAV: Dict[int, Dict[str, str]] = {
-    0: {"ITEM": "D",   "PKMN": "R",   "RUN": "R D"},
-    1: {"FIGHT": "U",  "PKMN": "R U", "RUN": "R"},
-    2: {"FIGHT": "L",  "ITEM": "L D", "RUN": "D"},
-    3: {"FIGHT": "U L","ITEM": "L",   "PKMN": "U"},
-}
-
 # Absolute navigation — reaches target from ANY main-menu cursor position.
 # Extra presses at boundaries are no-ops (cursor doesn't wrap in Gen 1).
 _ABS_NAV_FIGHT = "U L"
@@ -939,6 +920,14 @@ def _generate_battle_tip(
     # Unknown battle state (text message over an unrecognised menu).
     # B is the safe escape when stuck; A may confirm an unintended selection.
     if menu_type == "unknown" and player["hp"] > 0 and enemy["hp"] > 0:
+        # Critical HP wild battle — try running through the overlay immediately.
+        if battle_type == 1 and player["max_hp"] > 0:
+            hp_pct = player["hp"] * 100 // player["max_hp"]
+            if hp_pct <= 20:
+                return (
+                    f"HP critical ({hp_pct}%) + unknown state — attempt RUN through overlay! "
+                    f"Send: B {_ABS_NAV_RUN} A B {_ABS_NAV_RUN} A"
+                )
         return (
             "Unknown battle state — likely a submenu or text overlay. "
             "Press A to advance text, or B to return to main battle menu if stuck. Send: B"
@@ -1019,12 +1008,16 @@ def _generate_battle_tip(
             return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
                     f"— send: B {_ABS_NAV_ITEM} A W A")
 
-    # Wild battle + critically low HP → running is safer than fighting
+    # Wild battle + critically low HP → running is safer than fighting.
+    # Gen 1 run can fail — send the sequence twice so a single failure doesn't
+    # cost an extra turn (extra inputs are no-ops after the battle ends).
     if battle_type == 1 and player["hp"] > 0 and player["max_hp"] > 0:
         hp_pct = player["hp"] * 100 // player["max_hp"]
         if hp_pct <= 20 and menu_type in ("main", "fight"):
             return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
-                    f"Send: B {_ABS_NAV_RUN} A")
+                    f"B clears text overlay, {_ABS_NAV_RUN} navigates to RUN, A selects. "
+                    f"Sent twice in case Gen 1 run fails once. "
+                    f"Send: B {_ABS_NAV_RUN} A B {_ABS_NAV_RUN} A")
 
     # Find the strongest usable damage move, weighted by Gen 1 damage mechanics
     etypes = enemy_types or []
@@ -1273,9 +1266,16 @@ def _format_battle_text(
         # Cursor
         if menu_type == "main":
             item_name = _MAIN_MENU_ITEMS[cursor] if cursor < 4 else f"#{cursor}"
-            nav_hints = _MAIN_MENU_NAV.get(cursor, {})
-            nav_str = " | ".join(f"{k}:{v}" for k, v in nav_hints.items())
-            lines.append(f"  → Main menu: cursor on {item_name} (to reach: {nav_str})")
+            # Show absolute nav paths that work from ANY cursor position; always
+            # prefix with B which clears battle-start text overlays (and is a
+            # no-op on the main menu itself).  Cursor-relative paths are omitted
+            # deliberately — they mislead the model into skipping the B prefix.
+            lines.append(
+                f"  → Main menu: cursor on {item_name} | "
+                f"Absolute nav (always prefix B to clear text overlays): "
+                f"FIGHT:B {_ABS_NAV_FIGHT} | ITEM:B {_ABS_NAV_ITEM} | "
+                f"PKMN:B {_ABS_NAV_PKMN} | RUN:B {_ABS_NAV_RUN}"
+            )
         elif menu_type == "fight":
             if cursor < len(player["moves"]):
                 lines.append(f"  → Fight menu: cursor on slot {cursor+1} ({player['moves'][cursor]['name']})")

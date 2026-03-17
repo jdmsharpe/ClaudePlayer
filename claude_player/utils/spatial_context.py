@@ -19,10 +19,6 @@ MAX_SPRITES = 40
 # Characters assigned to unique tile IDs (62 slots)
 TILE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
-# Markers overlaid on the grid for on-screen sprites
-# Avoids '#' which is used for blocked tiles in walkability mode
-SPRITE_MARKERS = "@$%&*!~+=^"
-
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -73,7 +69,6 @@ _FACING_MAP: Dict[int, str] = {
 _ADDR_TEXT_BOX_ID    = 0xD125   # wTextBoxID – non-zero = text box active
 _ADDR_IS_IN_BATTLE   = ADDR_IS_IN_BATTLE
 _ADDR_WALK_COUNTER   = 0xCFC5   # wWalkCounter – non-zero = mid-step animation
-_ADDR_JOY_IGNORE     = 0xCC6B   # wJoyIgnore – button ignore bitmask (retained for reference; stale like wTextBoxID)
 _ADDR_STATUS_FLAGS5  = ADDR_STATUS_FLAGS5
 _ADDR_WINDOW_Y       = ADDR_WINDOW_Y
 _ADDR_SIM_JOYPAD_IDX = 0xCD38   # wSimulatedJoypadStatesIndex – non-zero = game running scripted input
@@ -500,11 +495,8 @@ def _extract_visible_tilemap(pyboy: PyBoy) -> Tuple[List[List[int]], Tuple[int, 
     return visible, (scx, scy)
 
 
-def _build_tile_legend(visible: List[List[int]]) -> Tuple[Dict[int, str], str]:
-    """Assign a unique character to each unique tile ID in the visible grid.
-
-    Returns (tile_to_char, legend_text).
-    """
+def _build_tile_legend(visible: List[List[int]]) -> Dict[int, str]:
+    """Assign a unique character to each unique tile ID in the visible grid."""
     unique_ids = sorted({tile for row in visible for tile in row})
 
     tile_to_char = {}
@@ -514,9 +506,7 @@ def _build_tile_legend(visible: List[List[int]]) -> Tuple[Dict[int, str], str]:
         else:
             tile_to_char[tile_id] = "?"
 
-    legend_parts = [f"{char}={tid}" for tid, char in
-                    sorted(tile_to_char.items(), key=lambda x: x[1])]
-    return tile_to_char, " ".join(legend_parts)
+    return tile_to_char
 
 
 def _extract_collision_data(pyboy: PyBoy) -> Optional[List[List[int]]]:
@@ -1748,7 +1738,7 @@ def extract_spatial_context(
     """
     try:
         visible, _ = _extract_visible_tilemap(pyboy)
-        tile_to_char, _ = _build_tile_legend(visible)
+        tile_to_char = _build_tile_legend(visible)
         sprites = _extract_sprites(pyboy)
         collision = _extract_collision_data(pyboy)
         terrain = _extract_terrain_data(pyboy)

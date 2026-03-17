@@ -90,7 +90,7 @@ All RAM addresses reference the pret/pokered disassembly. Key areas:
 - Spatial context reads tilemap, collisions, warps, NPCs, map connections from RAM
 - Coordinates (`wYCoord`/`wXCoord` at `0xD361`/`0xD362`) are in **block units** (1 block = 2×2 tiles = 16px step); warp entries and NPC sprite positions share this space (sprite state adds a constant +4 border offset)
 - `hTileAnimations` at `0xFFD7`: 0=indoor/building (no animations), 1=cave (water animated), 2=outdoor (water+flower animated) — sourced from annotated hram.asm
-- HRAM constants live in `ram_constants.py` under `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_JOY_HELD` (FFB4), `ADDR_UI_LAYOUT_FLAGS` (FFF6), `ADDR_DISABLE_JOYPAD` (FFF9)
+- HRAM constants live in `ram_constants.py` under `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_DISABLE_JOYPAD` (FFF9)
 - Battle context reads Pokemon stats, moves, HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD)
 - `0xCC2F` is dual-purpose: party index of sent-out Pokemon outside the fight submenu, last A-confirmed fight slot (0–3) inside it
 - Event flags at `0xD747` track story progression milestones

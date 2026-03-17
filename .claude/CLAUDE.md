@@ -55,6 +55,34 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 - **Web dashboard**: Flask in daemon thread, shares state via `TerminalDisplay` with thread locks
 - **Config**: `config.json` auto-created on first run; deep-merged with defaults from `config_loader.py`
 
+## Cost Tracking
+
+Per-turn and cumulative USD cost is estimated in `_estimate_cost()` (top of `game_agent.py`).
+
+**What's tracked** (matches the Anthropic `usage` response object fields):
+
+- `input_tokens` — regular (non-cached) input tokens at the base input rate
+- `output_tokens` — all output tokens, **including extended thinking/reasoning tokens** (billed at output rate)
+- `cache_creation_input_tokens` — tokens written to prompt cache (5-min TTL tier, 1.25× input rate)
+- `cache_read_input_tokens` — tokens served from cache (0.1× input rate)
+
+Tool-use system prompt overhead (~346 tokens/call) is already included in `input_tokens` by the API.
+
+**Pricing table** (`_MODEL_PRICING` dict — keys matched by substring, more-specific first):
+
+| Model family          | Input  | Output  | Cache read | Cache write (5m) |
+| --------------------- | ------ | ------- | ---------- | ---------------- |
+| Opus 4.5 / 4.6        | $5     | $25     | $0.50      | $6.25            |
+| Opus 4 / 4.1          | $15    | $75     | $1.50      | $18.75           |
+| Sonnet 4 / 4.5 / 4.6  | $3     | $15     | $0.30      | $3.75            |
+| Haiku 4.5             | $1     | $5      | $0.10      | $1.25            |
+| Haiku 3.5             | $0.80  | $4      | $0.08      | $1.00            |
+| Haiku 3               | $0.25  | $1.25   | $0.03      | $0.30            |
+
+All prices are per million tokens (MTok). The 1-hour cache write tier (2× input rate) is not distinguishable in the API response, so it is treated as 5-min writes — cost may be slightly underestimated if long-TTL caching is in use.
+
+Cumulative stats persist across runs in `saves/session_stats.json`.
+
 ## RAM / Emulation
 
 All RAM addresses reference the pret/pokered disassembly. Key areas:

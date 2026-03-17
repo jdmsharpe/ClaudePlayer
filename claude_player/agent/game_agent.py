@@ -50,12 +50,31 @@ def _is_fatal_error(error: Exception) -> bool:
     error_str = str(error)
     return any(pattern in error_str for pattern in FATAL_ERROR_PATTERNS)
 
-# Per-MTok pricing (USD).  Extend as new models are added.
+# Per-MTok pricing (USD) — (input, output, cache_read, cache_write_5min).
+# Keys are checked in order via substring match, so more-specific entries MUST come first
+# (e.g. "claude-opus-4-5" before "claude-opus-4" to avoid greedy shadowing).
+# Cache write rate uses the 5-minute TTL tier (1.25x input).  The 1-hour tier (2x input)
+# is not distinguishable from the usage object, so callers can optionally pass a multiplier.
+# Thinking/reasoning tokens are billed at the output rate and included in output_tokens.
 _MODEL_PRICING = {
-    # (input, output, cache_read, cache_write) per million tokens
-    "claude-haiku-4-5":  (0.80,  4.00,  0.08,  1.00),
-    "claude-sonnet-4-5": (3.00, 15.00,  0.30,  3.75),
-    "claude-opus-4":     (15.00, 75.00, 1.50, 18.75),
+    # Opus 4 family — 4.5 / 4.6: $5 / $25 per MTok
+    "claude-opus-4-6":   ( 5.00,  25.00,  0.50,  6.25),
+    "claude-opus-4-5":   ( 5.00,  25.00,  0.50,  6.25),
+    # Opus 4.1 and original Opus 4: $15 / $75 per MTok
+    "claude-opus-4-1":   (15.00,  75.00,  1.50, 18.75),
+    "claude-opus-4":     (15.00,  75.00,  1.50, 18.75),
+    # Opus 3 (deprecated): $15 / $75 per MTok
+    "claude-opus-3":     (15.00,  75.00,  1.50, 18.75),
+    # Sonnet 4 family — all versions: $3 / $15 per MTok
+    "claude-sonnet-4-6": ( 3.00,  15.00,  0.30,  3.75),
+    "claude-sonnet-4-5": ( 3.00,  15.00,  0.30,  3.75),
+    "claude-sonnet-4":   ( 3.00,  15.00,  0.30,  3.75),
+    # Haiku 4.5: $1 / $5 per MTok
+    "claude-haiku-4-5":  ( 1.00,   5.00,  0.10,  1.25),
+    # Haiku 3.5: $0.80 / $4 per MTok (must precede "claude-haiku-3" to avoid shadowing)
+    "claude-haiku-3-5":  ( 0.80,   4.00,  0.08,  1.00),
+    # Haiku 3: $0.25 / $1.25 per MTok
+    "claude-haiku-3":    ( 0.25,   1.25,  0.03,  0.30),
 }
 
 def _estimate_cost(
@@ -65,15 +84,22 @@ def _estimate_cost(
     cache_read_tokens: int = 0,
     cache_create_tokens: int = 0,
 ) -> float:
-    """Estimate USD cost for a single API call based on model pricing."""
-    # Match by substring so "claude-haiku-4-5-20251001" still hits "claude-haiku-4-5"
+    """Estimate USD cost for a single API call based on model pricing.
+
+    Thinking/reasoning tokens are included in output_tokens by the API and
+    billed at the standard output rate — no separate handling needed.
+    Cache writes default to the 5-minute TTL rate (1.25x input).
+    """
+    # Match by substring so dated suffixes like "-20251001" are handled transparently.
+    # Dict insertion order guarantees more-specific keys win over shorter prefixes.
     pricing = None
     for key, rates in _MODEL_PRICING.items():
         if key in model:
             pricing = rates
             break
     if pricing is None:
-        pricing = _MODEL_PRICING["claude-haiku-4-5"]  # default fallback
+        logging.warning(f"Unknown model '{model}' — cost estimate unavailable, defaulting to Haiku 4.5 rates")
+        pricing = _MODEL_PRICING["claude-haiku-4-5"]
     inp_rate, out_rate, cache_r_rate, cache_w_rate = pricing
     return (
         input_tokens * inp_rate
@@ -1187,7 +1213,7 @@ class GameAgent:
                     input_tok = getattr(usage, 'input_tokens', 0) or 0
                     output_tok = getattr(usage, 'output_tokens', 0) or 0
 
-                    # Compute turn cost (Haiku: $0.80/$4.00 per MTok, cache read 0.1x, cache write 1.25x)
+                    # Compute turn cost using per-model rates from _MODEL_PRICING
                     model = action_config.get("MODEL", "")
                     turn_cost = _estimate_cost(model, input_tok, output_tok, cache_read, cache_create)
 

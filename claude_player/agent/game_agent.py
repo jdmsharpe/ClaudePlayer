@@ -162,7 +162,7 @@ class GameAgent:
         # Store previous tilemap and player position for spatial context
         self._previous_visible_tilemap = None
         self._previous_player_pos = None
-        self._visited_positions: collections.deque = collections.deque(maxlen=150)
+        self._visited_positions: deque = deque(maxlen=150)
 
         # Track consecutive thinking-only responses for recovery
         self._consecutive_thinking_only = 0
@@ -186,7 +186,6 @@ class GameAgent:
 
         # Current context mode — drives which system prompt block to include
         self._in_battle = False
-        self._in_menu = False
 
         # Battle-specific stuck detection: track battle state between turns
         self._battle_stuck_count = 0
@@ -693,7 +692,6 @@ class GameAgent:
 
         self._was_in_battle = self._in_battle
         self._in_battle = bool(battle_data and battle_data.get("text"))
-        self._in_menu = bool(menu_data and menu_data.get("text"))
 
         # fight_cursor is now read from wPlayerMoveListIndex RAM in extract_battle_context.
         # No client-side tracking needed — the TIP uses U U U reset so cursor position

@@ -1149,7 +1149,10 @@ def _format_warp_text(
 
                 ovx, ovy = over_pos
                 over_in_grid = 0 <= ovx < grid_w and 0 <= ovy < grid_h
-                over_path = find_path(grid, player_pos, over_pos) if over_in_grid else None
+                # Mark the warp tile as passable so A* routes THROUGH it
+                # to reach the overshoot (not around it).
+                over_path = find_path(grid, player_pos, over_pos,
+                                      extra_passable={exact_pos}) if over_in_grid else None
 
                 if over_path:
                     buttons = path_to_buttons(over_path)

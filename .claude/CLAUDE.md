@@ -53,7 +53,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 - **Post-battle menu skip**: Menu context injection is suppressed on the turn immediately after battle ends (`_was_in_battle` flag), because battle cursor RAM (Y=14 X=15) persists and gets misidentified as `item_submenu`.
 - **Tool registry**: decorator pattern (`@registry.register(...)`) in `tool_registry.py`
 - **Memory system**: background Haiku subagent updates `saves/MEMORY.md` every N turns (80-line cap)
-- **World map**: persistent per-map tile accumulator with A* pathfinding in `world_map.py`
+- **World map**: persistent per-map tile accumulator with A* pathfinding in `world_map.py`. Includes a **map connectivity graph** (`map_graph`) that records bidirectional edges between maps from warps and connections. BFS on this graph provides map-level pathfinding so the NAV pipeline can identify the correct next-hop map (e.g. "go to Mt. Moon 1F" instead of "go to Cerulean City" when ledges block the direct route). The graph builds incrementally as maps are visited and persists in `world_map.json`. Map 0xFF ("outside / last map") warps are resolved to the actual previous map ID via `last_map_id`.
 - **Web dashboard**: Flask in daemon thread, shares state via `TerminalDisplay` with thread locks
 - **Config**: `config.json` auto-created on first run; deep-merged with defaults from `config_loader.py`
 
@@ -112,6 +112,8 @@ The system prompt (`claude_interface.py: _build_system_prompt`) must stay **abov
 - `<notation>` — button input format rules
 - `<spatial_context>` — grid legend, movement rules, warp mechanics
 - `<navigation>` — **critical**: COMPASS vs NAV priority rules, stuck recovery, warp pathing, dead-end behavior. Added to prevent the agent from converting compass bearings into frame inputs (e.g. "6 LEFT" → "L96") which walks into walls.
+- **NAV pipeline priority** (in `game_agent.py`): (1) **Map graph** — extract target map from goal text, BFS to find next hop, A\* to that hop's warp. If A\* fails (e.g. ledges block), exclude and retry BFS up to 3 times. (2) **COMPASS fallback** — parse direction from goal text, match against COMPASS entries. (3) **Frontier exploration** — A\* to nearest unexplored tile edge.
+- **Viewport warp pathing**: `find_path()` in `pathfinding.py` accepts `extra_passable` positions. When computing overshoot paths to warps, the target warp tile is marked passable so A\* routes *through* it (not around it). Without this, 'W' tiles are blocked in `DEFAULT_BLOCKED`, causing paths to circle around warps without triggering them.
 - `<battle_context>` — battle menu layout, RUN sequences, type matchups, healing thresholds
 - `<menu_context>` — menu navigation, Pokemon menu, save mechanics
 - `<authority>` / `<memory>` — data trust hierarchy

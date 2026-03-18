@@ -53,6 +53,55 @@ class WorldMap:
         self.warps: Dict[int, Dict[Tuple[int, int], str]] = {}
         # map_id → [(abs_x, abs_y), ...] — positions where cycling was detected
         self.dead_ends: Dict[int, List[Tuple[int, int]]] = {}
+        # Map connectivity graph: map_id → {dest_map_id, ...}
+        self.map_graph: Dict[int, Set[int]] = {}
+        # Map ID → human name (populated from warp_data as maps are visited)
+        self.map_names: Dict[int, str] = {}
+
+    def update_graph(
+        self,
+        map_id: int,
+        warp_data: Optional[Dict[str, Any]],
+        last_map_id: Optional[int] = None,
+    ) -> None:
+        """Record map connectivity edges without stamping tiles.
+
+        Safe to call on map-change turns (warp/connection data is from RAM,
+        not the screen grid which may still be transitioning).
+
+        Args:
+            map_id: Current map ID.
+            warp_data: Warp/connection data from spatial_context.
+            last_map_id: Previous map ID, used to resolve 0xFF ("outside /
+                last map") warps into real map IDs.
+        """
+        if not warp_data:
+            return
+        if "map_name" in warp_data:
+            self.map_names[map_id] = warp_data["map_name"]
+        if map_id not in self.map_graph:
+            self.map_graph[map_id] = set()
+        for w in warp_data.get("warps", []):
+            dest_mid = w.get("dest_map")
+            # 0xFF = "outside (last map)" — resolve to actual map ID
+            if dest_mid == 0xFF and last_map_id is not None:
+                dest_mid = last_map_id
+            if dest_mid is not None and dest_mid != 0xFF:
+                self.map_graph[map_id].add(dest_mid)
+                if dest_mid not in self.map_graph:
+                    self.map_graph[dest_mid] = set()
+                self.map_graph[dest_mid].add(map_id)
+                if dest_mid not in self.map_names and w.get("dest_name"):
+                    self.map_names[dest_mid] = w["dest_name"]
+        for conn in warp_data.get("connections", []):
+            dest_mid = conn.get("dest_map")
+            if dest_mid is not None and dest_mid != 0xFF:
+                self.map_graph[map_id].add(dest_mid)
+                if dest_mid not in self.map_graph:
+                    self.map_graph[dest_mid] = set()
+                self.map_graph[dest_mid].add(map_id)
+                if dest_mid not in self.map_names:
+                    self.map_names[dest_mid] = conn.get("dest_name", "?")
 
     def update(
         self,
@@ -61,6 +110,7 @@ class WorldMap:
         player_screen_pos: Tuple[int, int],
         grid: List[List[str]],
         warp_data: Optional[Dict[str, Any]] = None,
+        last_map_id: Optional[int] = None,
     ) -> None:
         """Stamp the current viewport grid into the accumulated map."""
         if map_id not in self.tiles:
@@ -91,6 +141,10 @@ class WorldMap:
             warp_map = self.warps[map_id]
             mw = warp_data.get("map_width", 0)
             mh = warp_data.get("map_height", 0)
+
+            # Record graph edges (shared with update_graph)
+            self.update_graph(map_id, warp_data, last_map_id=last_map_id)
+
             for w in warp_data.get("warps", []):
                 warp_map[(w["map_x"], w["map_y"])] = w.get("dest_name", "?")
 
@@ -137,6 +191,14 @@ class WorldMap:
                 for mid, zones in self.dead_ends.items()
                 if zones
             },
+            "map_graph": {
+                str(mid): sorted(neighbors)
+                for mid, neighbors in self.map_graph.items()
+            },
+            "map_names": {
+                str(mid): name
+                for mid, name in self.map_names.items()
+            },
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -167,7 +229,19 @@ class WorldMap:
             for mid_str, zones in data.get("dead_ends", {}).items():
                 mid = int(mid_str)
                 self.dead_ends[mid] = [tuple(z) for z in zones]
-            logger.info(f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles across {len(self.tiles)} maps")
+            for mid_str, neighbors in data.get("map_graph", {}).items():
+                mid = int(mid_str)
+                if mid not in self.map_graph:
+                    self.map_graph[mid] = set()
+                self.map_graph[mid].update(neighbors)
+            for mid_str, name in data.get("map_names", {}).items():
+                mid = int(mid_str)
+                if mid not in self.map_names:
+                    self.map_names[mid] = name
+            logger.info(
+                f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles "
+                f"across {len(self.tiles)} maps, {len(self.map_graph)} graph nodes"
+            )
         except Exception as e:
             logger.warning(f"WorldMap load failed: {e}")
 
@@ -584,6 +658,60 @@ class WorldMap:
             f"NAV(map): to {best_name} ({total_dist} tiles): "
             f"{buttons}{suffix} — re-evaluate after executing"
         )
+
+    def find_map_path(
+        self,
+        src_map: int,
+        dst_map: int,
+        exclude_maps: Optional[Set[int]] = None,
+    ) -> Optional[List[int]]:
+        """BFS on the map connectivity graph.
+
+        Args:
+            src_map: Starting map ID.
+            dst_map: Target map ID.
+            exclude_maps: Map IDs to skip during BFS (for retry when
+                the first-hop map is reachable in the graph but not
+                via tile-level A* due to terrain like ledges).
+
+        Returns list of map IDs from src to dst (inclusive), or None if
+        no path exists in the explored graph.
+        """
+        if src_map == dst_map:
+            return [src_map]
+        if src_map not in self.map_graph:
+            return None
+        _exclude = exclude_maps or set()
+
+        from collections import deque
+        queue: deque = deque([(src_map, [src_map])])
+        visited: Set[int] = {src_map} | _exclude
+        while queue:
+            current, path = queue.popleft()
+            for neighbor in self.map_graph.get(current, set()):
+                if neighbor == dst_map:
+                    return path + [neighbor]
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+        return None
+
+    def next_map_toward(
+        self,
+        src_map: int,
+        dst_map: int,
+        exclude_maps: Optional[Set[int]] = None,
+    ) -> Optional[str]:
+        """Return the name of the next map to visit on the way to dst_map.
+
+        Uses BFS on the map connectivity graph.  Returns None if no path
+        exists or src == dst.
+        """
+        path = self.find_map_path(src_map, dst_map, exclude_maps=exclude_maps)
+        if not path or len(path) < 2:
+            return None
+        next_id = path[1]
+        return self.map_names.get(next_id)
 
     @staticmethod
     def _path_to_buttons(

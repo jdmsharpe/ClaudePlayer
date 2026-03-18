@@ -410,6 +410,8 @@ class GameAgent:
             self._previous_player_pos = current_pos
             # Track visited positions for exploration analysis
             new_map_id = spatial_data.get("map_number")
+            map_changed = False
+            prev_map_id = self._current_map_id  # for graph 0xFF resolution
             if current_pos is not None:
                 # Detect map change: map_id changed OR large position jump
                 map_changed = (
@@ -435,17 +437,26 @@ class GameAgent:
             # the new map's tile record.  Stable tiles arrive the next turn.
             if (current_pos is not None
                     and in_overworld
-                    and not map_changed
-                    and spatial_data.get("base_grid")
-                    and spatial_data.get("player_screen_pos")
                     and spatial_data.get("map_number") is not None):
-                self._world_map.update(
-                    map_id=spatial_data["map_number"],
-                    player_pos=current_pos,
-                    player_screen_pos=spatial_data["player_screen_pos"],
-                    grid=spatial_data["base_grid"],
-                    warp_data=spatial_data.get("warp_data_raw"),
-                )
+                if map_changed:
+                    # On map-change turns: record graph edges only (warp/connection
+                    # data is from RAM, not the screen grid which may be mid-transition).
+                    self._world_map.update_graph(
+                        spatial_data["map_number"],
+                        spatial_data.get("warp_data_raw"),
+                        last_map_id=prev_map_id,
+                    )
+                elif (spatial_data.get("base_grid")
+                      and spatial_data.get("player_screen_pos")):
+                    # Normal turns: full tile + warp + graph update.
+                    self._world_map.update(
+                        map_id=spatial_data["map_number"],
+                        player_pos=current_pos,
+                        player_screen_pos=spatial_data["player_screen_pos"],
+                        grid=spatial_data["base_grid"],
+                        warp_data=spatial_data.get("warp_data_raw"),
+                        last_map_id=prev_map_id,
+                    )
 
             # ── Unified navigation hint (single message, priority-based) ──
             # Instead of layering multiple independent warnings (CYCLING,
@@ -916,73 +927,138 @@ class GameAgent:
                 )
                 if world_map_text:
                     spatial_text += "\n" + world_map_text
-                # World-map A* NAV: replace viewport-only NAV with full-map path
-                # Derive preferred direction from the current goal text, then
-                # find the compass warp that matches that direction.  This is
-                # goal-driven: the MAP_HINT encodes which direction to travel
-                # (e.g. "HEAD NORTH"), so we don't rely on compass display order.
-                goal_upper = (self.game_state.current_goal or "").upper()
-                preferred_direction = next(
-                    (d for d in ("NORTH", "SOUTH", "EAST", "WEST") if d in goal_upper),
-                    None,
-                )
-                _dir_to_compass_kw = {
-                    "NORTH": "UP", "SOUTH": "DOWN",
-                    "EAST": "RIGHT", "WEST": "LEFT",
-                }
+                # World-map A* NAV: replace viewport-only NAV with full-map path.
+                #
+                # Strategy: MAP GRAPH first, COMPASS fallback.
+                # 1. Extract target map from goal text → BFS on map graph
+                #    → preferred_dest = next hop toward target.
+                # 2. If graph has no data, fall back to COMPASS parsing.
+                # 3. If A* can't reach graph-suggested dest (e.g. ledges
+                #    block the connection), exclude that map and retry BFS
+                #    to find an alternate route (max 3 attempts).
+
+                goal_text = self.game_state.current_goal or ""
+                goal_upper = goal_text.upper()
                 preferred_dest = None
-                secondary_preferred_dest = None  # direction matches but not primary
-                first_compass_dest = None
-                in_compass = False
-                kw = _dir_to_compass_kw.get(preferred_direction, "") if preferred_direction else ""
-                for line in spatial_text.split("\n"):
-                    if line.startswith("COMPASS"):
-                        in_compass = True
+                preferred_direction = None
+                wm_nav = None
+
+                # ── Step 1: Map graph lookup ──
+                # Find target map by longest substring match in goal text.
+                target_map_id = None
+                best_match_len = 0
+                for mid, mname in self._world_map.map_names.items():
+                    if mid == map_id:
                         continue
-                    if in_compass and line.startswith("  ") and ":" in line:
-                        dest = line.strip().split(":")[0].strip()
-                        if first_compass_dest is None:
-                            first_compass_dest = dest
-                        if kw and kw in line.upper():
-                            # Prefer entries where kw is the PRIMARY direction —
-                            # i.e. it appears before any other direction keyword.
-                            # (spatial_context now lists primary direction first.)
-                            line_upper = line.upper()
-                            kw_idx = line_upper.find(kw)
-                            other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
-                            first_other = min(
-                                (line_upper.find(d) for d in other_dirs if d in line_upper),
-                                default=9999,
-                            )
-                            if kw_idx < first_other:
-                                preferred_dest = dest
-                                break  # primary match — stop searching
-                            elif secondary_preferred_dest is None:
-                                secondary_preferred_dest = dest
-                    elif in_compass and not line.startswith("  "):
-                        in_compass = False
-                # Fall back to secondary (direction present but not primary)
-                if not preferred_dest:
-                    preferred_dest = secondary_preferred_dest
-                # Fallback: no direction match → use first compass entry
-                if not preferred_dest:
-                    preferred_dest = first_compass_dest
-                    if preferred_dest and not preferred_direction:
-                        # Extract direction from fallback line
-                        for line in spatial_text.split("\n"):
-                            if line.startswith("  ") and preferred_dest in line:
-                                for d in ("NORTH", "SOUTH", "EAST", "WEST"):
-                                    if d in line.upper():
-                                        preferred_direction = d
-                                        break
-                                break
-                wm_nav = self._world_map.find_nav_hint(
-                    map_id, player_pos,
-                    preferred_dest=preferred_dest,
-                    preferred_direction=preferred_direction,
-                    dead_end_zones=self._world_map.dead_ends.get(map_id, []),
-                    npc_positions=spatial_data.get("npc_abs_positions"),
-                )
+                    if mname.lower() in goal_text.lower() and len(mname) > best_match_len:
+                        target_map_id = mid
+                        best_match_len = len(mname)
+
+                if target_map_id is not None:
+                    # BFS with retry: if A* can't reach the first hop,
+                    # exclude it and re-BFS for an alternate route.
+                    exclude_maps: set = set()
+                    for _attempt in range(3):
+                        map_path = self._world_map.find_map_path(
+                            map_id, target_map_id, exclude_maps=exclude_maps,
+                        )
+                        if not map_path or len(map_path) < 2:
+                            break
+                        hop_id = map_path[1]
+                        hop_name = self._world_map.map_names.get(hop_id)
+                        if not hop_name:
+                            break
+                        logging.info(
+                            f"NAV graph: target={self._world_map.map_names.get(target_map_id)!r} "
+                            f"next_hop={hop_name!r} path_len={len(map_path)} "
+                            f"map=0x{map_id:02X} pos={player_pos} "
+                            f"attempt={_attempt + 1}"
+                        )
+                        wm_nav = self._world_map.find_nav_hint(
+                            map_id, player_pos,
+                            preferred_dest=hop_name,
+                            dead_end_zones=self._world_map.dead_ends.get(map_id, []),
+                            npc_positions=spatial_data.get("npc_abs_positions"),
+                        )
+                        if wm_nav:
+                            preferred_dest = hop_name
+                            logging.info(f"NAV result: {wm_nav}")
+                            break
+                        # A* couldn't reach this hop — exclude and retry
+                        logging.info(f"NAV graph: {hop_name!r} unreachable via A*, excluding")
+                        exclude_maps.add(hop_id)
+
+                # ── Step 2: COMPASS fallback (no graph data or graph failed) ──
+                if not wm_nav:
+                    # Use word-boundary match so "NORTHEAST" doesn't falsely
+                    # match "NORTH" — compound directions in goal text usually
+                    # describe a location, not a travel direction.
+                    preferred_direction = next(
+                        (d for d in ("NORTH", "SOUTH", "EAST", "WEST")
+                         if re.search(rf"\b{d}\b", goal_upper)),
+                        None,
+                    )
+                    _dir_to_compass_kw = {
+                        "NORTH": "UP", "SOUTH": "DOWN",
+                        "EAST": "RIGHT", "WEST": "LEFT",
+                    }
+                    preferred_dest = None
+                    secondary_preferred_dest = None
+                    first_compass_dest = None
+                    in_compass = False
+                    kw = _dir_to_compass_kw.get(preferred_direction, "") if preferred_direction else ""
+                    for line in spatial_text.split("\n"):
+                        if line.startswith("COMPASS"):
+                            in_compass = True
+                            continue
+                        if in_compass and line.startswith("  ") and ":" in line:
+                            dest = line.strip().split(":")[0].strip()
+                            if first_compass_dest is None:
+                                first_compass_dest = dest
+                            if kw and kw in line.upper():
+                                line_upper = line.upper()
+                                kw_idx = line_upper.find(kw)
+                                other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
+                                first_other = min(
+                                    (line_upper.find(d) for d in other_dirs if d in line_upper),
+                                    default=9999,
+                                )
+                                if kw_idx < first_other:
+                                    preferred_dest = dest
+                                    break
+                                elif secondary_preferred_dest is None:
+                                    secondary_preferred_dest = dest
+                        elif in_compass and not line.startswith("  "):
+                            in_compass = False
+                    if not preferred_dest:
+                        preferred_dest = secondary_preferred_dest
+                    if not preferred_dest:
+                        preferred_dest = first_compass_dest
+                        if preferred_dest and not preferred_direction:
+                            for line in spatial_text.split("\n"):
+                                if line.startswith("  ") and preferred_dest in line:
+                                    for d in ("NORTH", "SOUTH", "EAST", "WEST"):
+                                        if d in line.upper():
+                                            preferred_direction = d
+                                            break
+                                    break
+                    logging.info(
+                        f"NAV compass fallback: dest={preferred_dest!r} dir={preferred_direction!r} "
+                        f"map=0x{map_id:02X} pos={player_pos} "
+                        f"warps={len(self._world_map.warps.get(map_id, {}))} "
+                        f"tiles={len(self._world_map.tiles.get(map_id, {}))}"
+                    )
+                    wm_nav = self._world_map.find_nav_hint(
+                        map_id, player_pos,
+                        preferred_dest=preferred_dest,
+                        preferred_direction=preferred_direction,
+                        dead_end_zones=self._world_map.dead_ends.get(map_id, []),
+                        npc_positions=spatial_data.get("npc_abs_positions"),
+                    )
+                    if wm_nav:
+                        logging.info(f"NAV result: {wm_nav}")
+                    else:
+                        logging.info("NAV result: None (no path found)")
                 if wm_nav:
                     # Replace viewport NAV with world-map NAV, placed
                     # right after COMPASS (before the grid) so it's the

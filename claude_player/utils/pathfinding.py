@@ -41,6 +41,7 @@ def find_path(
     start: Tuple[int, int],
     goal: Tuple[int, int],
     blocked_chars: FrozenSet[str] = DEFAULT_BLOCKED,
+    extra_passable: Optional[Set[Tuple[int, int]]] = None,
 ) -> Optional[List[Tuple[int, int]]]:
     """A* pathfinding from start to goal on a character grid.
 
@@ -49,6 +50,8 @@ def find_path(
         start: (x, y) player position.
         goal: (x, y) target position. Always treated as passable.
         blocked_chars: Characters that are impassable (except at goal).
+        extra_passable: Positions treated as passable regardless of tile
+            (e.g. a warp tile we need to walk through to reach an overshoot).
 
     Returns:
         List of (x, y) from start to goal inclusive, or None.
@@ -57,6 +60,7 @@ def find_path(
     width = len(grid[0]) if grid else 0
     sx, sy = start
     gx, gy = goal
+    _extra = extra_passable or set()
 
     if not (0 <= sx < width and 0 <= sy < height):
         return None
@@ -66,7 +70,7 @@ def find_path(
         return [start]
 
     def _passable(x: int, y: int, dx: int = 0, dy: int = 0) -> bool:
-        if (x, y) == goal:
+        if (x, y) == goal or (x, y) in _extra:
             return True
         cell = grid[y][x]
         if cell in _LEDGE_ALLOWED_DIR:

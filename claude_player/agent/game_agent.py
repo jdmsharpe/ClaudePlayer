@@ -78,12 +78,6 @@ class GameAgent:
             pyboy_kwargs['cgb'] = True
             pyboy_kwargs['cgb_color_palette'] = palette
 
-        # Use 24 kHz sample rate to halve APU buffer pressure (buffer = (400+1)*2 = 802
-        # instead of 1602).  At 48 kHz, LCD transitions can overflow the 1-frame buffer
-        # in PyBoy's Cython core, causing crashes.
-        if getattr(self.config, 'ENABLE_SOUND', True):
-            pyboy_kwargs['sound_sample_rate'] = 24000
-
         self.pyboy = PyBoy(self.config.ROM_PATH, **pyboy_kwargs)
         self.pyboy.set_emulation_speed(target_speed=self.config.EMULATION_SPEED)
 

@@ -369,6 +369,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .goal-bar .panel-label { margin-bottom: 0; }
   .goal-bar .panel-label::before { background: #58a6ff; }
   .goal-bar .ai-goal-text { font-size: 12px; }
+  .tactical-sep { color: #30363d; margin: 0 4px; font-size: 14px; }
+  .tactical-section { display: flex; align-items: center; gap: 6px; }
+  .tactical-section .panel-label { margin-bottom: 0; }
+  .tactical-section .panel-label::before { background: #f0883e !important; }
+  #ai-tactical-goal { color: #f0883e; font-weight: 600; font-size: 12px; }
   #goal-progress { display: flex; align-items: center; gap: 4px; }
   .party-panel .panel-label::before { background: #f85149; }
   .bag-panel .panel-label::before { background: #e3b341; }
@@ -813,9 +818,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="panel-label">Goal</div>
     <div id="goal-progress" style="display:none"><div class="progress-bar" style="width:80px"><div class="progress-fill" id="goal-progress-fill"></div></div><span id="goal-progress-text" style="font-size:11px;color:#8b949e;margin-left:4px"></span></div>
     <div class="ai-goal-text" id="ai-goal">-</div>
-    <span id="tactical-sep" style="display:none;color:#30363d;margin:0 6px">|</span>
-    <span id="tactical-label" style="display:none;font-size:11px;color:#8b949e;">Now:</span>
-    <div class="ai-goal-text" id="ai-tactical-goal" style="display:none;color:#7ee787;">-</div>
+    <div class="tactical-section" id="tactical-section" style="display:none">
+      <span class="tactical-sep">|</span>
+      <div class="panel-label">Tactical</div>
+      <div class="ai-goal-text" id="ai-tactical-goal">-</div>
+    </div>
   </div>
 
   <div class="frame-panel">
@@ -932,14 +939,12 @@ async function pollState() {
     }
     // Tactical goal (sub-goal for current map)
     const tg = d.tactical_goal || '';
-    const tgEl = document.getElementById('ai-tactical-goal');
-    const tgSep = document.getElementById('tactical-sep');
-    const tgLabel = document.getElementById('tactical-label');
+    const tgSection = document.getElementById('tactical-section');
     if (tg) {
-      tgEl.style.display = ''; tgSep.style.display = ''; tgLabel.style.display = '';
+      tgSection.style.display = 'flex';
       setText('ai-tactical-goal', tg);
     } else {
-      tgEl.style.display = 'none'; tgSep.style.display = 'none'; tgLabel.style.display = 'none';
+      tgSection.style.display = 'none';
     }
     _lastAction = d.last_action || '-';
     renderMarkdown('ai-response', d.last_response || '-');

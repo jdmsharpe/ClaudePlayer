@@ -170,6 +170,9 @@ class GameAgent:
         # Track consecutive turns at the same position for stuck detection
         self._stuck_count = 0
 
+        # Movement feedback from last send_inputs execution
+        self._last_action_feedback = None
+
         # Track recent actions for loop detection
         self._action_history = []  # List of (turn, action_string) tuples
         self._max_action_history = 8
@@ -888,6 +891,10 @@ class GameAgent:
         # Build user content from pre-captured data
         screenshot = captured_state["screenshot"]
         user_content = [screenshot]
+        # Inject movement feedback from last turn's send_inputs execution
+        if self._last_action_feedback:
+            user_content.append({"type": "text", "text": self._last_action_feedback})
+            self._last_action_feedback = None
         if memory_block:
             user_content.append({"type": "text", "text": memory_block})
         if battle_data and battle_data.get("text"):
@@ -1757,6 +1764,10 @@ class GameAgent:
                 
                 if action:
                     logging.info(f"Executing pending action: {action} (remaining: {len(pending_actions)})")
+                    # Record position before execution for movement feedback
+                    _pre_y = self.pyboy.memory[0xD361]
+                    _pre_x = self.pyboy.memory[0xD362]
+                    _pre_map = self.pyboy.memory[0xD35E]
                     try:
                         from claude_player.utils.game_utils import press_and_release_buttons
                         frame_cb = self.display.set_frame if self.web_streamer else None
@@ -1767,6 +1778,16 @@ class GameAgent:
                     except Exception as e:
                         logging.error(f"Error executing inputs '{action}': {str(e)}")
                         # Continue with next actions rather than crashing
+                    # Record position after execution and store feedback
+                    _post_y = self.pyboy.memory[0xD361]
+                    _post_x = self.pyboy.memory[0xD362]
+                    _post_map = self.pyboy.memory[0xD35E]
+                    if _pre_map != _post_map:
+                        self._last_action_feedback = f"Executed: {action} — map changed (warped)"
+                    elif _pre_x == _post_x and _pre_y == _post_y:
+                        self._last_action_feedback = f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}). Path was blocked."
+                    else:
+                        self._last_action_feedback = f"Executed: {action} — moved ({_pre_x},{_pre_y})→({_post_x},{_post_y})"
                     # Refresh battle context after action so the web/terminal cursor
                     # matches the live game state (cursor RAM updates immediately on button press)
                     if self._in_battle:

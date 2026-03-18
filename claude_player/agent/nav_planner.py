@@ -1,0 +1,212 @@
+"""Navigation planner: map-graph BFS + compass fallback + spatial text injection.
+
+Extracted from game_agent.py to isolate the NAV pipeline into a focused,
+independently testable module.  The main entry point is compute_nav(),
+which takes pure data and returns an updated spatial_text string.
+"""
+
+import logging
+import re
+from typing import Dict, List, Optional, Tuple
+
+from claude_player.utils.world_map import WorldMap
+
+# Direction keyword mapping for COMPASS fallback NAV parsing
+_DIR_TO_COMPASS_KW = {
+    "NORTH": "UP", "SOUTH": "DOWN",
+    "EAST": "RIGHT", "WEST": "LEFT",
+}
+
+
+def _parse_compass_dest(
+    spatial_text: str,
+    goal_upper: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Extract preferred destination and direction from COMPASS lines.
+
+    Parses the COMPASS block in spatial_text, cross-referencing with the
+    goal text to find which compass destination best matches the agent's
+    current objective.
+
+    Returns:
+        (preferred_dest, preferred_direction) — either may be None.
+    """
+    preferred_direction = next(
+        (d for d in ("NORTH", "SOUTH", "EAST", "WEST")
+         if re.search(rf"\b{d}\b", goal_upper)),
+        None,
+    )
+    preferred_dest = None
+    secondary_preferred_dest = None
+    first_compass_dest = None
+    in_compass = False
+    kw = _DIR_TO_COMPASS_KW.get(preferred_direction, "") if preferred_direction else ""
+    for line in spatial_text.split("\n"):
+        if line.startswith("COMPASS"):
+            in_compass = True
+            continue
+        if in_compass and line.startswith("  ") and ":" in line:
+            dest = line.strip().split(":")[0].strip()
+            if first_compass_dest is None:
+                first_compass_dest = dest
+            if kw and kw in line.upper():
+                line_upper = line.upper()
+                kw_idx = line_upper.find(kw)
+                other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
+                first_other = min(
+                    (line_upper.find(d) for d in other_dirs if d in line_upper),
+                    default=9999,
+                )
+                if kw_idx < first_other:
+                    preferred_dest = dest
+                    break
+                elif secondary_preferred_dest is None:
+                    secondary_preferred_dest = dest
+        elif in_compass and not line.startswith("  "):
+            in_compass = False
+    if not preferred_dest:
+        preferred_dest = secondary_preferred_dest
+    if not preferred_dest:
+        preferred_dest = first_compass_dest
+        if preferred_dest and not preferred_direction:
+            for line in spatial_text.split("\n"):
+                if line.startswith("  ") and preferred_dest in line:
+                    for d in ("NORTH", "SOUTH", "EAST", "WEST"):
+                        if d in line.upper():
+                            preferred_direction = d
+                            break
+                    break
+    return preferred_dest, preferred_direction
+
+
+def _inject_nav_hint(spatial_text: str, wm_nav: str) -> str:
+    """Replace viewport NAV with world-map NAV in spatial text.
+
+    Inserts the hint right after the COMPASS block (before the grid) so
+    it's the first actionable hint the agent reads.  Falls back to after
+    the 'Map position:' line if no COMPASS block is found.
+    """
+    new_lines = []
+    for line in spatial_text.split("\n"):
+        if line.startswith("NAV:"):
+            continue  # drop viewport NAV
+        new_lines.append(line)
+    # Insert after COMPASS block; fallback: after Map position.
+    insert_idx = len(new_lines)
+    for i, line in enumerate(new_lines):
+        if line.startswith("COMPASS"):
+            insert_idx = i + 1
+            while insert_idx < len(new_lines) and new_lines[insert_idx].startswith("  "):
+                insert_idx += 1
+            break
+        if line.startswith("Map position:"):
+            insert_idx = i + 1
+    new_lines.insert(insert_idx, wm_nav)
+    return "\n".join(new_lines)
+
+
+def compute_nav(
+    world_map: WorldMap,
+    map_id: int,
+    player_pos: Tuple[int, int],
+    goal_text: str,
+    spatial_text: str,
+    npc_positions: Optional[List] = None,
+) -> str:
+    """Run the full NAV pipeline and return updated spatial_text.
+
+    Pipeline priority:
+      1. Map graph — extract target map from goal text, BFS to find next
+         hop, A* to that hop's warp.  If A* fails (e.g. ledges block),
+         exclude that map and retry BFS up to 3 times.
+      2. COMPASS fallback — parse direction from goal text, match against
+         COMPASS entries in the spatial context.
+      3. If neither produces a hint, spatial_text is returned unchanged.
+
+    Args:
+        world_map: Persistent WorldMap with tiles, warps, and map graph.
+        map_id: Current map ID.
+        player_pos: Player (x, y) in block coordinates.
+        goal_text: Current goal string (may be empty).
+        spatial_text: Full spatial context string to augment.
+        npc_positions: Optional list of NPC absolute positions for A*.
+
+    Returns:
+        The spatial_text string, potentially with a NAV hint injected.
+    """
+    dead_end_zones = world_map.dead_ends.get(map_id, [])
+    wm_nav = None
+
+    # ── Step 1: Map graph lookup ──
+    # Find target map by longest substring match in goal text.
+    target_map_id = None
+    best_match_len = 0
+    for mid, mname in world_map.map_names.items():
+        if mid == map_id:
+            continue
+        if mname.lower() in goal_text.lower() and len(mname) > best_match_len:
+            target_map_id = mid
+            best_match_len = len(mname)
+
+    if target_map_id is not None:
+        # BFS with retry: if A* can't reach the first hop,
+        # exclude it and re-BFS for an alternate route.
+        exclude_maps: set = set()
+        for _attempt in range(3):
+            map_path = world_map.find_map_path(
+                map_id, target_map_id, exclude_maps=exclude_maps,
+            )
+            if not map_path or len(map_path) < 2:
+                break
+            hop_id = map_path[1]
+            hop_name = world_map.map_names.get(hop_id)
+            if not hop_name:
+                break
+            logging.info(
+                f"NAV graph: target={world_map.map_names.get(target_map_id)!r} "
+                f"next_hop={hop_name!r} path_len={len(map_path)} "
+                f"map=0x{map_id:02X} pos={player_pos} "
+                f"attempt={_attempt + 1}"
+            )
+            wm_nav = world_map.find_nav_hint(
+                map_id, player_pos,
+                preferred_dest=hop_name,
+                dead_end_zones=dead_end_zones,
+                npc_positions=npc_positions,
+            )
+            if wm_nav:
+                logging.info(f"NAV result: {wm_nav}")
+                break
+            # A* couldn't reach this hop — exclude and retry
+            logging.info(f"NAV graph: {hop_name!r} unreachable via A*, excluding")
+            exclude_maps.add(hop_id)
+
+    # ── Step 2: COMPASS fallback (no graph data or graph failed) ──
+    if not wm_nav:
+        goal_upper = goal_text.upper()
+        preferred_dest, preferred_direction = _parse_compass_dest(
+            spatial_text, goal_upper,
+        )
+        logging.info(
+            f"NAV compass fallback: dest={preferred_dest!r} dir={preferred_direction!r} "
+            f"map=0x{map_id:02X} pos={player_pos} "
+            f"warps={len(world_map.warps.get(map_id, {}))} "
+            f"tiles={len(world_map.tiles.get(map_id, {}))}"
+        )
+        wm_nav = world_map.find_nav_hint(
+            map_id, player_pos,
+            preferred_dest=preferred_dest,
+            preferred_direction=preferred_direction,
+            dead_end_zones=dead_end_zones,
+            npc_positions=npc_positions,
+        )
+        if wm_nav:
+            logging.info(f"NAV result: {wm_nav}")
+        else:
+            logging.info("NAV result: None (no path found)")
+
+    # ── Step 3: Inject into spatial text ──
+    if wm_nav:
+        spatial_text = _inject_nav_hint(spatial_text, wm_nav)
+
+    return spatial_text

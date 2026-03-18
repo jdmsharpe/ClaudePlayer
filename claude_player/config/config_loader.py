@@ -59,24 +59,24 @@ def load_config(config_file='config.json') -> ConfigClass:
         "ENABLE_SOUND": True,
         "SOUND_VOLUME": 50,
         "MAX_HISTORY_MESSAGES": 15,
-        "MAX_SCREENSHOTS": 1,
+        "MAX_SCREENSHOTS": 2,
         "BOOT_FRAMES": 400,
         "CUSTOM_INSTRUCTIONS": "",
         "WEB_PORT": 0,
 
         "MODEL_DEFAULTS": {
-            "MODEL": "claude-haiku-4-5",
+            "MODEL": "claude-sonnet-4-6",
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,
-            "MAX_TOKENS": 16384,
-            "THINKING_BUDGET": 11111,
+            "MAX_TOKENS": 8192,
+            "THINKING_BUDGET": 4096,
         },
 
         "ACTION": {},
 
         "MEMORY": {
-            "MEMORY_INTERVAL": 20,
+            "MEMORY_INTERVAL": 30,
         },
 
         "STUCK": {

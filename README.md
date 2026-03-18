@@ -68,24 +68,24 @@ Configuration is loaded from `config.json` (created automatically on first run i
   "STATE_PATH": null,                     // Optional path to a saved state (null = auto-load from saves/)
   "LOG_FILE": "game_agent.log",           // Path to the log file
   "EMULATION_SPEED": 1,                   // Emulation speed multiplier
-  "CONTINUOUS_ANALYSIS_INTERVAL": 3.5,    // Base analysis interval in seconds
+  "CONTINUOUS_ANALYSIS_INTERVAL": 1.0,    // Base analysis interval in seconds
   "MAX_ADAPTIVE_INTERVAL": 15.0,          // Max interval when agent is idle
   "ENABLE_SPATIAL_CONTEXT": true,         // Whether to include map/grid context in prompts
   "ENABLE_SOUND": true,                   // Whether to enable emulator sound
   "MAX_HISTORY_MESSAGES": 15,             // Max messages kept in context window
-  "MAX_SCREENSHOTS": 1,                   // Max recent screenshots kept in chat history
+  "MAX_SCREENSHOTS": 2,                   // Max recent screenshots kept in chat history
   "BOOT_FRAMES": 400,                     // Frames to tick before first analysis
   "WEB_PORT": 0,                          // HTTP dashboard port (0 = disabled)
   "CUSTOM_INSTRUCTIONS": "",              // Extra instructions injected into Claude's system prompt
 
   // Default model settings — inherited by ACTION if not overridden
   "MODEL_DEFAULTS": {
-    "MODEL": "claude-haiku-4-5",          // Claude model to use
-    "THINKING": true,                     // Enable extended thinking
-    "DYNAMIC_THINKING": true,             // Allow Claude to toggle thinking on/off
-    "EFFICIENT_TOOLS": true,              // Use token-efficient-tools beta
-    "MAX_TOKENS": 16384,                  // Maximum tokens per response
-    "THINKING_BUDGET": 11111              // Maximum tokens for thinking
+    "MODEL": "claude-sonnet-4-6",        // Claude model to use
+    "THINKING": true,                    // Enable extended thinking
+    "DYNAMIC_THINKING": true,            // Allow Claude to toggle thinking on/off
+    "EFFICIENT_TOOLS": true,             // Use token-efficient-tools beta
+    "MAX_TOKENS": 8192,                  // Maximum tokens per response
+    "THINKING_BUDGET": 4096              // Maximum tokens for thinking
   },
 
   // Action mode overrides (inherits MODEL_DEFAULTS; add keys here to override)
@@ -93,7 +93,7 @@ Configuration is loaded from `config.json` (created automatically on first run i
 
   // Memory agent settings
   "MEMORY": {
-    "MEMORY_INTERVAL": 20                 // Run memory agent every N turns
+    "MEMORY_INTERVAL": 30                 // Run memory agent every N turns
   }
 }
 ```

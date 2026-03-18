@@ -151,11 +151,13 @@ class MemoryManager:
             memory_config = self.config.MEMORY.copy() if hasattr(self.config, 'MEMORY') else {}
             # Ensure model config fields exist for the API call
             if "MODEL" not in memory_config:
-                memory_config["MODEL"] = "claude-haiku-4-5"
+                memory_config["MODEL"] = "claude-sonnet-4-6"
             if "MAX_TOKENS" not in memory_config:
                 memory_config["MAX_TOKENS"] = 4096
             if "THINKING" not in memory_config:
-                memory_config["THINKING"] = False
+                memory_config["THINKING"] = True
+            if "THINKING_BUDGET" not in memory_config:
+                memory_config["THINKING_BUDGET"] = 2048
 
             response = self.client.send_request(memory_config, system, messages, [])
             content = MessageUtils.print_and_extract_message_content(response)
@@ -163,12 +165,12 @@ class MemoryManager:
             # Log memory subagent token usage
             usage = getattr(response, 'usage', None)
             if usage:
-                from claude_player.agent.game_agent import _estimate_cost
+                from claude_player.utils.cost_tracker import estimate_cost
                 m_in = getattr(usage, 'input_tokens', 0) or 0
                 m_out = getattr(usage, 'output_tokens', 0) or 0
                 m_cr = getattr(usage, 'cache_read_input_tokens', 0) or 0
                 m_cw = getattr(usage, 'cache_creation_input_tokens', 0) or 0
-                m_cost = _estimate_cost(memory_config.get("MODEL", ""), m_in, m_out, m_cr, m_cw)
+                m_cost = estimate_cost(memory_config.get("MODEL", ""), m_in, m_out, m_cr, m_cw)
                 logging.info(
                     f"MEMORY TOKENS: in={m_in} out={m_out} "
                     f"cache_read={m_cr} cache_create={m_cw} "

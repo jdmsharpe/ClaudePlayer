@@ -18,12 +18,13 @@ Requires `.env` with `ANTHROPIC_API_KEY` and a Game Boy ROM (`red.gb`) in projec
 
 ```text
 claude_player/
-  agent/          # Game loop (game_agent.py), memory subagent (memory_manager.py)
+  agent/          # Game loop (game_agent.py), memory subagent (memory_manager.py),
+                  #   NAV planner (nav_planner.py), turn context builder (turn_context.py)
   config/         # TypedDict config schema, JSON loader with deep merge, GBC palettes
   interface/      # Claude API: system prompt construction, streaming, prompt caching
   state/          # Mutable game state: goal, turn count, story progress
   tools/          # Decorator-based tool registry + tool definitions (send_inputs, set_goal, etc.)
-  utils/          # RAM readers (spatial, battle, party, bag, menu), world map, pathfinding
+  utils/          # RAM readers (spatial, battle, party, bag, menu), world map, pathfinding, cost tracker
   web/            # Flask dashboard: MJPEG stream, state API, runs as daemon thread
 ```
 
@@ -47,7 +48,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 ## Architecture Notes
 
-- **Turn loop**: screenshot -> context extraction (RAM reads) -> API call -> tool execution -> repeat
+- **Turn loop**: screenshot -> context extraction (RAM reads) -> API call -> tool execution -> repeat. Turn context assembly (injecting spatial, battle, party, bag, stuck warnings, etc.) is handled by `TurnContextBuilder` in `agent/turn_context.py`.
 - **Prompt caching**: system prompt cached via `cache_control` breakpoint; requires **2048+ tokens** when extended thinking is enabled (undocumented — thinking mode doubles the normal 1024 Sonnet minimum). Tool-level `cache_control` breakpoints do NOT work with thinking.
 - **Movement feedback**: `send_inputs` records player position before/after execution and injects feedback at the start of the next turn ("moved (x,y)→(x,y)", "position UNCHANGED — blocked", or "map changed — warped"). Prevents the agent from retrying blocked paths.
 - **Post-battle menu skip**: Menu context injection is suppressed on the turn immediately after battle ends (`_was_in_battle` flag), because battle cursor RAM (Y=14 X=15) persists and gets misidentified as `item_submenu`.
@@ -59,7 +60,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 ## Cost Tracking
 
-Per-turn and cumulative USD cost is estimated in `_estimate_cost()` (top of `game_agent.py`).
+Per-turn and cumulative USD cost is estimated by `CostTracker` in `utils/cost_tracker.py`.
 
 **What's tracked** (matches the Anthropic `usage` response object fields):
 
@@ -70,7 +71,7 @@ Per-turn and cumulative USD cost is estimated in `_estimate_cost()` (top of `gam
 
 Tool-use system prompt overhead (~346 tokens/call) is already included in `input_tokens` by the API.
 
-**Pricing table** (`_MODEL_PRICING` dict — keys matched by substring, more-specific first):
+**Pricing table** (`_MODEL_PRICING` dict in `cost_tracker.py` — keys matched by substring, more-specific first):
 
 | Model family          | Input  | Output  | Cache read | Cache write (5m) |
 | --------------------- | ------ | ------- | ---------- | ---------------- |
@@ -112,7 +113,7 @@ The system prompt (`claude_interface.py: _build_system_prompt`) must stay **abov
 - `<notation>` — button input format rules
 - `<spatial_context>` — grid legend, movement rules, warp mechanics
 - `<navigation>` — **critical**: COMPASS vs NAV priority rules, stuck recovery, warp pathing, dead-end behavior. Added to prevent the agent from converting compass bearings into frame inputs (e.g. "6 LEFT" → "L96") which walks into walls.
-- **NAV pipeline priority** (in `game_agent.py`): (1) **Map graph** — extract target map from goal text, BFS to find next hop, A\* to that hop's warp. If A\* fails (e.g. ledges block), exclude and retry BFS up to 3 times. (2) **COMPASS fallback** — parse direction from goal text, match against COMPASS entries. (3) **Frontier exploration** — A\* to nearest unexplored tile edge.
+- **NAV pipeline** (in `agent/nav_planner.py`, entry point `compute_nav()`): (1) **Map graph** — extract target map from goal text, BFS to find next hop, A\* to that hop's warp. If A\* fails (e.g. ledges block), exclude and retry BFS up to 3 times. (2) **COMPASS fallback** — parse direction from goal text, match against COMPASS entries. (3) **Frontier exploration** — A\* to nearest unexplored tile edge.
 - **Viewport warp pathing**: `find_path()` in `pathfinding.py` accepts `extra_passable` positions. When computing overshoot paths to warps, the target warp tile is marked passable so A\* routes *through* it (not around it). Without this, 'W' tiles are blocked in `DEFAULT_BLOCKED`, causing paths to circle around warps without triggering them.
 - `<battle_context>` — battle menu layout, RUN sequences, type matchups, healing thresholds
 - `<menu_context>` — menu navigation, Pokemon menu, save mechanics

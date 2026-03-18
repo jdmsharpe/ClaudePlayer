@@ -26,6 +26,8 @@ from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
 from claude_player.utils.sound_output import SoundOutput
 from claude_player.utils.ram_constants import ADDR_IS_IN_BATTLE, ADDR_CUR_MAP
+from claude_player.utils.cost_tracker import CostTracker
+from claude_player.agent.turn_context import TurnContextBuilder
 from claude_player.agent.memory_manager import MemoryManager
 
 # Gen 1 character encoding (wPlayerName etc.)
@@ -48,127 +50,6 @@ def _is_fatal_error(error: Exception) -> bool:
     """Check if an error is non-recoverable and should stop the game loop."""
     error_str = str(error)
     return any(pattern in error_str for pattern in FATAL_ERROR_PATTERNS)
-
-# Per-MTok pricing (USD) — (input, output, cache_read, cache_write_5min).
-# Keys are checked in order via substring match, so more-specific entries MUST come first
-# (e.g. "claude-opus-4-5" before "claude-opus-4" to avoid greedy shadowing).
-# Cache write rate uses the 5-minute TTL tier (1.25x input).  The 1-hour tier (2x input)
-# is not distinguishable from the usage object, so callers can optionally pass a multiplier.
-# Thinking/reasoning tokens are billed at the output rate and included in output_tokens.
-_MODEL_PRICING = {
-    # Opus 4 family — 4.5 / 4.6: $5 / $25 per MTok
-    "claude-opus-4-6":   ( 5.00,  25.00,  0.50,  6.25),
-    "claude-opus-4-5":   ( 5.00,  25.00,  0.50,  6.25),
-    # Opus 4.1 and original Opus 4: $15 / $75 per MTok
-    "claude-opus-4-1":   (15.00,  75.00,  1.50, 18.75),
-    "claude-opus-4":     (15.00,  75.00,  1.50, 18.75),
-    # Opus 3 (deprecated): $15 / $75 per MTok
-    "claude-opus-3":     (15.00,  75.00,  1.50, 18.75),
-    # Sonnet 4 family — all versions: $3 / $15 per MTok
-    "claude-sonnet-4-6": ( 3.00,  15.00,  0.30,  3.75),
-    "claude-sonnet-4-5": ( 3.00,  15.00,  0.30,  3.75),
-    "claude-sonnet-4":   ( 3.00,  15.00,  0.30,  3.75),
-    # Haiku 4.5: $1 / $5 per MTok
-    "claude-haiku-4-5":  ( 1.00,   5.00,  0.10,  1.25),
-    # Haiku 3.5: $0.80 / $4 per MTok (must precede "claude-haiku-3" to avoid shadowing)
-    "claude-haiku-3-5":  ( 0.80,   4.00,  0.08,  1.00),
-    # Haiku 3: $0.25 / $1.25 per MTok
-    "claude-haiku-3":    ( 0.25,   1.25,  0.03,  0.30),
-}
-
-# Direction keyword mapping for COMPASS fallback NAV parsing
-_DIR_TO_COMPASS_KW = {
-    "NORTH": "UP", "SOUTH": "DOWN",
-    "EAST": "RIGHT", "WEST": "LEFT",
-}
-
-
-def _parse_compass_dest(
-    spatial_text: str,
-    goal_upper: str,
-) -> tuple:
-    """Extract preferred destination and direction from COMPASS lines.
-
-    Returns (preferred_dest, preferred_direction).
-    """
-    preferred_direction = next(
-        (d for d in ("NORTH", "SOUTH", "EAST", "WEST")
-         if re.search(rf"\b{d}\b", goal_upper)),
-        None,
-    )
-    preferred_dest = None
-    secondary_preferred_dest = None
-    first_compass_dest = None
-    in_compass = False
-    kw = _DIR_TO_COMPASS_KW.get(preferred_direction, "") if preferred_direction else ""
-    for line in spatial_text.split("\n"):
-        if line.startswith("COMPASS"):
-            in_compass = True
-            continue
-        if in_compass and line.startswith("  ") and ":" in line:
-            dest = line.strip().split(":")[0].strip()
-            if first_compass_dest is None:
-                first_compass_dest = dest
-            if kw and kw in line.upper():
-                line_upper = line.upper()
-                kw_idx = line_upper.find(kw)
-                other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
-                first_other = min(
-                    (line_upper.find(d) for d in other_dirs if d in line_upper),
-                    default=9999,
-                )
-                if kw_idx < first_other:
-                    preferred_dest = dest
-                    break
-                elif secondary_preferred_dest is None:
-                    secondary_preferred_dest = dest
-        elif in_compass and not line.startswith("  "):
-            in_compass = False
-    if not preferred_dest:
-        preferred_dest = secondary_preferred_dest
-    if not preferred_dest:
-        preferred_dest = first_compass_dest
-        if preferred_dest and not preferred_direction:
-            for line in spatial_text.split("\n"):
-                if line.startswith("  ") and preferred_dest in line:
-                    for d in ("NORTH", "SOUTH", "EAST", "WEST"):
-                        if d in line.upper():
-                            preferred_direction = d
-                            break
-                    break
-    return preferred_dest, preferred_direction
-
-
-def _estimate_cost(
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    cache_read_tokens: int = 0,
-    cache_create_tokens: int = 0,
-) -> float:
-    """Estimate USD cost for a single API call based on model pricing.
-
-    Thinking/reasoning tokens are included in output_tokens by the API and
-    billed at the standard output rate — no separate handling needed.
-    Cache writes default to the 5-minute TTL rate (1.25x input).
-    """
-    # Match by substring so dated suffixes like "-20251001" are handled transparently.
-    # Dict insertion order guarantees more-specific keys win over shorter prefixes.
-    pricing = None
-    for key, rates in _MODEL_PRICING.items():
-        if key in model:
-            pricing = rates
-            break
-    if pricing is None:
-        logging.warning(f"Unknown model '{model}' — cost estimate unavailable, defaulting to Haiku 4.5 rates")
-        pricing = _MODEL_PRICING["claude-haiku-4-5"]
-    inp_rate, out_rate, cache_r_rate, cache_w_rate = pricing
-    return (
-        input_tokens * inp_rate
-        + output_tokens * out_rate
-        + cache_read_tokens * cache_r_rate
-        + cache_create_tokens * cache_w_rate
-    ) / 1_000_000
 
 class GameAgent:
     """Main game agent class that orchestrates the AI gameplay."""
@@ -257,22 +138,9 @@ class GameAgent:
         self._battle_stuck_count = 0
         self._last_battle_snapshot = None  # (player_hp, enemy_hp, menu_type, cursor)
 
-        # Cumulative token/cost tracking (path + load deferred until after _save_dir)
-        self._total_input_tokens = 0
-        self._total_output_tokens = 0
-        self._total_cache_read_tokens = 0
-        self._total_cache_create_tokens = 0
-        self._total_cost_usd = 0.0
+        # Cumulative token/cost tracking (deferred until after _save_dir is set)
 
-        # Party context: only inject when meaningful changes occur or periodically
-        self._last_party_snapshot = None  # (hp, status) tuples for change detection
-        self._last_party_inject_turn = 0  # Turn when party text was last injected
-        self._party_refresh_interval = 10  # Inject every N turns even if unchanged
-
-        # Bag context: inject on item change, post-battle, warnings, or periodically
-        self._last_bag_snapshot = None       # (item_id, qty) tuples for change detection
-        self._last_bag_inject_turn = 0
-        self._bag_refresh_interval = 15     # Less frequent than party (bag changes rarely)
+        # Injection-policy state is managed by TurnContextBuilder (initialized below)
 
         # Periodic emulator state saving
         self._last_save_turn = 0
@@ -283,9 +151,10 @@ class GameAgent:
         self._world_map_save_interval = 20
         self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
         self._save_path = os.path.join(self._save_dir, "autosave.state")
-        self._session_stats_path = os.path.join(self._save_dir, "session_stats.json")
         self._visited_maps_path = os.path.join(self._save_dir, "visited_maps.json")
-        self._load_session_stats()
+        self.cost_tracker = CostTracker(
+            stats_path=os.path.join(self._save_dir, "session_stats.json"),
+        )
 
         # Persistent world map: accumulates explored tiles across turns
         self._world_map = WorldMap()
@@ -311,6 +180,13 @@ class GameAgent:
         # Initialize memory manager (background subagent for persistent memory)
         self.memory_manager = MemoryManager(self.claude, self.game_state, self.config)
         self._memory_thread = None  # Background thread for async memory updates
+
+        # Turn context builder: assembles user_content for Claude each turn
+        self._context_builder = TurnContextBuilder(
+            memory_path=self.memory_manager.memory_path,
+            party_refresh_interval=10,
+            bag_refresh_interval=15,
+        )
 
         # Initialize chat history
         self.chat_history = []
@@ -946,292 +822,25 @@ class GameAgent:
             trainer_id=trainer_id,
             play_time=play_time,
             badges=badges_list,
-            session_cost=self._total_cost_usd,
+            session_cost=self.cost_tracker.cost_usd,
         )
 
-        # Inject persistent memory into user content (avoids read_from_memory tool call)
-        memory_text = ""
-        mem_path = self.memory_manager.memory_path
-        if os.path.exists(mem_path):
-            with open(mem_path, "r") as f:
-                memory_text = f.read().strip()
-        if memory_text:
-            turns_since_update = self.game_state.turn_count - self.game_state.memory_turn
-            staleness = f" (updated {turns_since_update} turns ago)" if turns_since_update > 0 else ""
-            memory_block = f"<memory{staleness}>\n{memory_text}\n</memory>"
-        else:
-            memory_block = ""
+        # Build user content via TurnContextBuilder
+        user_content = self._context_builder.build(
+            captured_state,
+            game_state=self.game_state,
+            world_map=self._world_map,
+            last_action_feedback=self._last_action_feedback,
+            last_map_name=self._last_map_name,
+            in_battle=self._in_battle,
+            was_in_battle=self._was_in_battle,
+            stuck_count=self._stuck_count,
+            battle_stuck_count=self._battle_stuck_count,
+            consecutive_reversals=self._consecutive_reversals,
+            action_history=self._action_history,
+        )
+        self._last_action_feedback = None  # consumed by builder
 
-        # Build user content from pre-captured data
-        screenshot = captured_state["screenshot"]
-        user_content = [screenshot]
-        # Inject movement feedback from last turn's send_inputs execution
-        if self._last_action_feedback:
-            user_content.append({"type": "text", "text": self._last_action_feedback})
-            self._last_action_feedback = None
-        if memory_block:
-            user_content.append({"type": "text", "text": memory_block})
-        if battle_data and battle_data.get("text"):
-            # In battle: use battle context instead of spatial grid
-            user_content.append({"type": "text", "text": battle_data["text"]})
-        elif spatial_data and spatial_data["text"]:
-            spatial_text = spatial_data["text"]
-            # Prepend "entered from" note so the agent always knows which map
-            # it transitioned from (helps orient after warps/connections).
-            if self._last_map_name:
-                spatial_text = f"[Entered from: {self._last_map_name}]\n" + spatial_text
-            # Append accumulated world map (overworld only, when enough tiles explored)
-            if spatial_data.get("map_number") is not None and spatial_data.get("player_pos"):
-                map_id = spatial_data["map_number"]
-                player_pos = spatial_data["player_pos"]
-                world_map_text = self._world_map.render(
-                    map_id, player_pos,
-                    dead_end_zones=self._world_map.dead_ends.get(map_id, []),
-                )
-                if world_map_text:
-                    spatial_text += "\n" + world_map_text
-                # World-map A* NAV: replace viewport-only NAV with full-map path.
-                #
-                # Strategy: MAP GRAPH first, COMPASS fallback.
-                # 1. Extract target map from goal text → BFS on map graph
-                #    → preferred_dest = next hop toward target.
-                # 2. If graph has no data, fall back to COMPASS parsing.
-                # 3. If A* can't reach graph-suggested dest (e.g. ledges
-                #    block the connection), exclude that map and retry BFS
-                #    to find an alternate route (max 3 attempts).
-
-                goal_text = self.game_state.current_goal or ""
-                preferred_dest = None
-                preferred_direction = None
-                wm_nav = None
-
-                # ── Step 1: Map graph lookup ──
-                # Find target map by longest substring match in goal text.
-                target_map_id = None
-                best_match_len = 0
-                for mid, mname in self._world_map.map_names.items():
-                    if mid == map_id:
-                        continue
-                    if mname.lower() in goal_text.lower() and len(mname) > best_match_len:
-                        target_map_id = mid
-                        best_match_len = len(mname)
-
-                if target_map_id is not None:
-                    # BFS with retry: if A* can't reach the first hop,
-                    # exclude it and re-BFS for an alternate route.
-                    exclude_maps: set = set()
-                    for _attempt in range(3):
-                        map_path = self._world_map.find_map_path(
-                            map_id, target_map_id, exclude_maps=exclude_maps,
-                        )
-                        if not map_path or len(map_path) < 2:
-                            break
-                        hop_id = map_path[1]
-                        hop_name = self._world_map.map_names.get(hop_id)
-                        if not hop_name:
-                            break
-                        logging.info(
-                            f"NAV graph: target={self._world_map.map_names.get(target_map_id)!r} "
-                            f"next_hop={hop_name!r} path_len={len(map_path)} "
-                            f"map=0x{map_id:02X} pos={player_pos} "
-                            f"attempt={_attempt + 1}"
-                        )
-                        wm_nav = self._world_map.find_nav_hint(
-                            map_id, player_pos,
-                            preferred_dest=hop_name,
-                            dead_end_zones=self._world_map.dead_ends.get(map_id, []),
-                            npc_positions=spatial_data.get("npc_abs_positions"),
-                        )
-                        if wm_nav:
-                            preferred_dest = hop_name
-                            logging.info(f"NAV result: {wm_nav}")
-                            break
-                        # A* couldn't reach this hop — exclude and retry
-                        logging.info(f"NAV graph: {hop_name!r} unreachable via A*, excluding")
-                        exclude_maps.add(hop_id)
-
-                # ── Step 2: COMPASS fallback (no graph data or graph failed) ──
-                if not wm_nav:
-                    goal_upper = goal_text.upper()
-                    preferred_dest, preferred_direction = _parse_compass_dest(
-                        spatial_text, goal_upper,
-                    )
-                    logging.info(
-                        f"NAV compass fallback: dest={preferred_dest!r} dir={preferred_direction!r} "
-                        f"map=0x{map_id:02X} pos={player_pos} "
-                        f"warps={len(self._world_map.warps.get(map_id, {}))} "
-                        f"tiles={len(self._world_map.tiles.get(map_id, {}))}"
-                    )
-                    wm_nav = self._world_map.find_nav_hint(
-                        map_id, player_pos,
-                        preferred_dest=preferred_dest,
-                        preferred_direction=preferred_direction,
-                        dead_end_zones=self._world_map.dead_ends.get(map_id, []),
-                        npc_positions=spatial_data.get("npc_abs_positions"),
-                    )
-                    if wm_nav:
-                        logging.info(f"NAV result: {wm_nav}")
-                    else:
-                        logging.info("NAV result: None (no path found)")
-                if wm_nav:
-                    # Replace viewport NAV with world-map NAV, placed
-                    # right after COMPASS (before the grid) so it's the
-                    # first actionable hint the agent reads.
-                    new_lines = []
-                    for line in spatial_text.split("\n"):
-                        if line.startswith("NAV:"):
-                            continue  # drop viewport NAV
-                        new_lines.append(line)
-                    # Insert after COMPASS block (before the grid) so it's
-                    # the first actionable hint. Fallback: after Map position.
-                    insert_idx = len(new_lines)
-                    for i, line in enumerate(new_lines):
-                        if line.startswith("COMPASS"):
-                            insert_idx = i + 1
-                            while insert_idx < len(new_lines) and new_lines[insert_idx].startswith("  "):
-                                insert_idx += 1
-                            break
-                        if line.startswith("Map position:"):
-                            insert_idx = i + 1
-                    new_lines.insert(insert_idx, wm_nav)
-                    spatial_text = "\n".join(new_lines)
-            user_content.append({"type": "text", "text": spatial_text})
-
-        # Menu context: inject every turn when active (menus change frequently).
-        # Skip on the turn battle just ended — RAM cursor values are stale and
-        # get misidentified as item_submenu (Y=14 X=15 from battle RUN cursor).
-        just_exited_battle = self._was_in_battle and not self._in_battle
-        if menu_data and menu_data.get("text") and not just_exited_battle:
-            user_content.append({"type": "text", "text": menu_data["text"]})
-
-        # Party status: inject only on meaningful changes or periodically
-        if party_data and party_data.get("text"):
-            # Snapshot: tuple of (hp, status) per mon for cheap comparison
-            current_snapshot = tuple(
-                (m["hp"], m["status"]) for m in party_data["party"]
-            )
-            turns_since_inject = self.game_state.turn_count - self._last_party_inject_turn
-            just_left_battle = self._was_in_battle and not self._in_battle
-            party_changed = current_snapshot != self._last_party_snapshot
-            needs_healing = party_data.get("health", {}).get("needs_healing", False)
-            periodic = turns_since_inject >= self._party_refresh_interval
-
-            if party_changed or just_left_battle or needs_healing or periodic:
-                user_content.append({"type": "text", "text": party_data["text"]})
-                self._last_party_inject_turn = self.game_state.turn_count
-                if party_changed:
-                    logging.debug("Party context injected: state changed")
-
-            self._last_party_snapshot = current_snapshot
-
-        # Bag/inventory: inject on item change, post-battle, warnings, or periodically
-        if bag_data and bag_data.get("text"):
-            current_bag_snapshot = bag_data.get("snapshot")
-            bag_turns_since = self.game_state.turn_count - self._last_bag_inject_turn
-            just_left_battle = self._was_in_battle and not self._in_battle
-            bag_changed = current_bag_snapshot != self._last_bag_snapshot
-            has_warnings = bool(bag_data.get("assessment", {}).get("warnings"))
-            bag_periodic = bag_turns_since >= self._bag_refresh_interval
-
-            if bag_changed or just_left_battle or has_warnings or bag_periodic:
-                user_content.append({"type": "text", "text": bag_data["text"]})
-                self._last_bag_inject_turn = self.game_state.turn_count
-                if bag_changed:
-                    logging.debug("Bag context injected: inventory changed")
-
-            self._last_bag_snapshot = current_bag_snapshot
-
-        # Critical HP urgency: when party is nearly wiped, prioritize healing
-        if (party_data and not self._in_battle
-                and spatial_data and (spatial_data.get("game_state") or {}).get("state") == "overworld"):
-            health = party_data.get("health", {})
-            hp_pct = health.get("total_hp_pct", 100)
-            alive_count = health.get("alive", 6)
-            total_count = health.get("total", 6)
-            if hp_pct <= 25 and alive_count <= 2:
-                fainted = total_count - alive_count
-                user_content.append({
-                    "type": "text",
-                    "text": (
-                        f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP."
-                        f" Heal soon — either head to a Pokemon Center or fight in battle"
-                        f" to black out (free teleport to nearest Center)."
-                    )
-                })
-                logging.warning(f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP")
-
-        # Stuck detection: escalating intervention when player hasn't moved
-        if self._stuck_count >= 2:
-            history_text = "\n".join(
-                f"  T{turn}: {action}" for turn, action in self._action_history[-5:]
-            ) or "  (none)"
-
-            if self._stuck_count >= 5:
-                user_content.append({
-                    "type": "text",
-                    "text": (
-                        f"STUCK {self._stuck_count} turns! Failed:\n{history_text}\n"
-                        "Try ONE untried: D16/L16/R16/U16, A (dialogue), B (cancel), S (menu)."
-                    )
-                })
-                logging.warning(f"STUCK (CRITICAL): {self._stuck_count} turns")
-            else:
-                user_content.append({
-                    "type": "text",
-                    "text": (
-                        f"STALLED {self._stuck_count} turns. Recent:\n{history_text}\n"
-                        "Try untried direction (16 frames), A, or B."
-                    )
-                })
-                logging.warning(f"STUCK: {self._stuck_count} turns at same position")
-
-        # Battle stuck detection: same HP/menu/cursor for too many turns
-        if self._in_battle and self._battle_stuck_count >= 4:
-            history_text = "\n".join(
-                f"  T{turn}: {action}" for turn, action in self._action_history[-5:]
-            ) or "  (none)"
-
-            if self._battle_stuck_count >= 7:
-                user_content.append({
-                    "type": "text",
-                    "text": (
-                        f"BATTLE STUCK {self._battle_stuck_count} turns!\n{history_text}\n"
-                        "Try: B B B (back to main), then follow TIP, or A A A A A (advance text)."
-                    )
-                })
-                logging.warning(f"BATTLE STUCK (CRITICAL): {self._battle_stuck_count} turns")
-            else:
-                user_content.append({
-                    "type": "text",
-                    "text": (
-                        f"BATTLE STALLED {self._battle_stuck_count} turns. "
-                        "Send B B to return to main menu, then follow TIP."
-                    )
-                })
-                logging.warning(f"BATTLE STUCK: {self._battle_stuck_count} turns")
-
-        # Direction reversal warning: only flag after 2+ consecutive reversals (real ping-ponging)
-        if (self._consecutive_reversals >= 2
-                and not self._in_battle
-                and spatial_data and (spatial_data.get("game_state") or {}).get("state") == "overworld"):
-            user_content.append({
-                "type": "text",
-                "text": (
-                    f"PING-PONG WARNING: {self._consecutive_reversals} consecutive direction"
-                    f" reversals. You are undoing your own progress."
-                    f" Commit to a direction or try a perpendicular path."
-                )
-            })
-            logging.warning(f"PING-PONG: {self._consecutive_reversals} consecutive reversals")
-
-        # Add timing header (include cartridge title only until game is identified)
-        header = f"Current time: {current_time_str}\nTurn #{self.game_state.turn_count}"
-        if not self.game_state.identified_game:
-            cartridge_title = captured_state.get("cartridge_title", "")
-            if cartridge_title:
-                header += f"\nCartridge: {cartridge_title}"
-        user_content.insert(0, {"type": "text", "text": header})
-        
         # Add user message to chat history
         if len(self.chat_history) == 0:
             user_message = {"role": "user", "content": user_content}
@@ -1337,23 +946,18 @@ class GameAgent:
                     input_tok = getattr(usage, 'input_tokens', 0) or 0
                     output_tok = getattr(usage, 'output_tokens', 0) or 0
 
-                    # Compute turn cost using per-model rates from _MODEL_PRICING
+                    # Accumulate totals via CostTracker
                     model = action_config.get("MODEL", "")
-                    turn_cost = _estimate_cost(model, input_tok, output_tok, cache_read, cache_create)
-
-                    # Accumulate totals
-                    self._total_input_tokens += input_tok
-                    self._total_output_tokens += output_tok
-                    self._total_cache_read_tokens += cache_read
-                    self._total_cache_create_tokens += cache_create
-                    self._total_cost_usd += turn_cost
+                    turn_cost = self.cost_tracker.record(
+                        model, input_tok, output_tok, cache_read, cache_create,
+                    )
 
                     total_input = cache_create + cache_read + input_tok
                     pct = (cache_read / total_input * 100) if total_input else 0
                     logging.info(
                         f"TOKENS: in={input_tok} out={output_tok} "
                         f"cache_read={cache_read} cache_create={cache_create} ({pct:.0f}% cached) "
-                        f"| turn=${turn_cost:.4f} session=${self._total_cost_usd:.4f}"
+                        f"| turn=${turn_cost:.4f} session=${self.cost_tracker.cost_usd:.4f}"
                     )
 
                 # Detect thinking-only responses (no text or tool output)
@@ -1582,22 +1186,6 @@ class GameAgent:
         except Exception as e:
             logging.warning(f"Failed to save state on {reason}: {e}")
 
-    def _load_session_stats(self):
-        """Load cumulative cost/token stats from JSON."""
-        if not os.path.exists(self._session_stats_path):
-            return
-        try:
-            with open(self._session_stats_path) as f:
-                data = json.load(f)
-            self._total_input_tokens = data.get("input_tokens", 0)
-            self._total_output_tokens = data.get("output_tokens", 0)
-            self._total_cache_read_tokens = data.get("cache_read_tokens", 0)
-            self._total_cache_create_tokens = data.get("cache_create_tokens", 0)
-            self._total_cost_usd = data.get("cost_usd", 0.0)
-            logging.info(f"Session stats loaded: ${self._total_cost_usd:.4f} cumulative")
-        except Exception as e:
-            logging.warning(f"Failed to load session stats: {e}")
-
     def _load_visited_maps(self):
         """Load visited_maps set from JSON."""
         if not os.path.exists(self._visited_maps_path):
@@ -1620,19 +1208,7 @@ class GameAgent:
 
     def _save_session_stats(self):
         """Save cumulative cost/token stats to JSON."""
-        try:
-            os.makedirs(self._save_dir, exist_ok=True)
-            data = {
-                "input_tokens": self._total_input_tokens,
-                "output_tokens": self._total_output_tokens,
-                "cache_read_tokens": self._total_cache_read_tokens,
-                "cache_create_tokens": self._total_cache_create_tokens,
-                "cost_usd": round(self._total_cost_usd, 6),
-            }
-            with open(self._session_stats_path, "w") as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            logging.warning(f"Failed to save session stats: {e}")
+        self.cost_tracker.save()
 
     def run_continuous(self):
         """Run the game agent in continuous mode where the emulator runs at 1x speed continuously."""
@@ -2036,11 +1612,12 @@ class GameAgent:
             signal.signal(signal.SIGINT, prev_handler)
 
         logging.info("Shutting down emulation")
+        ct = self.cost_tracker
         logging.info(
             f"SESSION TOTALS: turns={self.game_state.turn_count} "
-            f"input={self._total_input_tokens} output={self._total_output_tokens} "
-            f"cache_read={self._total_cache_read_tokens} cache_create={self._total_cache_create_tokens} "
-            f"cost=${self._total_cost_usd:.4f}"
+            f"input={ct.input_tokens} output={ct.output_tokens} "
+            f"cache_read={ct.cache_read_tokens} cache_create={ct.cache_create_tokens} "
+            f"cost=${ct.cost_usd:.4f}"
         )
         self.display.print_event("Stopping emulation...")
 

@@ -1,7 +1,7 @@
 # ClaudePlayer
 
 AI agent that plays Pokemon Red via PyBoy emulator, controlled by Claude API.
-The emulator only ticks when the AI sends inputs (turn-based, not real-time).
+The emulator runs continuously in real-time; the AI observes via screenshots and RAM reads, then sends button inputs that execute asynchronously.
 
 ## Setup & Run
 
@@ -48,7 +48,9 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 ## Architecture Notes
 
 - **Turn loop**: screenshot -> context extraction (RAM reads) -> API call -> tool execution -> repeat
-- **Prompt caching**: system prompt + tool defs cached with Anthropic cache control headers
+- **Prompt caching**: system prompt cached via `cache_control` breakpoint; requires **2048+ tokens** when extended thinking is enabled (undocumented — thinking mode doubles the normal 1024 Sonnet minimum). Tool-level `cache_control` breakpoints do NOT work with thinking.
+- **Movement feedback**: `send_inputs` records player position before/after execution and injects feedback at the start of the next turn ("moved (x,y)→(x,y)", "position UNCHANGED — blocked", or "map changed — warped"). Prevents the agent from retrying blocked paths.
+- **Post-battle menu skip**: Menu context injection is suppressed on the turn immediately after battle ends (`_was_in_battle` flag), because battle cursor RAM (Y=14 X=15) persists and gets misidentified as `item_submenu`.
 - **Tool registry**: decorator pattern (`@registry.register(...)`) in `tool_registry.py`
 - **Memory system**: background Haiku subagent updates `saves/MEMORY.md` every N turns (80-line cap)
 - **World map**: persistent per-map tile accumulator with A* pathfinding in `world_map.py`
@@ -102,3 +104,16 @@ When modifying RAM readers, verify addresses against <https://github.com/pret/po
 
 Runtime config in `config.json` — see `config/config_class.py` for the full TypedDict schema.
 Key sections: `MODEL_DEFAULTS`, `ACTION`, `MEMORY`, `STUCK` detection thresholds.
+
+## System Prompt & Navigation
+
+The system prompt (`claude_interface.py: _build_system_prompt`) must stay **above 2048 tokens** for prompt caching to work with extended thinking enabled. It contains:
+
+- `<notation>` — button input format rules
+- `<spatial_context>` — grid legend, movement rules, warp mechanics
+- `<navigation>` — **critical**: COMPASS vs NAV priority rules, stuck recovery, warp pathing, dead-end behavior. Added to prevent the agent from converting compass bearings into frame inputs (e.g. "6 LEFT" → "L96") which walks into walls.
+- `<battle_context>` — battle menu layout, RUN sequences, type matchups, healing thresholds
+- `<menu_context>` — menu navigation, Pokemon menu, save mechanics
+- `<authority>` / `<memory>` — data trust hierarchy
+
+When editing the system prompt, verify the token count stays above 2048 using `client.messages.count_tokens()`.

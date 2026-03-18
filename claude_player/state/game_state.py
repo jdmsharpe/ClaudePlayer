@@ -8,7 +8,10 @@ class GameState:
     def __init__(self):
         self.identified_game = None
         self.cartridge_title = ""
-        self.current_goal = None
+        # Two-tier goal system: strategic (milestone) + tactical (map-specific)
+        self.strategic_goal: Optional[str] = None
+        self.tactical_goal: Optional[str] = None
+        self._tactical_goal_override: bool = False  # True when agent manually set tactical goal
         self.turn_count = 0
         self.memory_turn = 0  # Turn when memory was last written
         self.complete_message_history = []  # Store ALL messages without truncation
@@ -18,6 +21,16 @@ class GameState:
         self.auto_goal_enabled = True
         self.fight_cursor: int = 0   # Tracked fight-submenu cursor; updated each battle turn
         self.visited_maps: set = set()  # Map IDs ever visited; used for visit-check milestones
+
+    @property
+    def current_goal(self) -> Optional[str]:
+        """Backward-compatible accessor: returns tactical goal if set, else strategic."""
+        return self.tactical_goal or self.strategic_goal
+
+    @current_goal.setter
+    def current_goal(self, value: Optional[str]):
+        """Backward-compatible setter: writes to strategic_goal."""
+        self.strategic_goal = value
 
     def get_current_state_header(self, compact: bool = False) -> str:
         """Get a brief state header for the user message.
@@ -29,13 +42,17 @@ class GameState:
         parts = []
         if not compact:
             parts.append(f"Current game: {self.identified_game or 'Not identified'}")
-            parts.append(f"Current goal: {self.current_goal or 'Not set'}")
+            parts.append(f"Strategic goal: {self.strategic_goal or 'Not set'}")
+            if self.tactical_goal:
+                parts.append(f"Tactical goal: {self.tactical_goal}")
         return "\n".join(parts)
-    
+
     def log_state(self):
         """Log the current game state."""
         logging.info(f"GAME: {self.identified_game or 'Not identified'}")
-        logging.info(f"GOAL: {self.current_goal or 'Not set'}")
+        logging.info(f"STRATEGIC GOAL: {self.strategic_goal or 'Not set'}")
+        if self.tactical_goal:
+            logging.info(f"TACTICAL GOAL: {self.tactical_goal}")
         logging.info(f"TURN: {self.turn_count}")
         logging.info(f"MEMORY LAST WRITTEN: turn {self.memory_turn}")
 

@@ -46,6 +46,7 @@ class WebStreamer:
                     "turn": d.turn,
                     "game": d.game,
                     "goal": d.goal,
+                    "tactical_goal": d.tactical_goal,
                     "status": d.status,
                     "fps": d.fps,
                     "elapsed": d._elapsed(),
@@ -812,6 +813,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="panel-label">Goal</div>
     <div id="goal-progress" style="display:none"><div class="progress-bar" style="width:80px"><div class="progress-fill" id="goal-progress-fill"></div></div><span id="goal-progress-text" style="font-size:11px;color:#8b949e;margin-left:4px"></span></div>
     <div class="ai-goal-text" id="ai-goal">-</div>
+    <span id="tactical-sep" style="display:none;color:#30363d;margin:0 6px">|</span>
+    <span id="tactical-label" style="display:none;font-size:11px;color:#8b949e;">Now:</span>
+    <div class="ai-goal-text" id="ai-tactical-goal" style="display:none;color:#7ee787;">-</div>
   </div>
 
   <div class="frame-panel">
@@ -925,6 +929,17 @@ async function pollState() {
     } else {
       gpPanel.style.display = 'none';
       setText('ai-goal', goalRaw);
+    }
+    // Tactical goal (sub-goal for current map)
+    const tg = d.tactical_goal || '';
+    const tgEl = document.getElementById('ai-tactical-goal');
+    const tgSep = document.getElementById('tactical-sep');
+    const tgLabel = document.getElementById('tactical-label');
+    if (tg) {
+      tgEl.style.display = ''; tgSep.style.display = ''; tgLabel.style.display = '';
+      setText('ai-tactical-goal', tg);
+    } else {
+      tgEl.style.display = 'none'; tgSep.style.display = 'none'; tgLabel.style.display = 'none';
     }
     _lastAction = d.last_action || '-';
     renderMarkdown('ai-response', d.last_response || '-');

@@ -68,6 +68,7 @@ DEAD ENDS: If the context says "dead-end" or "looping", leave immediately in the
 EXPLORED MAP: The large map shows all tiles you've visited with @ as your position. Use it to identify corridors you haven't explored yet. The map accumulates across turns — revisiting explored areas wastes time. Head toward unexplored edges (shown by ? or map boundaries) to discover new paths.
 DUNGEONS: Caves like Mt. Moon have multiple floors connected by ladder warps. The exit to outside may require going through B1F or B2F first — don't assume the entrance floor has a direct exit. Follow NAV(map) routes even when they lead away from your compass target — detours through explored corridors are faster than wall-bumping toward a blocked bearing.
 CONNECTIONS: Map edges marked in COMPASS as connections (e.g. "Route 3: ~5 blocks WEST") are reached by walking off the map edge — no warp tile needed. Routes between cities are linear — follow the path and avoid trainers by walking around their line of sight when possible.
+GOALS: You have two goal tiers. STRATEGIC GOAL = milestone objective (auto-set from story flags, e.g. "Beat Brock"). TACTICAL GOAL = immediate map-specific action (auto-derived from your location, e.g. "Enter Pewter Gym from north"). NAV routes toward the TACTICAL GOAL when present. Use set_tactical_goal for in-map sub-tasks; use set_strategic_goal to redirect the mission. Tactical goals auto-clear on map change.
 </navigation>
 <battle_context>
 Shows both Pokemon's stats, moves (power=0 = status), and a TIP.

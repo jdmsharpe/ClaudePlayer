@@ -112,13 +112,15 @@ def compute_nav(
     goal_text: str,
     spatial_text: str,
     npc_positions: Optional[List] = None,
+    strategic_goal_text: Optional[str] = None,
 ) -> str:
     """Run the full NAV pipeline and return updated spatial_text.
 
     Pipeline priority:
-      1. Map graph — extract target map from goal text, BFS to find next
-         hop, A* to that hop's warp.  If A* fails (e.g. ledges block),
-         exclude that map and retry BFS up to 3 times.
+      1. Map graph — extract target map from goal text (tactical first,
+         then strategic fallback), BFS to find next hop, A* to that
+         hop's warp.  If A* fails (e.g. ledges block), exclude that map
+         and retry BFS up to 3 times.
       2. COMPASS fallback — parse direction from goal text, match against
          COMPASS entries in the spatial context.
       3. If neither produces a hint, spatial_text is returned unchanged.
@@ -127,9 +129,10 @@ def compute_nav(
         world_map: Persistent WorldMap with tiles, warps, and map graph.
         map_id: Current map ID.
         player_pos: Player (x, y) in block coordinates.
-        goal_text: Current goal string (may be empty).
+        goal_text: Primary goal string for NAV (tactical goal when available).
         spatial_text: Full spatial context string to augment.
         npc_positions: Optional list of NPC absolute positions for A*.
+        strategic_goal_text: Fallback goal string for map-graph BFS matching.
 
     Returns:
         The spatial_text string, potentially with a NAV hint injected.
@@ -139,14 +142,19 @@ def compute_nav(
 
     # ── Step 1: Map graph lookup ──
     # Find target map by longest substring match in goal text.
+    # Try primary (tactical) goal first, then strategic fallback.
     target_map_id = None
     best_match_len = 0
-    for mid, mname in world_map.map_names.items():
-        if mid == map_id:
-            continue
-        if mname.lower() in goal_text.lower() and len(mname) > best_match_len:
-            target_map_id = mid
-            best_match_len = len(mname)
+    search_texts = [t for t in (goal_text, strategic_goal_text) if t]
+    for search_text in search_texts:
+        for mid, mname in world_map.map_names.items():
+            if mid == map_id:
+                continue
+            if mname.lower() in search_text.lower() and len(mname) > best_match_len:
+                target_map_id = mid
+                best_match_len = len(mname)
+        if target_map_id is not None:
+            break  # Found a match in this tier, don't fall through
 
     if target_map_id is not None:
         # BFS with retry: if A* can't reach the first hop,

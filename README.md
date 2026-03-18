@@ -158,7 +158,8 @@ Available buttons: `U` (Up), `D` (Down), `L` (Left), `R` (Right), `A`, `B`, `S` 
 The AI uses several tools to interact with the game:
 
 - `send_inputs`: Send button sequences to the emulator
-- `set_current_goal`: Override the auto-detected story goal with a specific sub-task
+- `set_strategic_goal`: Override the auto-detected strategic milestone goal
+- `set_tactical_goal`: Set an immediate map-specific action (auto-clears on map change)
 - `read_from_memory`: Read the persistent memory file (routes, puzzle progress, past mistakes)
 - `delete_memory`: Permanently delete the memory file if it becomes corrupted
 - `toggle_thinking`: Dynamically enable or disable extended thinking (requires `DYNAMIC_THINKING: true` in config)

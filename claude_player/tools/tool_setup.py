@@ -34,25 +34,48 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         press_and_release_buttons(self.pyboy, inputs)
         return [{"type": "text", "text": "Inputs sent successfully"}]
     
-    # Register set_current_goal tool
+    # Register set_strategic_goal tool
     @registry.register(
-        name="set_current_goal",
-        description="Set the current goal in the game. Note: goals are automatically set based on story progress milestones. Only use this to override the auto-goal with a specific sub-task (e.g., 'buy Pokeballs' or 'heal at Pokemon Center').",
+        name="set_strategic_goal",
+        description="Set the high-level strategic goal (milestone objective). Auto-goal normally handles this from story flags. Only use to override with a specific mission like 'heal at Pokemon Center' or 'buy Potions at Mart'. Clears any tactical override so map-based hints resume.",
         input_schema={
             "type": "object",
             "properties": {
                 "goal": {
                     "type": "string",
-                    "description": "Current goal"
+                    "description": "Strategic milestone goal"
                 }
             },
             "required": ["goal"]
         }
     )
-    def handle_set_current_goal(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
-        self.game_state.current_goal = tool_input["goal"]
-        logging.info(f"GOAL SET TO: {self.game_state.current_goal}")
-        return [{"type": "text", "text": f"Current goal set to {self.game_state.current_goal}"}]
+    def handle_set_strategic_goal(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.game_state.strategic_goal = tool_input["goal"]
+        self.game_state.tactical_goal = None  # Evict stale tactical hint
+        self.game_state._tactical_goal_override = False  # Resume auto-derivation
+        logging.info(f"STRATEGIC GOAL SET TO: {self.game_state.strategic_goal}")
+        return [{"type": "text", "text": f"Strategic goal set to: {self.game_state.strategic_goal}"}]
+
+    # Register set_tactical_goal tool
+    @registry.register(
+        name="set_tactical_goal",
+        description="Set the immediate tactical goal for the current map. Persists until you change maps. Use for specific in-map tasks like 'talk to NPC at north exit' or 'find hidden stairs'. Auto-cleared on map change.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Map-specific tactical action"
+                }
+            },
+            "required": ["goal"]
+        }
+    )
+    def handle_set_tactical_goal(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.game_state.tactical_goal = tool_input["goal"]
+        self.game_state._tactical_goal_override = True
+        logging.info(f"TACTICAL GOAL SET TO: {self.game_state.tactical_goal}")
+        return [{"type": "text", "text": f"Tactical goal set to: {self.game_state.tactical_goal} (auto-clears on map change)"}]
 
     # --- Memory tools (read_from_memory removed — now auto-injected into user message) ---
     memory_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "saves", "MEMORY.md")

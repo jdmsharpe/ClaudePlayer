@@ -34,6 +34,7 @@ from claude_player.utils.ram_constants import (
 from claude_player.utils.cost_tracker import CostTracker
 from claude_player.agent.turn_context import TurnContextBuilder
 from claude_player.agent.memory_manager import MemoryManager
+from claude_player.agent.goal_deriver import derive_tactical_goal
 
 from claude_player.data.pokemon import G1_CHARS
 
@@ -81,10 +82,12 @@ class GameAgent:
         self.pyboy.set_emulation_speed(target_speed=self.config.EMULATION_SPEED)
 
         # Sound output — buffers PyBoy audio frames into WAV chunks for browser streaming
-        sound_enabled = getattr(self.config, 'ENABLE_SOUND', True)
+        # When disabled, we also pass sound=False to tick() so PyBoy skips APU
+        # sampling entirely.
+        self._sound_enabled = getattr(self.config, 'ENABLE_SOUND', True)
         self.sound_output = SoundOutput(
             sample_rate=self.pyboy.sound.sample_rate,
-            enabled=sound_enabled,
+            enabled=self._sound_enabled,
         )
         
         # Load saved state if available
@@ -208,8 +211,8 @@ class GameAgent:
                 logging.warning(f"Failed to start web streamer: {e}")
     
     def _goal_with_progress(self) -> str:
-        """Combine current goal with milestone progress fraction."""
-        goal = self.game_state.current_goal or ""
+        """Combine strategic goal with milestone progress fraction."""
+        goal = self.game_state.strategic_goal or ""
         sp = self.game_state.story_progress
         if sp and sp.get("completed") is not None:
             done = len(sp["completed"])
@@ -217,6 +220,10 @@ class GameAgent:
             total = len(STORY_PROGRESSION)
             return f"[{done}/{total}] {goal}" if goal else f"{done}/{total} milestones"
         return goal
+
+    def _tactical_goal_display(self) -> str:
+        """Return the current tactical goal for display, or empty string."""
+        return self.game_state.tactical_goal or ""
 
     def _limit_screenshots_in_history(self):
         """
@@ -361,6 +368,9 @@ class GameAgent:
                 )
                 if map_changed:
                     self._visited_positions.clear()
+                    # Evict stale tactical goal and resume auto-derivation for new map
+                    self.game_state._tactical_goal_override = False
+                    self.game_state.tactical_goal = None
                     # Snapshot the name of the map we just left for orientation context
                     if self._current_map_name:
                         self._last_map_name = self._current_map_name
@@ -557,15 +567,27 @@ class GameAgent:
                     if frontier_hint:
                         spatial_data["text"] += f"\n{frontier_hint}"
 
-            # Auto-set goal from event flags
+            # Auto-set strategic goal from event flags
             story_progress = spatial_data.get("story_progress")
             if story_progress:
                 self.game_state.story_progress = story_progress
                 if self.game_state.auto_goal_enabled and story_progress.get("next_goal"):
-                    new_goal = story_progress["next_goal"]
-                    if self.game_state.current_goal != new_goal:
-                        logging.info(f"AUTO-GOAL: {new_goal}")
-                        self.game_state.current_goal = new_goal
+                    new_strategic = story_progress["next_goal"]
+                    if self.game_state.strategic_goal != new_strategic:
+                        logging.info(f"AUTO-STRATEGIC-GOAL: {new_strategic}")
+                        self.game_state.strategic_goal = new_strategic
+
+                # Derive tactical goal from MAP_HINTS (unless agent-overridden)
+                if not self.game_state._tactical_goal_override:
+                    next_milestone = story_progress.get("next")
+                    next_flag = next_milestone[0] if next_milestone else None
+                    new_map_id = spatial_data.get("map_number")
+                    old_tactical = self.game_state.tactical_goal
+                    self.game_state.tactical_goal = derive_tactical_goal(
+                        next_flag, new_map_id,
+                    )
+                    if self.game_state.tactical_goal != old_tactical:
+                        logging.info(f"AUTO-TACTICAL-GOAL: {self.game_state.tactical_goal}")
             if spatial_data.get("text"):
                 logging.debug(f"Spatial context:\n{spatial_data['text']}")
 
@@ -809,6 +831,7 @@ class GameAgent:
             status="Analyzing...",
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
             goal=self._goal_with_progress(),
+            tactical_goal=self._tactical_goal_display(),
             spatial_grid=spatial_grid,
             party_summary=party_summary,
             party_mons=party_mons_list,
@@ -1346,6 +1369,7 @@ class GameAgent:
                     analysis_duration=last_analysis_duration,
                     game=self.game_state.identified_game or self.game_state.cartridge_title or "",
                     goal=self._goal_with_progress(),
+                    tactical_goal=self._tactical_goal_display(),
                 )
                 
                 # Reset error count after successful analysis
@@ -1485,7 +1509,7 @@ class GameAgent:
                     try:
                         from claude_player.utils.game_utils import press_and_release_buttons
                         frame_cb = self.display.set_frame if self.web_streamer else None
-                        sound_cb = lambda: self.sound_output.write(self.pyboy.sound)
+                        sound_cb = (lambda: self.sound_output.write(self.pyboy.sound)) if self._sound_enabled else None
                         # Clear state_change_event before executing so mid-action transitions can abort it
                         state_change_event.clear()
                         press_and_release_buttons(self.pyboy, action, settle_frames=0, stop_event=state_change_event, frame_callback=frame_cb, sound_callback=sound_cb)
@@ -1562,10 +1586,11 @@ class GameAgent:
                         break
                     
                 # Tick the emulator regardless of AI state
-                if not self.pyboy.tick():
+                if not self.pyboy.tick(sound=self._sound_enabled):
                     # PyBoy signal to exit
                     break
-                self.sound_output.write(self.pyboy.sound)
+                if self._sound_enabled:
+                    self.sound_output.write(self.pyboy.sound)
                 fps_frame_count += 1
 
                 # --- State-aware interrupt detection ---
@@ -1676,7 +1701,7 @@ class GameAgent:
         if boot_frames > 0:
             logging.info(f"Advancing {boot_frames} frames for boot sequence...")
             for _ in range(boot_frames):
-                self.pyboy.tick()
+                self.pyboy.tick(sound=self._sound_enabled)
 
         # Run continuous emulation
         self.run_continuous()

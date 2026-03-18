@@ -162,11 +162,21 @@ class TurnContextBuilder:
         game_state: Any,
         last_map_name: Optional[str],
     ) -> str:
-        """Build spatial context text with world map and NAV hint."""
+        """Build spatial context text with world map, goals, and NAV hint."""
         spatial_text = spatial_data["text"]
         # Prepend "entered from" note for orientation after warps
         if last_map_name:
             spatial_text = f"[Entered from: {last_map_name}]\n" + spatial_text
+
+        # Prepend two-tier goal header
+        strategic = game_state.strategic_goal
+        tactical = game_state.tactical_goal
+        if strategic or tactical:
+            goal_header = f"STRATEGIC GOAL: {strategic or '(none)'}"
+            if tactical:
+                goal_header += f"\nTACTICAL GOAL: {tactical}"
+            spatial_text = goal_header + "\n" + spatial_text
+
         # Append accumulated world map and run NAV pipeline
         map_id = spatial_data.get("map_number")
         player_pos = spatial_data.get("player_pos")
@@ -178,11 +188,15 @@ class TurnContextBuilder:
             if world_map_text:
                 spatial_text += "\n" + world_map_text
             # World-map A* NAV: map graph BFS → compass fallback → inject hint
+            # Use tactical goal for NAV routing (more precise map match),
+            # with strategic goal as fallback for map-graph BFS.
+            nav_goal = tactical or strategic or ""
             spatial_text = compute_nav(
                 world_map, map_id, player_pos,
-                goal_text=game_state.current_goal or "",
+                goal_text=nav_goal,
                 spatial_text=spatial_text,
                 npc_positions=spatial_data.get("npc_abs_positions"),
+                strategic_goal_text=strategic,
             )
         return spatial_text
 

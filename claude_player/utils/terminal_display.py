@@ -30,6 +30,7 @@ class TerminalDisplay:
         self.turn = 0
         self.game = ""
         self.goal = ""
+        self.tactical_goal = ""
         self.last_action = ""
         self.last_response = ""
         self.last_thinking = ""
@@ -168,6 +169,8 @@ class TerminalDisplay:
             ]
             lines.extend(wrap_rows("Game", self.game or "(detecting...)"))
             lines.extend(wrap_rows("Goal", self.goal or "(none set)"))
+            if self.tactical_goal:
+                lines.extend(wrap_rows("  Sub", self.tactical_goal))
             lines.extend(wrap_rows("Action", self.last_action))
             lines.extend(wrap_rows("Response", self.last_response, max_lines=3))
             if self.last_thinking:

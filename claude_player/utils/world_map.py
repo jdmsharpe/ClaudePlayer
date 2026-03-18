@@ -288,7 +288,15 @@ class WorldMap:
                 return False  # stepping on a non-goal warp tile would teleport us
             ch = tile_map.get((x, y))
             if ch is None:
-                return False  # unexplored = can't path through
+                # Unexplored tile — treat as tentatively passable if ANY
+                # orthogonal neighbour is a known walkable tile.  This bridges
+                # 1-tile exploration gaps that break A* connectivity in mazes
+                # like Mt. Moon where corridors are never fully walked.
+                for nx, ny in ((x-1, y), (x+1, y), (x, y-1), (x, y+1)):
+                    nch = tile_map.get((nx, ny))
+                    if nch is not None and nch not in _BLOCKED_TILES:
+                        return True
+                return False
             if ch in _LEDGE_ALLOWED_DIR:
                 return (dx, dy) == _LEDGE_ALLOWED_DIR[ch]
             return ch not in _BLOCKED_TILES

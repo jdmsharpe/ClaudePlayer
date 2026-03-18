@@ -10,6 +10,7 @@ import heapq
 import json
 import logging
 import os
+from collections import deque
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -683,7 +684,6 @@ class WorldMap:
             return None
         _exclude = exclude_maps or set()
 
-        from collections import deque
         queue: deque = deque([(src_map, [src_map])])
         visited: Set[int] = {src_map} | _exclude
         while queue:

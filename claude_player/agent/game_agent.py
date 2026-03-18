@@ -76,6 +76,69 @@ _MODEL_PRICING = {
     "claude-haiku-3":    ( 0.25,   1.25,  0.03,  0.30),
 }
 
+# Direction keyword mapping for COMPASS fallback NAV parsing
+_DIR_TO_COMPASS_KW = {
+    "NORTH": "UP", "SOUTH": "DOWN",
+    "EAST": "RIGHT", "WEST": "LEFT",
+}
+
+
+def _parse_compass_dest(
+    spatial_text: str,
+    goal_upper: str,
+) -> tuple:
+    """Extract preferred destination and direction from COMPASS lines.
+
+    Returns (preferred_dest, preferred_direction).
+    """
+    preferred_direction = next(
+        (d for d in ("NORTH", "SOUTH", "EAST", "WEST")
+         if re.search(rf"\b{d}\b", goal_upper)),
+        None,
+    )
+    preferred_dest = None
+    secondary_preferred_dest = None
+    first_compass_dest = None
+    in_compass = False
+    kw = _DIR_TO_COMPASS_KW.get(preferred_direction, "") if preferred_direction else ""
+    for line in spatial_text.split("\n"):
+        if line.startswith("COMPASS"):
+            in_compass = True
+            continue
+        if in_compass and line.startswith("  ") and ":" in line:
+            dest = line.strip().split(":")[0].strip()
+            if first_compass_dest is None:
+                first_compass_dest = dest
+            if kw and kw in line.upper():
+                line_upper = line.upper()
+                kw_idx = line_upper.find(kw)
+                other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
+                first_other = min(
+                    (line_upper.find(d) for d in other_dirs if d in line_upper),
+                    default=9999,
+                )
+                if kw_idx < first_other:
+                    preferred_dest = dest
+                    break
+                elif secondary_preferred_dest is None:
+                    secondary_preferred_dest = dest
+        elif in_compass and not line.startswith("  "):
+            in_compass = False
+    if not preferred_dest:
+        preferred_dest = secondary_preferred_dest
+    if not preferred_dest:
+        preferred_dest = first_compass_dest
+        if preferred_dest and not preferred_direction:
+            for line in spatial_text.split("\n"):
+                if line.startswith("  ") and preferred_dest in line:
+                    for d in ("NORTH", "SOUTH", "EAST", "WEST"):
+                        if d in line.upper():
+                            preferred_direction = d
+                            break
+                    break
+    return preferred_dest, preferred_direction
+
+
 def _estimate_cost(
     model: str,
     input_tokens: int,
@@ -938,7 +1001,6 @@ class GameAgent:
                 #    to find an alternate route (max 3 attempts).
 
                 goal_text = self.game_state.current_goal or ""
-                goal_upper = goal_text.upper()
                 preferred_dest = None
                 preferred_direction = None
                 wm_nav = None
@@ -990,58 +1052,10 @@ class GameAgent:
 
                 # ── Step 2: COMPASS fallback (no graph data or graph failed) ──
                 if not wm_nav:
-                    # Use word-boundary match so "NORTHEAST" doesn't falsely
-                    # match "NORTH" — compound directions in goal text usually
-                    # describe a location, not a travel direction.
-                    preferred_direction = next(
-                        (d for d in ("NORTH", "SOUTH", "EAST", "WEST")
-                         if re.search(rf"\b{d}\b", goal_upper)),
-                        None,
+                    goal_upper = goal_text.upper()
+                    preferred_dest, preferred_direction = _parse_compass_dest(
+                        spatial_text, goal_upper,
                     )
-                    _dir_to_compass_kw = {
-                        "NORTH": "UP", "SOUTH": "DOWN",
-                        "EAST": "RIGHT", "WEST": "LEFT",
-                    }
-                    preferred_dest = None
-                    secondary_preferred_dest = None
-                    first_compass_dest = None
-                    in_compass = False
-                    kw = _dir_to_compass_kw.get(preferred_direction, "") if preferred_direction else ""
-                    for line in spatial_text.split("\n"):
-                        if line.startswith("COMPASS"):
-                            in_compass = True
-                            continue
-                        if in_compass and line.startswith("  ") and ":" in line:
-                            dest = line.strip().split(":")[0].strip()
-                            if first_compass_dest is None:
-                                first_compass_dest = dest
-                            if kw and kw in line.upper():
-                                line_upper = line.upper()
-                                kw_idx = line_upper.find(kw)
-                                other_dirs = {"UP", "DOWN", "LEFT", "RIGHT"} - {kw}
-                                first_other = min(
-                                    (line_upper.find(d) for d in other_dirs if d in line_upper),
-                                    default=9999,
-                                )
-                                if kw_idx < first_other:
-                                    preferred_dest = dest
-                                    break
-                                elif secondary_preferred_dest is None:
-                                    secondary_preferred_dest = dest
-                        elif in_compass and not line.startswith("  "):
-                            in_compass = False
-                    if not preferred_dest:
-                        preferred_dest = secondary_preferred_dest
-                    if not preferred_dest:
-                        preferred_dest = first_compass_dest
-                        if preferred_dest and not preferred_direction:
-                            for line in spatial_text.split("\n"):
-                                if line.startswith("  ") and preferred_dest in line:
-                                    for d in ("NORTH", "SOUTH", "EAST", "WEST"):
-                                        if d in line.upper():
-                                            preferred_direction = d
-                                            break
-                                    break
                     logging.info(
                         f"NAV compass fallback: dest={preferred_dest!r} dir={preferred_direction!r} "
                         f"map=0x{map_id:02X} pos={player_pos} "
@@ -1930,9 +1944,9 @@ class GameAgent:
                         if interrupt_fired:
                             # State changed while AI was thinking — discard results, re-analyze now
                             pending_actions.clear()
-                            adaptive_interval = 0.5  # minimal wait before fresh analysis
+                            adaptive_interval = self.config.CONTINUOUS_ANALYSIS_INTERVAL
                             last_action_time = 0     # bypass action settle check
-                            logging.info("INTERRUPT: analysis finished post-interrupt, scheduling immediate re-analysis")
+                            logging.info("INTERRUPT: analysis finished post-interrupt, scheduling re-analysis")
                             interrupt_fired = False
                     if fatal_error_msg:
                         logging.critical(f"Stopping continuous mode due to fatal error: {fatal_error_msg}")
@@ -1981,12 +1995,12 @@ class GameAgent:
                             # Clear stale actions and accelerate re-analysis regardless.
                             discarded = len(pending_actions)
                             pending_actions.clear()
-                            adaptive_interval = 0.5
+                            adaptive_interval = self.config.CONTINUOUS_ANALYSIS_INTERVAL
                             last_action_time = 0  # bypass settle check
                             if discarded:
                                 logging.info(f"INTERRUPT: {reason} — discarded {discarded} stale queued actions, re-analyzing soon")
                             else:
-                                logging.info(f"INTERRUPT: {reason} — idle transition, scheduling immediate re-analysis")
+                                logging.info(f"INTERRUPT: {reason} — idle transition, scheduling re-analysis")
                             self.display.print_event(f"Interrupt: {reason}")
 
                     # Immediately refresh display context so dashboard reflects new state

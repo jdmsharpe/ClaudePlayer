@@ -14,13 +14,8 @@ from typing import Any, Dict, List, Optional
 from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT
-from claude_player.utils.battle_context import (
-    _POKEMON_NAMES,
-    _MOVE_DATA,
-    _HM_MOVE_IDS,
-    _decode_status,
-    _read_word,
-)
+from claude_player.data.pokemon import POKEMON_NAMES, MOVE_DATA, HM_MOVE_IDS
+from claude_player.utils.battle_context import _decode_status, _read_word
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +154,7 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
     if species_id == 0:
         return None
 
-    name = _POKEMON_NAMES.get(species_id, f"???({species_id:#04x})")
+    name = POKEMON_NAMES.get(species_id, f"???({species_id:#04x})")
     nickname = _decode_nickname(pyboy, slot)
     # Suppress nickname if it matches species name (default, no custom name set)
     if nickname.upper() == name.upper():
@@ -191,12 +186,12 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
             break
         pp_raw = pyboy.memory[base + _OFF_PP + i]
         pp = pp_raw & 0x3F  # Lower 6 bits = current PP
-        move_name, move_type, move_power, base_pp = _MOVE_DATA.get(
+        move_name, move_type, move_power, base_pp = MOVE_DATA.get(
             move_id, (f"Move#{move_id}", "???", 0, 0)
         )
-        is_hm = move_id in _HM_MOVE_IDS
+        is_hm = move_id in HM_MOVE_IDS
         if is_hm:
-            hm_moves.append(_HM_MOVE_IDS[move_id])
+            hm_moves.append(HM_MOVE_IDS[move_id])
         moves.append(
             {
                 "name": move_name,

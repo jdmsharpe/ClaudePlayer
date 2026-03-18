@@ -21,6 +21,8 @@ claude_player/
   agent/          # Game loop (game_agent.py), memory subagent (memory_manager.py),
                   #   NAV planner (nav_planner.py), turn context builder (turn_context.py)
   config/         # TypedDict config schema, JSON loader with deep merge, GBC palettes
+  data/           # Static game data tables: pokemon.py (species, moves, types),
+                  #   items.py (inventory, badges, HMs), maps.py (map ID → name)
   interface/      # Claude API: system prompt construction, streaming, prompt caching
   state/          # Mutable game state: goal, turn count, story progress
   tools/          # Decorator-based tool registry + tool definitions (send_inputs, set_goal, etc.)
@@ -36,8 +38,9 @@ Key entry: `play.py` -> `claude_player/main.py` -> `game_agent.py` main loop.
 - **Type hints** used throughout: `Dict[str, Any]`, `Optional[str]`, `TypedDict` for configs
 - **Google-style docstrings** with `Args:` and `Returns:` sections
 - **No linter/formatter configured** — match existing style when editing
-- **Constants**: UPPER_SNAKE_CASE, private with leading underscore (`_ADDR_PLAYER_Y`)
+- **Constants**: UPPER_SNAKE_CASE; private to a module with leading underscore (`_ADDR_PLAYER_Y`), public exports from `data/` without underscore (`POKEMON_NAMES`, `MAP_NAMES`)
 - **RAM addresses**: prefixed with `ADDR_`, sourced from pret/pokered disassembly
+- **Game data**: static lookup tables (species, moves, items, maps) live in `claude_player/data/`; logic modules import from there
 - **Logging**: `logging` module everywhere; file=INFO+, console=WARNING+; rotating handler (5MB, 2 backups)
 - **No test suite** — no pytest, unittest, or test files exist
 - **Imports**: stdlib -> third-party (pyboy, flask, anthropic) -> local (claude_player.*)

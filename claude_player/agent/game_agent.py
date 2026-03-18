@@ -30,12 +30,7 @@ from claude_player.utils.cost_tracker import CostTracker
 from claude_player.agent.turn_context import TurnContextBuilder
 from claude_player.agent.memory_manager import MemoryManager
 
-# Gen 1 character encoding (wPlayerName etc.)
-_G1_CHARS = {
-    **{0x80 + i: chr(ord('A') + i) for i in range(26)},
-    **{0xA0 + i: chr(ord('a') + i) for i in range(26)},
-    **{0xF6 + i: chr(ord('0') + i) for i in range(10)},
-}
+from claude_player.data.pokemon import G1_CHARS
 
 # Error strings that indicate non-recoverable failures (no point retrying)
 FATAL_ERROR_PATTERNS = [
@@ -777,7 +772,7 @@ class GameAgent:
             if b == 0x50:
                 break
             raw.append(b)
-        trainer_name = "".join(_G1_CHARS.get(b, "") for b in raw).strip() or ""
+        trainer_name = "".join(G1_CHARS.get(b, "") for b in raw).strip() or ""
 
         # Trainer ID (wPlayerID = 0xD359, 2 bytes big-endian)
         trainer_id = (self.pyboy.memory[0xD359] << 8) | self.pyboy.memory[0xD35A]

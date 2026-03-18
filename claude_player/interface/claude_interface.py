@@ -64,14 +64,27 @@ PRIORITY: NAV(map) > [path:] hints > COMPASS bearing. If NAV(map) is present, fo
 STUCK RECOVERY: If your position is unchanged after a move, you walked into a wall. Do NOT retry the same direction. Try perpendicular directions or follow NAV(map) detour suggestions. If STUCK warnings appear, you are looping — pick a direction you have NOT tried in the last 5 turns.
 WARP PATHING: Warps often require indirect paths through corridors and around walls. A warp that is "3 DOWN, 6 LEFT" may require going UP first to find a corridor. Trust NAV(map) for warp routing — it computes the actual walkable path.
 DEAD ENDS: If the context says "dead-end" or "looping", leave immediately in the suggested direction. Do not attempt to reach a compass target through a dead-end area.
+EXPLORED MAP: The large map shows all tiles you've visited with @ as your position. Use it to identify corridors you haven't explored yet. The map accumulates across turns — revisiting explored areas wastes time. Head toward unexplored edges (shown by ? or map boundaries) to discover new paths.
+DUNGEONS: Caves like Mt. Moon have multiple floors connected by ladder warps. The exit to outside may require going through B1F or B2F first — don't assume the entrance floor has a direct exit. Follow NAV(map) routes even when they lead away from your compass target — detours through explored corridors are faster than wall-bumping toward a blocked bearing.
+CONNECTIONS: Map edges marked in COMPASS as connections (e.g. "Route 3: ~5 blocks WEST") are reached by walking off the map edge — no warp tile needed. Routes between cities are linear — follow the path and avoid trainers by walking around their line of sight when possible.
 </navigation>
 <battle_context>
 Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
 Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.
 FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with HP>0, or D A=NO (wild only).
+RUN: In wild battles, RUN is bottom-right (D R A from FIGHT). Gen 1 escape can fail — send the sequence twice (B D R A B D R A) to retry automatically. Against trainers, RUN always fails — you must fight.
+TYPE MATCHUPS: Water beats Fire/Rock/Ground. Electric beats Water/Flying. Fire beats Grass/Bug/Ice. Grass beats Water/Rock/Ground. Use super-effective moves when possible — they deal 2x damage. Avoid not-very-effective moves (0.5x). Normal moves don't affect Ghost types.
+HEALING: Use potions (ITEM menu: D to POTION, A, pick Pokemon, A) when HP is below 30%. Visit Pokemon Centers (enter building, walk to counter, talk to nurse) whenever HP drops below 50% and one is nearby. The HEAL line in context means healing is urgent.
+WILD ENCOUNTERS: In caves and grass, wild Pokemon appear randomly. RUN from encounters when your team is weak or you're trying to navigate. Only fight if you need XP or are trying to catch something.
+TRAINERS: Trainer battles are mandatory when you walk into their line of sight. You cannot run. Focus on type advantages and use your strongest moves. Switch Pokemon if the current one is at a type disadvantage.
+STAT MOVES: Moves like GROWL, LEER, TAIL WHIP lower enemy stats but deal no damage. Only use them if you plan to stay in the fight for multiple turns and need the edge. In most wild battles, just attack or run.
+LEVEL ADVANTAGE: If your Pokemon is 5+ levels above the opponent, most attacks will KO in 1-2 hits. If 5+ levels below, consider switching or running. Check the level display in battle context to judge.
+POKEMON CENTERS: Free full heal for your entire party. Always heal before gym battles and after dungeons. The nurse dialogue requires A to start, A to confirm, then A to dismiss — three A presses total.
 </battle_context>
 <menu_context>
 Shows menu type, cursor, options, and a TIP. B closes menus, START toggles start menu.
+POKEMON MENU: Use to check stats, reorder party (put strongest first), or teach TMs. Items can be used outside battle for healing.
+SAVE: START → SAVE → A to save progress. The game auto-saves state separately via the emulator.
 </menu_context>""")
 
             static_parts.append("""

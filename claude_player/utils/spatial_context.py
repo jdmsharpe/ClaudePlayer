@@ -265,15 +265,28 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
         grid_h = SCREEN_TILES_Y // 2   # 9
 
         # wTileMap at 0xC3A0: 18 rows × 20 cols of raw tile IDs (0x00-0xFF),
-        # already scroll-adjusted by the game engine.  Sample bottom-left tile
-        # of each 2×2 metatile: row = my*2+1, col = mx*2.
-        wmap_raw: List[List[int]] = []
+        # already scroll-adjusted by the game engine.
+        # Sample ALL four sub-tiles of each 2×2 metatile for collision:
+        # a block is walkable only if every sub-tile is in the walkable set.
+        # Bottom-left (row=my*2+1, col=mx*2) remains the representative tile
+        # for grass/ledge/water detection.
+        # This fixes cave tilesets where wall metatiles have heterogeneous
+        # sub-tile IDs — the bottom-left alone could falsely match a walkable ID.
+        wmap_raw: List[List[int]] = []           # representative (bottom-left)
+        wmap_subtiles: List[List[List[int]]] = []  # all 4 sub-tiles per block
         for my in range(grid_h):
             row: List[int] = []
+            row_sub: List[List[int]] = []
             for mx in range(grid_w):
                 idx = 0xC3A0 + (my * 2 + 1) * SCREEN_TILES_X + mx * 2
                 row.append(pyboy.memory[idx])
+                subtiles = [
+                    pyboy.memory[0xC3A0 + (my * 2 + r) * SCREEN_TILES_X + mx * 2 + c]
+                    for r in range(2) for c in range(2)
+                ]
+                row_sub.append(subtiles)
             wmap_raw.append(row)
+            wmap_subtiles.append(row_sub)
 
         # VRAM tilemap — only needed for ledge/water tile detection (overworld).
         tileset_type = pyboy.memory[_ADDR_TILESET_TYPE]
@@ -326,7 +339,10 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
                     row_out.append(_LEDGE_TILES[tid])
                 elif need_vram and tid == _WATER_TILE_VRAM:
                     row_out.append('=')
-                elif raw in walkable_raw:
+                elif all(st in walkable_raw for st in wmap_subtiles[my][mx]):
+                    # All 4 sub-tiles must be walkable — prevents cave wall
+                    # metatiles with one coincidentally-walkable sub-tile from
+                    # being classified as floor.
                     row_out.append('.')
                 else:
                     row_out.append('#')

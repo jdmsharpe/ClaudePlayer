@@ -1224,9 +1224,12 @@ class GameAgent:
                 assistant_content = []
                 for block in message.content:
                     if getattr(block, 'type', None) == 'thinking':
+                        # Keep signature (API validates it) but empty the
+                        # thinking text to avoid re-billing 8k tokens/turn.
                         assistant_content.append({
                             "type": "thinking",
                             "thinking": "",
+                            "signature": getattr(block, 'signature', ''),
                         })
                     else:
                         assistant_content.append(block)

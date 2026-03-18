@@ -40,7 +40,7 @@ def _has_item(memory_read_func: Callable[[int], int], item_id: int) -> bool:
 # Navigation milestones: completed when a specific map has been visited.
 _VISIT_MAP_CHECKS: Dict[int, int] = {
      -1: 0x02,  # Through Viridian Forest → Pewter City (0x02)
-     -2: 0x0F,  # Through Mt. Moon → Route 4 (0x0F)
+     -2: 0x03,  # Through Mt. Moon → Cerulean City (0x03)
      -8: 0xD4,  # Cleared Silph Co. → Silph Co. 7F (0xD4) — deep enough to confirm progress
      -9: 0x08,  # Surfed to Cinnabar Island → Cinnabar Island (0x08)
     -11: 0x6C,  # Reached Victory Road → Victory Road 1F (0x6C)

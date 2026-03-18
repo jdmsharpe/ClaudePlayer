@@ -78,6 +78,12 @@ class GameAgent:
             pyboy_kwargs['cgb'] = True
             pyboy_kwargs['cgb_color_palette'] = palette
 
+        # Use 24 kHz sample rate to halve APU buffer pressure (buffer = (400+1)*2 = 802
+        # instead of 1602).  At 48 kHz, LCD transitions can overflow the 1-frame buffer
+        # in PyBoy's Cython core, causing crashes.
+        if getattr(self.config, 'ENABLE_SOUND', True):
+            pyboy_kwargs['sound_sample_rate'] = 24000
+
         self.pyboy = PyBoy(self.config.ROM_PATH, **pyboy_kwargs)
         self.pyboy.set_emulation_speed(target_speed=self.config.EMULATION_SPEED)
 
@@ -1301,6 +1307,11 @@ class GameAgent:
         # so 15ms after interrupt detection the game is still mid-warp.
         last_map_change_time = 0.0
         _MAP_TRANSITION_SETTLE = 1.5  # seconds
+        # Minimum settle time after battle START before re-analyzing.
+        # Battle intro animations ("Wild X appeared!", "Go! POKEMON!") take ~5s;
+        # analyzing too early produces stale submenu detection and wasted turns.
+        last_battle_start_time = 0.0
+        _BATTLE_START_SETTLE = 4.0  # seconds
 
         # Add threading lock for shared variables
         lock = threading.Lock()
@@ -1543,11 +1554,13 @@ class GameAgent:
 
                 start_analysis = False
                 map_settled = (current_time - last_map_change_time) >= _MAP_TRANSITION_SETTLE
+                battle_settled = (current_time - last_battle_start_time) >= _BATTLE_START_SETTLE
                 with lock:
                     if (not ai_is_analyzing
                             and time_since_last_analysis >= adaptive_interval
                             and time_since_last_action >= action_settle_seconds
-                            and map_settled):
+                            and map_settled
+                            and battle_settled):
                         start_analysis = True
                         ai_is_analyzing = True
                         analysis_complete = False
@@ -1586,11 +1599,19 @@ class GameAgent:
                         break
                     
                 # Tick the emulator regardless of AI state
-                if not self.pyboy.tick(sound=self._sound_enabled):
-                    # PyBoy signal to exit
-                    break
-                if self._sound_enabled:
-                    self.sound_output.write(self.pyboy.sound)
+                try:
+                    if not self.pyboy.tick(sound=self._sound_enabled):
+                        # PyBoy signal to exit
+                        break
+                    if self._sound_enabled:
+                        self.sound_output.write(self.pyboy.sound)
+                except Exception as e:
+                    if self._sound_enabled:
+                        logging.warning(f"Sound error during tick, disabling sound: {e}")
+                        self._sound_enabled = False
+                        self.sound_output.close()
+                    else:
+                        raise
                 fps_frame_count += 1
 
                 # --- State-aware interrupt detection ---
@@ -1612,6 +1633,8 @@ class GameAgent:
                     tracked_map_id = cur_map
                     if map_changed:
                         last_map_change_time = current_time
+                    if battle_changed and cur_battle:
+                        last_battle_start_time = current_time
 
                     # Abort any currently-running button sequence (e.g. D64 mid-walk)
                     state_change_event.set()

@@ -124,7 +124,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         }
     )
     def handle_check_tiles(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
-        from claude_player.utils.spatial_context import _extract_terrain_data
+        from claude_player.utils.spatial_context import _extract_terrain_data, _extract_npc_data, _overlay_npcs_on_grid
 
         if self.pyboy.memory[ADDR_IS_IN_BATTLE] != 0:
             return [{"type": "text", "text": "Error: Cannot check tiles during battle"}]
@@ -141,6 +141,11 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         px = s0.x // 8 // 2
         py = (s0.y // 8 + 1) // 2
 
+        # Overlay NPC/item/object sprites so check_tiles sees the full picture
+        npc_data = _extract_npc_data(self.pyboy)
+        if npc_data:
+            _overlay_npcs_on_grid(terrain, npc_data, (px, py))
+
         grid_h = len(terrain)
         grid_w = len(terrain[0]) if terrain else 0
 
@@ -150,7 +155,15 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             '.': 'walkable', '#': 'BLOCKED (wall)', ',': 'grass (walkable)',
             'v': 'ledge DOWN', '<': 'ledge LEFT', '>': 'ledge RIGHT',
             '=': 'water (BLOCKED)', 'T': 'tree (BLOCKED, need Cut)', 'W': 'warp/exit',
+            'i': 'ITEM (face it + press A to pick up)',
+            'B': 'BOULDER (need Strength to push)',
+            'o': 'OBJECT (blocked)',
+            'g': 'GHOST (walkable, need Silph Scope to identify)',
         }
+        # Sprites that block movement (player can't walk through them)
+        sprite_blocked = frozenset({'i', 'B', 'o'})
+        # NPC digits 1-9 and 'n' also block movement
+        npc_chars = frozenset({str(d) for d in range(1, 10)} | {'n'})
         # Ledges block movement in the opposite direction of their jump
         ledge_blocks = {'v': 'up', '<': 'right', '>': 'left'}
 
@@ -162,9 +175,13 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             y += dy
             if 0 <= x < grid_w and 0 <= y < grid_h:
                 t = terrain[y][x]
-                desc = tile_desc.get(t, f'unknown ({t})')
                 blocked = False
-                if t == '#' or t == '=' or t == 'T':
+                if t in npc_chars:
+                    desc = f'NPC (blocked — talk with A)'
+                    blocked = True
+                else:
+                    desc = tile_desc.get(t, f'unknown ({t})')
+                if t in ('#', '=', 'T') or t in sprite_blocked:
                     blocked = True
                 elif t in ledge_blocks and ledge_blocks[t] == direction:
                     desc += f' — IMPASSABLE going {direction}'

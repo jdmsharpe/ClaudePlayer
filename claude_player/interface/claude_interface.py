@@ -58,6 +58,13 @@ MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A).
 Use large moves (D96, R128) to cover ground fast. NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
 NAME ENTRY: START to finalize. If RAM says dialogue but nothing visible, try movement.
 </spatial_context>
+<navigation>
+COMPASS vs NAV: COMPASS shows crow-flies direction and distance to off-screen exits. These are NOT walkable paths — walls, corridors, and obstacles lie between you and the target. NEVER convert compass block distances into frame inputs (e.g. "6 LEFT, 3 DOWN" does NOT mean "L96 D48"). Always use the NAV(map) A* path instead — it routes around walls through explored tiles.
+PRIORITY: NAV(map) > [path:] hints > COMPASS bearing. If NAV(map) is present, follow it. If only COMPASS is available, move in the general compass direction using 1-tile steps (U16/D16/L16/R16) and re-evaluate each turn.
+STUCK RECOVERY: If your position is unchanged after a move, you walked into a wall. Do NOT retry the same direction. Try perpendicular directions or follow NAV(map) detour suggestions. If STUCK warnings appear, you are looping — pick a direction you have NOT tried in the last 5 turns.
+WARP PATHING: Warps often require indirect paths through corridors and around walls. A warp that is "3 DOWN, 6 LEFT" may require going UP first to find a corridor. Trust NAV(map) for warp routing — it computes the actual walkable path.
+DEAD ENDS: If the context says "dead-end" or "looping", leave immediately in the suggested direction. Do not attempt to reach a compass target through a dead-end area.
+</navigation>
 <battle_context>
 Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
 Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.

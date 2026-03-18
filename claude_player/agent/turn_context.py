@@ -78,12 +78,8 @@ class TurnContextBuilder:
         if last_action_feedback:
             user_content.append({"type": "text", "text": last_action_feedback})
 
-        # ── Persistent memory injection ──
-        memory_block = self._build_memory_block(
-            game_state.turn_count, game_state.memory_turn,
-        )
-        if memory_block:
-            user_content.append({"type": "text", "text": memory_block})
+        # Memory is now injected as a cached system prompt block (see game_agent.py)
+        # instead of a user message — saves tokens via cache-read pricing.
 
         # ── Main context: battle OR spatial ──
         if battle_data and battle_data.get("text"):
@@ -140,8 +136,12 @@ class TurnContextBuilder:
 
     # ── Private helpers ──────────────────────────────────────────────
 
-    def _build_memory_block(self, turn_count: int, memory_turn: int) -> str:
-        """Read MEMORY.md and wrap it in XML tags with staleness info."""
+    def build_memory_block(self, turn_count: int, memory_turn: int) -> str:
+        """Read MEMORY.md and wrap it in XML tags with staleness info.
+
+        Called by game_agent to inject memory into the system prompt as a
+        cached content block (cache-read pricing on unchanged turns).
+        """
         if not os.path.exists(self.memory_path):
             return ""
         try:
@@ -151,8 +151,7 @@ class TurnContextBuilder:
             return ""
         if not memory_text:
             return ""
-        turns_since = turn_count - memory_turn
-        staleness = f" (updated {turns_since} turns ago)" if turns_since > 0 else ""
+        staleness = f" updated_at_turn={memory_turn}" if memory_turn > 0 else ""
         return f"<memory{staleness}>\n{memory_text}\n</memory>"
 
     def _build_spatial_text(

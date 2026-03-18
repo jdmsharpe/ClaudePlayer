@@ -912,7 +912,10 @@ class GameAgent:
 
         for attempt in range(max_retries + 1):
             try:
-                system_prompt = self.claude.get_system_prompt()
+                memory_text = self._context_builder.build_memory_block(
+                    self.game_state.turn_count, self.game_state.memory_turn,
+                )
+                system_prompt = self.claude.get_system_prompt(memory_text)
 
                 # Get tools
                 tools = self.tool_registry.get_tools()

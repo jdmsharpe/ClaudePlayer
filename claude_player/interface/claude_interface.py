@@ -95,7 +95,7 @@ PARTY STATUS, SPATIAL/BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Trust ov
 HEAL line = prioritize Pokémon Center. WARNING = address before main goal.
 </authority>
 <memory>
-Your persistent memory is auto-injected each turn as <memory> in the user message.
+Your persistent memory is injected in the system prompt as <memory>.
 It may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM) over memory when they conflict.
 </memory>""")
 
@@ -113,9 +113,23 @@ It may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM) 
             },
         ]
 
-    def get_system_prompt(self) -> list:
-        """Return the pre-built static system prompt."""
-        return self._system_prompt
+    def get_system_prompt(self, memory_text: str = "") -> list:
+        """Return system prompt with optional memory as a second cached block.
+
+        Memory changes infrequently (~every 30 turns), so placing it in the
+        system prompt as its own cached content block lets the API serve it
+        at the cheap cache-read rate for all turns where it hasn't changed.
+        The static block (index 0) always cache-hits regardless of memory.
+        """
+        if not memory_text:
+            return self._system_prompt
+        return self._system_prompt + [
+            {
+                "type": "text",
+                "text": memory_text,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
     
     def _prepare_tools_cached(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Add cache_control to the last tool definition for prompt caching.

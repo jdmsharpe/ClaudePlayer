@@ -38,9 +38,10 @@ Key entry: `play.py` -> `claude_player/main.py` -> `game_agent.py` main loop.
 - **Type hints** used throughout: `Dict[str, Any]`, `Optional[str]`, `TypedDict` for configs
 - **Google-style docstrings** with `Args:` and `Returns:` sections
 - **No linter/formatter configured** — match existing style when editing
-- **Constants**: UPPER_SNAKE_CASE; private to a module with leading underscore (`_ADDR_PLAYER_Y`), public exports from `data/` without underscore (`POKEMON_NAMES`, `MAP_NAMES`)
-- **RAM addresses**: prefixed with `ADDR_`, sourced from pret/pokered disassembly
+- **Constants**: UPPER_SNAKE_CASE; module-private constants use leading underscore (`_ADDR_MAP_HEIGHT`), shared constants are public (`ADDR_PLAYER_Y`, `POKEMON_NAMES`)
+- **RAM addresses**: prefixed with `ADDR_`, sourced from pret/pokered disassembly. Shared addresses live in `utils/ram_constants.py`; module-specific addresses stay local. Import the raw name — no `as _` aliasing.
 - **Game data**: static lookup tables (species, moves, items, maps) live in `claude_player/data/`; logic modules import from there
+- **Shared helpers**: `read_word()` and `decode_status()` in `ram_constants.py` — used by both `battle_context` and `party_context`
 - **Logging**: `logging` module everywhere; file=INFO+, console=WARNING+; rotating handler (5MB, 2 backups)
 - **No test suite** — no pytest, unittest, or test files exist
 - **Imports**: stdlib -> third-party (pyboy, flask, anthropic) -> local (claude_player.*)
@@ -91,16 +92,16 @@ Cumulative stats persist across runs in `saves/session_stats.json`.
 
 ## RAM / Emulation
 
-All RAM addresses reference the pret/pokered disassembly. Key areas:
+All RAM addresses reference the pret/pokered disassembly. Shared addresses (player pos, Pokédex, badges, money, event flags, menu cursor, battle detection) live in `utils/ram_constants.py`; module-specific addresses stay in their consumer files.
 
-- Spatial context reads tilemap, collisions, warps, NPCs, map connections from RAM
-- Coordinates (`wYCoord`/`wXCoord` at `0xD361`/`0xD362`) are in **block units** (1 block = 2×2 tiles = 16px step); warp entries and NPC sprite positions share this space (sprite state adds a constant +4 border offset)
+- Coordinates (`ADDR_PLAYER_Y`/`ADDR_PLAYER_X`) are in **block units** (1 block = 2×2 tiles = 16px step); warp entries and NPC sprite positions share this space (sprite state adds a constant +4 border offset)
 - `hTileAnimations` at `0xFFD7`: 0=indoor/building (no animations), 1=cave (water animated), 2=outdoor (water+flower animated) — sourced from annotated hram.asm
-- HRAM constants live in `ram_constants.py` under `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_DISABLE_JOYPAD` (FFF9)
+- HRAM constants: `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_DISABLE_JOYPAD` (FFF9)
 - Battle context reads Pokemon stats, moves, HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD)
 - `0xCC2F` is dual-purpose: party index of sent-out Pokemon outside the fight submenu, last A-confirmed fight slot (0–3) inside it
-- Event flags at `0xD747` track story progression milestones
+- Event flags at `ADDR_EVENT_FLAGS` track story progression milestones
 - Sprite data starts at `0xC100` with 16-byte stride per sprite
+- Direction constants (`DIR_BUTTONS`, `LEDGE_ALLOWED_DIR`, `NEIGHBORS`) are canonical in `pathfinding.py`; `world_map.py` imports from there
 
 When modifying RAM readers, verify addresses against <https://github.com/pret/pokered>.
 

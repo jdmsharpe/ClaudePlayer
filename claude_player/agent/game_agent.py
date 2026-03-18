@@ -1136,7 +1136,7 @@ class GameAgent:
 
         # Don't save during battles (RAM state can be weird mid-battle)
         try:
-            in_battle = self.pyboy.memory[0xD057]
+            in_battle = self.pyboy.memory[ADDR_IS_IN_BATTLE]
             if in_battle != 0:
                 return
         except Exception:

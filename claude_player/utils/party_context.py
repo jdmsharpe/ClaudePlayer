@@ -14,11 +14,14 @@ from typing import Any, Dict, List, Optional
 from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
-    ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT,
     ADDR_OBTAINED_BADGES,
+    ADDR_PARTY_BASE,
+    ADDR_PARTY_COUNT,
+    PARTY_MON_SIZE,
+    decode_status,
+    read_word,
 )
-from claude_player.data.pokemon import POKEMON_NAMES, MOVE_DATA, HM_MOVE_IDS
-from claude_player.utils.battle_context import _decode_status, _read_word
+from claude_player.data.pokemon import POKEMON_NAMES, MOVE_DATA, HM_MOVE_IDS, G1_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -57,28 +60,10 @@ _TYPE_WEAKNESSES: Dict[str, List[str]] = {
     "Ghost": ["Ghost"],  # Only self-weakness in Gen 1
     "Dragon": ["Ice", "Dragon"],
 }
-_ADDR_PARTY_SPECIES = 0xD164  # 6 bytes + 0xFF terminator
-
-# Party mon struct base and size
-_ADDR_PARTY_MON1 = 0xD16B  # First Pokemon struct
-_PARTY_MON_SIZE = 44  # 0x2C bytes per Pokemon
 
 # Nickname RAM: wPartyMon1Nick = 0xD2B5, 11 bytes each (10 chars + 0x50 terminator)
 _ADDR_PARTY_NICK1 = 0xD2B5
 _NICK_SIZE = 11
-
-# Gen 1 character map (charmap.asm)
-_GEN1_CHARMAP: Dict[int, str] = {
-    0x7F: " ",
-    **{0x80 + i: chr(ord("A") + i) for i in range(26)},  # A-Z
-    **{0xA0 + i: chr(ord("a") + i) for i in range(26)},  # a-z
-    **{0xF6 + i: str(i) for i in range(10)},             # 0-9
-    0xE1: "PK", 0xE2: "MN",
-    0xE3: "-", 0xE6: "?", 0xE7: "!",
-    0xE8: ".", 0xF4: ",",
-    0x60: "'",  # apostrophe (e.g. FARFETCH'D)
-}
-
 
 def _decode_nickname(pyboy: PyBoy, slot: int) -> str:
     """Read and decode a Gen 1 party Pokemon nickname."""
@@ -88,7 +73,7 @@ def _decode_nickname(pyboy: PyBoy, slot: int) -> str:
         b = pyboy.memory[base + i]
         if b == 0x50:  # terminator
             break
-        chars.append(_GEN1_CHARMAP.get(b, ""))
+        chars.append(G1_CHARS.get(b, ""))
     return "".join(chars)
 
 # Offsets within each 44-byte party mon struct
@@ -151,7 +136,7 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
     Returns:
         Dict with Pokemon data, or None if slot is empty.
     """
-    base = _ADDR_PARTY_MON1 + (slot * _PARTY_MON_SIZE)
+    base = ADDR_PARTY_BASE + (slot * PARTY_MON_SIZE)
 
     species_id = pyboy.memory[base + _OFF_SPECIES]
     if species_id == 0:
@@ -162,10 +147,10 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
     # Suppress nickname if it matches species name (default, no custom name set)
     if nickname.upper() == name.upper():
         nickname = ""
-    hp = _read_word(pyboy, base + _OFF_HP)
-    max_hp = _read_word(pyboy, base + _OFF_MAX_HP)
+    hp = read_word(pyboy, base + _OFF_HP)
+    max_hp = read_word(pyboy, base + _OFF_MAX_HP)
     level = pyboy.memory[base + _OFF_LEVEL]
-    status = _decode_status(pyboy.memory[base + _OFF_STATUS])
+    status = decode_status(pyboy.memory[base + _OFF_STATUS])
 
     type1_id = pyboy.memory[base + _OFF_TYPE1]
     type2_id = pyboy.memory[base + _OFF_TYPE2]
@@ -175,10 +160,10 @@ def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
 
     exp = _read_exp(pyboy, base + _OFF_EXP)
 
-    attack = _read_word(pyboy, base + _OFF_ATTACK)
-    defense = _read_word(pyboy, base + _OFF_DEFENSE)
-    speed = _read_word(pyboy, base + _OFF_SPEED)
-    special = _read_word(pyboy, base + _OFF_SPECIAL)
+    attack = read_word(pyboy, base + _OFF_ATTACK)
+    defense = read_word(pyboy, base + _OFF_DEFENSE)
+    speed = read_word(pyboy, base + _OFF_SPEED)
+    special = read_word(pyboy, base + _OFF_SPECIAL)
 
     # Read moves and PP
     moves: List[Dict[str, Any]] = []
@@ -477,7 +462,7 @@ def extract_party_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
     or None if party is empty / data not ready.
     """
     try:
-        party_count = pyboy.memory[_ADDR_PARTY_COUNT]
+        party_count = pyboy.memory[ADDR_PARTY_COUNT]
         if party_count == 0 or party_count > 6:
             return None
 

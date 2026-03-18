@@ -11,9 +11,9 @@ import logging
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
 from claude_player.utils.ram_constants import (
-    ADDR_EVENT_FLAGS as _ADDR_EVENT_FLAGS,
-    ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
-    ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
+    ADDR_EVENT_FLAGS,
+    ADDR_NUM_BAG_ITEMS,
+    ADDR_BAG_ITEMS,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 
 def _has_item(memory_read_func: Callable[[int], int], item_id: int) -> bool:
     """Return True if item_id is present in the player's bag."""
-    num = memory_read_func(_ADDR_NUM_BAG_ITEMS)
+    num = memory_read_func(ADDR_NUM_BAG_ITEMS)
     if num > 20:
         return False
     for i in range(num):
-        if memory_read_func(_ADDR_BAG_ITEMS + i * 2) == item_id:
+        if memory_read_func(ADDR_BAG_ITEMS + i * 2) == item_id:
             return True
     return False
 
@@ -104,7 +104,7 @@ def is_event_set(memory_read_func: Callable[[int], int], flag_number: int) -> bo
     Returns:
         True if the flag bit is set.
     """
-    byte_addr = _ADDR_EVENT_FLAGS + (flag_number // 8)
+    byte_addr = ADDR_EVENT_FLAGS + (flag_number // 8)
     bit_index = flag_number % 8
     byte_val = memory_read_func(byte_addr)
     return bool(byte_val & (1 << bit_index))

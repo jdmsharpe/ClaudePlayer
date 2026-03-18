@@ -1,4 +1,4 @@
-"""Shared Pokemon Red/Blue RAM address constants.
+"""Shared Pokemon Red/Blue RAM address constants and byte-level helpers.
 
 Addresses sourced from the pret/pokered disassembly:
   https://github.com/pret/pokered
@@ -8,7 +8,12 @@ Addresses sourced from the pret/pokered disassembly:
 Only addresses used by multiple modules live here.  Module-specific
 addresses (e.g. the 38 battle stat/move addresses) stay in their own
 files to preserve locality.
+
+Byte-level helpers (read_word, decode_status) are shared by both
+battle_context and party_context.
 """
+
+from pyboy import PyBoy
 
 # ---------------------------------------------------------------------------
 # Battle / game state detection
@@ -65,3 +70,34 @@ ADDR_MENU_TOP_X     = 0xCC25   # wTopMenuItemX (screen tile col)
 # ---------------------------------------------------------------------------
 ADDR_TILE_PLAYER_ON  = 0xFF93  # hTilePlayerStandingOn: metatile block ID under player
 ADDR_DISABLE_JOYPAD  = 0xFFF9  # hDisableJoypadPolling: nonzero = joypad ISR skips read
+
+
+# ---------------------------------------------------------------------------
+# Byte-level helpers (shared by battle_context + party_context)
+# ---------------------------------------------------------------------------
+
+def read_word(pyboy: PyBoy, addr: int) -> int:
+    """Read a 2-byte big-endian value from RAM."""
+    return (pyboy.memory[addr] << 8) | pyboy.memory[addr + 1]
+
+
+def decode_status(status_byte: int) -> str:
+    """Decode the Gen 1 status condition byte.
+
+    Returns:
+        Human-readable status string: "OK", "PAR", "FRZ", "BRN",
+        "PSN", "SLP(N)", or "???(0xNN)" for unknown values.
+    """
+    if status_byte == 0:
+        return "OK"
+    if status_byte & 0x40:
+        return "PAR"
+    if status_byte & 0x20:
+        return "FRZ"
+    if status_byte & 0x10:
+        return "BRN"
+    if status_byte & 0x08:
+        return "PSN"
+    if 1 <= status_byte <= 7:
+        return f"SLP({status_byte})"
+    return f"???(0x{status_byte:02X})"

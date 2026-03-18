@@ -9,7 +9,7 @@ RAM addresses and data tables sourced from the pret/pokered disassembly.
 """
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pyboy import PyBoy
 
@@ -19,18 +19,20 @@ from claude_player.data.pokemon import (
     STAGE_MULTS, HP_ITEMS, STATUS_CURE_ITEMS,
 )
 from claude_player.utils.ram_constants import (
-    ADDR_IS_IN_BATTLE as _ADDR_IS_IN_BATTLE,
-    ADDR_CUR_MAP as _ADDR_CUR_MAP,
-    ADDR_STATUS_FLAGS5 as _ADDR_STATUS_FLAGS5,
-    ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT,
-    ADDR_PARTY_BASE as _ADDR_PARTY_BASE,
-    PARTY_MON_SIZE as _PARTY_SIZE,
-    ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
-    ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
-    ADDR_MENU_ITEM as _ADDR_MENU_ITEM,
-    ADDR_MENU_TOP_Y as _ADDR_MENU_TOP_Y,
-    ADDR_MENU_TOP_X as _ADDR_MENU_TOP_X,
-    ADDR_POKEDEX_OWNED as _ADDR_POKEDEX_OWNED,
+    ADDR_BAG_ITEMS,
+    ADDR_CUR_MAP,
+    ADDR_IS_IN_BATTLE,
+    ADDR_MENU_ITEM,
+    ADDR_MENU_TOP_X,
+    ADDR_MENU_TOP_Y,
+    ADDR_NUM_BAG_ITEMS,
+    ADDR_PARTY_BASE,
+    ADDR_PARTY_COUNT,
+    ADDR_POKEDEX_OWNED,
+    ADDR_STATUS_FLAGS5,
+    PARTY_MON_SIZE,
+    decode_status,
+    read_word,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,7 +107,9 @@ _ADDR_ENEMY_ACC_MOD  = 0xCD32
 _ADDR_ENEMY_EVA_MOD  = 0xCD33
 
 # Bag / party constants (battle-specific)
-_BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
+# Regular Poke Balls only (Safari Ball 0x08 excluded — Safari Zone uses
+# its own counter at _ADDR_NUM_SAFARI_BALLS, not the bag).
+_BATTLE_BATTLE_BALL_IDS     = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
 
 # ---------------------------------------------------------------------------
@@ -171,7 +175,7 @@ def _is_dex_owned(pyboy: "PyBoy", species_id: int) -> bool:
     if dex_num is None:
         return False
     idx = dex_num - 1  # 0-based
-    byte_val = pyboy.memory[_ADDR_POKEDEX_OWNED + idx // 8]
+    byte_val = pyboy.memory[ADDR_POKEDEX_OWNED + idx // 8]
     return bool(byte_val & (1 << (idx % 8)))
 
 
@@ -182,28 +186,6 @@ def _is_dex_owned(pyboy: "PyBoy", species_id: int) -> bool:
 def _apply_stage(base: int, stage: int) -> int:
     """Apply a Gen 1 stat stage multiplier to a base in-battle stat."""
     return base * STAGE_MULTS[max(0, min(12, stage + 6))] // 100
-
-
-def _read_word(pyboy: PyBoy, addr: int) -> int:
-    """Read a 2-byte big-endian value."""
-    return (pyboy.memory[addr] << 8) | pyboy.memory[addr + 1]
-
-
-def _decode_status(status_byte: int) -> str:
-    """Decode the Gen 1 status condition byte."""
-    if status_byte == 0:
-        return "OK"
-    if status_byte & 0x40:
-        return "PAR"
-    if status_byte & 0x20:
-        return "FRZ"
-    if status_byte & 0x10:
-        return "BRN"
-    if status_byte & 0x08:
-        return "PSN"
-    if 1 <= status_byte <= 7:
-        return f"SLP({status_byte})"
-    return f"???(0x{status_byte:02X})"
 
 
 def _read_pokemon(
@@ -228,19 +210,19 @@ def _read_pokemon(
         return None  # slot empty or data not ready
 
     name = POKEMON_NAMES.get(species_id, f"???({species_id:#04x})")
-    hp = _read_word(pyboy, hp_addr)
-    max_hp = _read_word(pyboy, max_hp_addr)
+    hp = read_word(pyboy, hp_addr)
+    max_hp = read_word(pyboy, max_hp_addr)
     level = pyboy.memory[level_addr]
-    status = _decode_status(pyboy.memory[status_addr])
+    status = decode_status(pyboy.memory[status_addr])
 
     # Stats (in-battle values, already modified by stat stages)
     stats = {}
     if atk_addr:
         stats = {
-            "atk": _read_word(pyboy, atk_addr),
-            "def": _read_word(pyboy, def_addr),
-            "spd": _read_word(pyboy, spd_addr),
-            "spc": _read_word(pyboy, spc_addr),
+            "atk": read_word(pyboy, atk_addr),
+            "def": read_word(pyboy, def_addr),
+            "spd": read_word(pyboy, spd_addr),
+            "spc": read_word(pyboy, spc_addr),
         }
 
     moves: List[Dict[str, Any]] = []
@@ -304,14 +286,14 @@ def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
 
     Returns "main", "fight", "faint", "pkmn", or "unknown".
     """
-    top_y = pyboy.memory[_ADDR_MENU_TOP_Y]
-    top_x = pyboy.memory[_ADDR_MENU_TOP_X]
+    top_y = pyboy.memory[ADDR_MENU_TOP_Y]
+    top_x = pyboy.memory[ADDR_MENU_TOP_X]
 
     # If a text message is being printed (e.g. "No! There's no running!"),
     # wCurrentMenuItem holds a transient text-engine value, not the real battle
     # menu cursor. Detect via wStatusFlags5 bit 0 (TEXT_BOX_OPEN) and return
     # "unknown" so the agent knows to press A to advance the text.
-    text_box_active = bool(pyboy.memory[_ADDR_STATUS_FLAGS5] & 0x01)
+    text_box_active = bool(pyboy.memory[ADDR_STATUS_FLAGS5] & 0x01)
 
     # Main battle menu (FIGHT/ITEM/PKMN/RUN): top item around Y=14, X=9
     if top_y >= 14 and top_x >= 8:
@@ -360,7 +342,7 @@ def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
     """
     alive = 0
     for i in range(min(party_count, 6)):
-        base = _ADDR_PARTY_BASE + i * _PARTY_SIZE
+        base = ADDR_PARTY_BASE + i * PARTY_MON_SIZE
         hp = (pyboy.memory[base + _PARTY_HP_OFFSET] << 8) | pyboy.memory[base + _PARTY_HP_OFFSET + 1]
         if hp > 0:
             alive += 1
@@ -369,16 +351,16 @@ def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
 
 def _count_pokeballs(pyboy: PyBoy) -> int:
     """Count total Poke Balls in bag (all ball types)."""
-    count = pyboy.memory[_ADDR_NUM_BAG_ITEMS]
+    count = pyboy.memory[ADDR_NUM_BAG_ITEMS]
     if count == 0 or count > 20:
         return 0
     total = 0
     for i in range(count):
-        addr = _ADDR_BAG_ITEMS + (i * 2)
+        addr = ADDR_BAG_ITEMS + (i * 2)
         item_id = pyboy.memory[addr]
         if item_id == 0xFF:
             break
-        if item_id in _BALL_IDS:
+        if item_id in _BATTLE_BALL_IDS:
             total += pyboy.memory[addr + 1]
     return total
 
@@ -393,7 +375,7 @@ def _read_battle_items(pyboy: PyBoy) -> Dict[str, Any]:
         }
     Bag slots are 1-indexed (slot 1 = top of bag).
     """
-    count = pyboy.memory[_ADDR_NUM_BAG_ITEMS]
+    count = pyboy.memory[ADDR_NUM_BAG_ITEMS]
     best_hp: Optional[Tuple[str, int, int]] = None   # (name, heal, slot)
     status_cures: Dict[str, Tuple[str, int]] = {}
 
@@ -401,7 +383,7 @@ def _read_battle_items(pyboy: PyBoy) -> Dict[str, Any]:
         return {"best_hp_item": None, "status_cures": {}}
 
     for i in range(count):
-        addr = _ADDR_BAG_ITEMS + (i * 2)
+        addr = ADDR_BAG_ITEMS + (i * 2)
         item_id = pyboy.memory[addr]
         if item_id == 0xFF:
             break
@@ -982,11 +964,11 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
     or None if not in battle or data isn't ready.
     """
     try:
-        battle_type = pyboy.memory[_ADDR_IS_IN_BATTLE]
+        battle_type = pyboy.memory[ADDR_IS_IN_BATTLE]
         if battle_type == 0:
             return None
 
-        is_safari = pyboy.memory[_ADDR_CUR_MAP] in _SAFARI_ZONE_MAPS
+        is_safari = pyboy.memory[ADDR_CUR_MAP] in _SAFARI_ZONE_MAPS
         safari_state = _read_safari_state(pyboy) if is_safari else None
 
         player = _read_pokemon(
@@ -1010,7 +992,7 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
             logger.debug("Battle context: Pokemon data not ready")
             return None
 
-        cursor = pyboy.memory[_ADDR_MENU_ITEM]
+        cursor = pyboy.memory[ADDR_MENU_ITEM]
         menu_type = _detect_battle_submenu(pyboy, player_hp=player["hp"])
         # wCurrentMenuItem is shared with overworld menus and holds a stale value
         # at the very start of a new battle. Clamp to 0 (FIGHT) only on that first
@@ -1032,7 +1014,7 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
 
         pokeball_count = _count_pokeballs(pyboy)
         battle_items = _read_battle_items(pyboy)
-        party_count = min(pyboy.memory[_ADDR_PARTY_COUNT], 6)
+        party_count = min(pyboy.memory[ADDR_PARTY_COUNT], 6)
         alive_count = _count_alive_party(pyboy, party_count)
         enemy_owned = _is_dex_owned(pyboy, enemy["species_id"])
 

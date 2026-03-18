@@ -3,14 +3,14 @@ from typing import Dict, List, Tuple, Optional, Any
 from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
-    ADDR_IS_IN_BATTLE,
     ADDR_CUR_MAP,
-    ADDR_PLAYER_Y,
-    ADDR_PLAYER_X,
-    ADDR_STATUS_FLAGS5,
-    ADDR_WINDOW_Y,
-    ADDR_TILE_PLAYER_ON,
     ADDR_DISABLE_JOYPAD,
+    ADDR_IS_IN_BATTLE,
+    ADDR_PLAYER_X,
+    ADDR_PLAYER_Y,
+    ADDR_STATUS_FLAGS5,
+    ADDR_TILE_PLAYER_ON,
+    ADDR_WINDOW_Y,
 )
 from claude_player.data.maps import MAP_NAMES
 
@@ -28,9 +28,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Pokemon Red/Blue RAM addresses (spatial-specific, from pret/pokered)
 # ---------------------------------------------------------------------------
-_ADDR_CUR_MAP = ADDR_CUR_MAP
-_ADDR_PLAYER_Y = ADDR_PLAYER_Y
-_ADDR_PLAYER_X = ADDR_PLAYER_X
 _ADDR_MAP_HEIGHT = 0xD368     # In blocks
 _ADDR_MAP_WIDTH = 0xD369      # In blocks
 _ADDR_NUM_WARPS = 0xD3AE
@@ -71,13 +68,8 @@ _FACING_MAP: Dict[int, str] = {
 
 # Game state detection addresses (spatial-specific)
 _ADDR_TEXT_BOX_ID    = 0xD125   # wTextBoxID – non-zero = text box active
-_ADDR_IS_IN_BATTLE   = ADDR_IS_IN_BATTLE
 _ADDR_WALK_COUNTER   = 0xCFC5   # wWalkCounter – non-zero = mid-step animation
-_ADDR_STATUS_FLAGS5  = ADDR_STATUS_FLAGS5
-_ADDR_WINDOW_Y       = ADDR_WINDOW_Y
 _ADDR_SIM_JOYPAD_IDX = 0xCD38   # wSimulatedJoypadStatesIndex – non-zero = game running scripted input
-_ADDR_DISABLE_JOYPAD = ADDR_DISABLE_JOYPAD
-_ADDR_TILE_PLAYER_ON = ADDR_TILE_PLAYER_ON
 
 # Terrain classification RAM addresses
 _ADDR_GRASS_TILE       = 0xD535   # wGrassTile — grass tile value for current map
@@ -460,9 +452,9 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
     unavailable (e.g. during title screen or non-Pokemon-Red games).
     """
     try:
-        map_number = pyboy.memory[_ADDR_CUR_MAP]
-        player_y = pyboy.memory[_ADDR_PLAYER_Y]
-        player_x = pyboy.memory[_ADDR_PLAYER_X]
+        map_number = pyboy.memory[ADDR_CUR_MAP]
+        player_y = pyboy.memory[ADDR_PLAYER_Y]
+        player_x = pyboy.memory[ADDR_PLAYER_X]
         map_height = pyboy.memory[_ADDR_MAP_HEIGHT]
         map_width = pyboy.memory[_ADDR_MAP_WIDTH]
         num_warps = pyboy.memory[_ADDR_NUM_WARPS]
@@ -566,8 +558,8 @@ def _extract_npc_data(pyboy: PyBoy, map_number: Optional[int] = None) -> Optiona
     """
     try:
         from claude_player.utils.npc_overrides import NPC_NAME_OVERRIDES
-        player_y = pyboy.memory[_ADDR_PLAYER_Y]
-        player_x = pyboy.memory[_ADDR_PLAYER_X]
+        player_y = pyboy.memory[ADDR_PLAYER_Y]
+        player_x = pyboy.memory[ADDR_PLAYER_X]
         num_sprites = pyboy.memory[_ADDR_NUM_SPRITES]
 
         if num_sprites == 0 or num_sprites > 15:
@@ -668,7 +660,7 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
     wStatusFlags5 is the only address the engine reliably toggles.
     """
     try:
-        battle = pyboy.memory[_ADDR_IS_IN_BATTLE]
+        battle = pyboy.memory[ADDR_IS_IN_BATTLE]
         if battle != 0:
             kind = "wild battle" if battle == 1 else "trainer battle"
             return {
@@ -677,8 +669,8 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
                 "input_hint": "Use battle commands (A to select, B to cancel, arrows to navigate)",
             }
 
-        status5 = pyboy.memory[_ADDR_STATUS_FLAGS5]
-        disable_joy = pyboy.memory[_ADDR_DISABLE_JOYPAD]  # hDisableJoypadPolling
+        status5 = pyboy.memory[ADDR_STATUS_FLAGS5]
+        disable_joy = pyboy.memory[ADDR_DISABLE_JOYPAD]  # hDisableJoypadPolling
         if (status5 & 0x20) or disable_joy:  # WRAM bit5 or HRAM joypad-disable flag
             scripted = "scripted movement" if status5 & 0x80 else "cutscene"
             return {
@@ -713,7 +705,7 @@ def _detect_game_state(pyboy: PyBoy) -> Dict[str, str]:
         # Fallback: Window layer visible means a text box or menu is on screen.
         # Some dialogues (e.g. Oak's Route 1 speech) don't set wStatusFlags5 bit 0
         # but still display via the Window layer.  WY < 144 = window is on screen.
-        wy = pyboy.memory[_ADDR_WINDOW_Y]
+        wy = pyboy.memory[ADDR_WINDOW_Y]
         if wy < 144:
             return {
                 "state": "dialogue",
@@ -1511,7 +1503,7 @@ def extract_spatial_context(
 
         tile_terrain = None
         try:
-            tile_under = pyboy.memory[_ADDR_TILE_PLAYER_ON]
+            tile_under = pyboy.memory[ADDR_TILE_PLAYER_ON]
             grass_tile = pyboy.memory[_ADDR_GRASS_TILE]
             if tile_under == grass_tile:
                 tile_terrain = "tall grass"

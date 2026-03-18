@@ -16,10 +16,10 @@ from typing import Any, Dict, List, Optional
 from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
-    ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
-    ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
-    ADDR_PLAYER_MONEY as _ADDR_PLAYER_MONEY,
-    ADDR_OBTAINED_BADGES as _ADDR_OBTAINED_BADGES,
+    ADDR_NUM_BAG_ITEMS,
+    ADDR_BAG_ITEMS,
+    ADDR_PLAYER_MONEY,
+    ADDR_OBTAINED_BADGES,
 )
 from claude_player.data.items import (
     ITEM_NAMES, KEY_ITEMS, BADGE_NAMES, HM_BADGE_REQS,
@@ -54,13 +54,13 @@ def _read_bag_items(pyboy: PyBoy) -> List[Dict[str, Any]]:
 
     Returns list of dicts with: id, name, quantity, is_key_item, category.
     """
-    count = pyboy.memory[_ADDR_NUM_BAG_ITEMS]
+    count = pyboy.memory[ADDR_NUM_BAG_ITEMS]
     if count == 0 or count > 20:
         return []
 
     items = []
     for i in range(count):
-        addr = _ADDR_BAG_ITEMS + (i * 2)
+        addr = ADDR_BAG_ITEMS + (i * 2)
         item_id = pyboy.memory[addr]
         quantity = pyboy.memory[addr + 1]
 
@@ -99,7 +99,7 @@ def _read_bag_items(pyboy: PyBoy) -> List[Dict[str, Any]]:
 
 def _read_badges(pyboy: PyBoy) -> List[str]:
     """Read badge bitfield and return list of obtained badge names."""
-    badge_byte = pyboy.memory[_ADDR_OBTAINED_BADGES]
+    badge_byte = pyboy.memory[ADDR_OBTAINED_BADGES]
     badges = []
     for bit in range(8):
         if badge_byte & (1 << bit):
@@ -283,7 +283,7 @@ def extract_bag_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
     try:
         items = _read_bag_items(pyboy)
         badges = _read_badges(pyboy)
-        money = _read_bcd_money(pyboy, _ADDR_PLAYER_MONEY)
+        money = _read_bcd_money(pyboy, ADDR_PLAYER_MONEY)
 
         assessment = assess_inventory(items, badges, money)
         text = _format_bag_text(items, badges, assessment)

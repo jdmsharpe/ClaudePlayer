@@ -13,12 +13,12 @@ from typing import Any, Dict, List, Optional
 from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
-    ADDR_IS_IN_BATTLE as _ADDR_IS_IN_BATTLE,
-    ADDR_STATUS_FLAGS5 as _ADDR_STATUS_FLAGS5,
-    ADDR_WINDOW_Y as _ADDR_WINDOW_Y,
-    ADDR_MENU_ITEM as _ADDR_CURRENT_MENU,
-    ADDR_MENU_TOP_Y as _ADDR_MENU_ITEM_Y,
-    ADDR_MENU_TOP_X as _ADDR_MENU_ITEM_X,
+    ADDR_IS_IN_BATTLE,
+    ADDR_MENU_ITEM,
+    ADDR_MENU_TOP_X,
+    ADDR_MENU_TOP_Y,
+    ADDR_STATUS_FLAGS5,
+    ADDR_WINDOW_Y,
 )
 
 logger = logging.getLogger(__name__)
@@ -353,19 +353,19 @@ def extract_menu_context(
     """
     try:
         # Gate 1: not in battle (battle_context handles battle menus)
-        if pyboy.memory[_ADDR_IS_IN_BATTLE] != 0:
+        if pyboy.memory[ADDR_IS_IN_BATTLE] != 0:
             return None
 
         # Gate 2: menu/text window is active
-        status5 = pyboy.memory[_ADDR_STATUS_FLAGS5]
-        wy = pyboy.memory[_ADDR_WINDOW_Y]
+        status5 = pyboy.memory[ADDR_STATUS_FLAGS5]
+        wy = pyboy.memory[ADDR_WINDOW_Y]
         if not ((status5 & 0x01) or (wy < 144)):
             return None
 
         # Read cursor metadata
-        top_y = pyboy.memory[_ADDR_MENU_ITEM_Y]
-        top_x = pyboy.memory[_ADDR_MENU_ITEM_X]
-        cursor = pyboy.memory[_ADDR_CURRENT_MENU]
+        top_y = pyboy.memory[ADDR_MENU_TOP_Y]
+        top_x = pyboy.memory[ADDR_MENU_TOP_X]
+        cursor = pyboy.memory[ADDR_MENU_ITEM]
         max_item = pyboy.memory[_ADDR_MAX_MENU]
         swap_pending = pyboy.memory[_ADDR_MENU_TO_SWAP]
         scroll_offset = pyboy.memory[_ADDR_LIST_SCROLL]

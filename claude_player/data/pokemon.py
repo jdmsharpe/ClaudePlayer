@@ -380,9 +380,20 @@ STATUS_CURE_ITEMS: Dict[int, Tuple[str, frozenset]] = {
     0x1A: ("Full Restore",frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
 }
 
-# Gen 1 character encoding for wPlayerName etc. (A-Z, a-z, 0-9)
+# Gen 1 character encoding (charmap.asm) — full charset for names and nicknames.
+# Covers A-Z, a-z, 0-9, plus special characters needed for Pokemon names
+# (e.g. FARFETCH'D apostrophe, PK/MN ligatures).
 G1_CHARS = {
+    0x7F: " ",
     **{0x80 + i: chr(ord('A') + i) for i in range(26)},
     **{0xA0 + i: chr(ord('a') + i) for i in range(26)},
     **{0xF6 + i: chr(ord('0') + i) for i in range(10)},
+    0x60: "'",   # apostrophe (FARFETCH'D, MR. MIME's period is separate)
+    0xE1: "PK",  # PK ligature
+    0xE2: "MN",  # MN ligature
+    0xE3: "-",
+    0xE6: "?",
+    0xE7: "!",
+    0xE8: ".",
+    0xF4: ",",
 }

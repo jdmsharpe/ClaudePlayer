@@ -18,6 +18,8 @@ from pyboy import PyBoy
 from claude_player.utils.ram_constants import (
     ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
     ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
+    ADDR_PLAYER_MONEY as _ADDR_PLAYER_MONEY,
+    ADDR_OBTAINED_BADGES as _ADDR_OBTAINED_BADGES,
 )
 from claude_player.data.items import (
     ITEM_NAMES, KEY_ITEMS, BADGE_NAMES, HM_BADGE_REQS,
@@ -25,13 +27,6 @@ from claude_player.data.items import (
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# RAM addresses (bag-specific)
-# ---------------------------------------------------------------------------
-
-_ADDR_PLAYER_MONEY = 0xD347   # 3 bytes, BCD-encoded
-_ADDR_OBTAINED_BADGES = 0xD356  # 1 byte bitfield
 
 
 # ---------------------------------------------------------------------------

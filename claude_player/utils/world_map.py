@@ -23,18 +23,7 @@ _STATIC_TILES = frozenset(".#,=v><TBio")  # W excluded: warp positions tracked i
 # Impassable tiles for world-map A*
 _BLOCKED_TILES: FrozenSet[str] = frozenset("#=TBWio")
 
-# Ledge tiles: one-way passable only in the allowed direction
-_LEDGE_ALLOWED_DIR: Dict[str, Tuple[int, int]] = {
-    "v": (0, 1),   # down
-    ">": (1, 0),   # right
-    "<": (-1, 0),  # left
-}
-
-_NEIGHBORS = ((0, -1), (0, 1), (-1, 0), (1, 0))
-
-_DIR_BUTTONS: Dict[Tuple[int, int], str] = {
-    (0, -1): "U", (0, 1): "D", (-1, 0): "L", (1, 0): "R",
-}
+from claude_player.utils.pathfinding import LEDGE_ALLOWED_DIR, NEIGHBORS, DIR_BUTTONS
 
 # Max rendered dimension before we crop around the player
 _MAX_RENDER_SIZE = 40       # AI context (full exploration visible)
@@ -372,8 +361,8 @@ class WorldMap:
                     if nch is not None and nch not in _BLOCKED_TILES:
                         return True
                 return False
-            if ch in _LEDGE_ALLOWED_DIR:
-                return (dx, dy) == _LEDGE_ALLOWED_DIR[ch]
+            if ch in LEDGE_ALLOWED_DIR:
+                return (dx, dy) == LEDGE_ALLOWED_DIR[ch]
             return ch not in _BLOCKED_TILES
 
         def _h(x: int, y: int) -> int:
@@ -404,7 +393,7 @@ class WorldMap:
             cx, cy = current
             g_cur = g_score[current]
 
-            for dx, dy in _NEIGHBORS:
+            for dx, dy in NEIGHBORS:
                 nx, ny = cx + dx, cy + dy
                 if (nx, ny) in closed:
                     continue
@@ -454,7 +443,7 @@ class WorldMap:
                 continue
             if (tx, ty) in _dead:
                 continue
-            if any((tx + ox, ty + oy) not in tile_map for ox, oy in _NEIGHBORS):
+            if any((tx + ox, ty + oy) not in tile_map for ox, oy in NEIGHBORS):
                 frontiers.add((tx, ty))
 
         if not frontiers:
@@ -484,8 +473,8 @@ class WorldMap:
             ch = tile_map.get((x, y))
             if ch is None:
                 return False
-            if ch in _LEDGE_ALLOWED_DIR:
-                return (dx, dy) == _LEDGE_ALLOWED_DIR[ch]
+            if ch in LEDGE_ALLOWED_DIR:
+                return (dx, dy) == LEDGE_ALLOWED_DIR[ch]
             return ch not in _BLOCKED_TILES
 
         counter = 0
@@ -513,7 +502,7 @@ class WorldMap:
             cx, cy = current
             g_cur = g_score[current]
 
-            for ddx, ddy in _NEIGHBORS:
+            for ddx, ddy in NEIGHBORS:
                 nx, ny = cx + ddx, cy + ddy
                 if (nx, ny) in closed:
                     continue
@@ -734,7 +723,7 @@ class WorldMap:
         for i in range(1, len(path)):
             dx = path[i][0] - path[i - 1][0]
             dy = path[i][1] - path[i - 1][1]
-            btn = _DIR_BUTTONS.get((dx, dy))
+            btn = DIR_BUTTONS.get((dx, dy))
             if btn is None:
                 continue
             if btn == cur_dir:

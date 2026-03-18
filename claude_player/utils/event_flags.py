@@ -10,14 +10,13 @@ Flag numbers are derived from the pokered disassembly event_constants.asm.
 import logging
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
+from claude_player.utils.ram_constants import (
+    ADDR_EVENT_FLAGS as _ADDR_EVENT_FLAGS,
+    ADDR_NUM_BAG_ITEMS as _ADDR_NUM_BAG_ITEMS,
+    ADDR_BAG_ITEMS as _ADDR_BAG_ITEMS,
+)
+
 logger = logging.getLogger(__name__)
-
-# Base RAM address for the event flags bit array
-_ADDR_EVENT_FLAGS = 0xD747
-
-# Bag inventory RAM (from pret/pokered wram.asm)
-_ADDR_NUM_BAG_ITEMS = 0xD31D   # wNumBagItems (max 20)
-_ADDR_BAG_ITEMS     = 0xD31E   # wBagItems: (item_id, qty) pairs, 2 bytes each
 
 
 def _has_item(memory_read_func: Callable[[int], int], item_id: int) -> bool:

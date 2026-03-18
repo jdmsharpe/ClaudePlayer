@@ -13,7 +13,10 @@ from typing import Any, Dict, List, Optional
 
 from pyboy import PyBoy
 
-from claude_player.utils.ram_constants import ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT
+from claude_player.utils.ram_constants import (
+    ADDR_PARTY_COUNT as _ADDR_PARTY_COUNT,
+    ADDR_OBTAINED_BADGES,
+)
 from claude_player.data.pokemon import POKEMON_NAMES, MOVE_DATA, HM_MOVE_IDS
 from claude_player.utils.battle_context import _decode_status, _read_word
 
@@ -490,7 +493,7 @@ def extract_party_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         health = assess_party_health(party)
 
         # Badge count from wObtainedBadges (1 byte, each bit = 1 badge)
-        badge_byte = pyboy.memory[0xD356]
+        badge_byte = pyboy.memory[ADDR_OBTAINED_BADGES]
         badge_count = bin(badge_byte).count("1")
 
         strategy = _assess_team_strategy(party, badge_count)

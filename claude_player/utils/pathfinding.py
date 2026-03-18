@@ -18,14 +18,14 @@ DEFAULT_BLOCKED: FrozenSet[str] = frozenset(
 
 # Ledge tiles are one-way: passable only when entering from the correct direction.
 # Maps ledge char → the (dx, dy) movement that is ALLOWED to enter it.
-_LEDGE_ALLOWED_DIR: Dict[str, Tuple[int, int]] = {
+LEDGE_ALLOWED_DIR: Dict[str, Tuple[int, int]] = {
     'v': (0, 1),    # south ledge: can enter moving DOWN (from north)
     '>': (1, 0),    # east ledge: can enter moving RIGHT (from west)
     '<': (-1, 0),   # west ledge: can enter moving LEFT (from east)
 }
 
-# Direction deltas → button letters
-_DIRECTION_MAP: Dict[Tuple[int, int], str] = {
+# Direction deltas → button letters (shared with world_map.py A*)
+DIR_BUTTONS: Dict[Tuple[int, int], str] = {
     (0, -1): 'U',
     (0, 1): 'D',
     (-1, 0): 'L',
@@ -33,7 +33,7 @@ _DIRECTION_MAP: Dict[Tuple[int, int], str] = {
 }
 
 # 4-connected neighbors (no diagonal movement in Pokemon)
-_NEIGHBORS = ((0, -1), (0, 1), (-1, 0), (1, 0))
+NEIGHBORS = ((0, -1), (0, 1), (-1, 0), (1, 0))
 
 
 def find_path(
@@ -73,8 +73,8 @@ def find_path(
         if (x, y) == goal or (x, y) in _extra:
             return True
         cell = grid[y][x]
-        if cell in _LEDGE_ALLOWED_DIR:
-            return (dx, dy) == _LEDGE_ALLOWED_DIR[cell]
+        if cell in LEDGE_ALLOWED_DIR:
+            return (dx, dy) == LEDGE_ALLOWED_DIR[cell]
         return cell not in blocked_chars
 
     if not _passable(sx, sy):
@@ -106,7 +106,7 @@ def find_path(
         cx, cy = current
         g_cur = g_score[current]
 
-        for dx, dy in _NEIGHBORS:
+        for dx, dy in NEIGHBORS:
             nx, ny = cx + dx, cy + dy
             if not (0 <= nx < width and 0 <= ny < height):
                 continue
@@ -170,8 +170,8 @@ def find_path_to_edge(
         if (x, y) in goals:
             return True
         cell = grid[y][x]
-        if cell in _LEDGE_ALLOWED_DIR:
-            return (dx, dy) == _LEDGE_ALLOWED_DIR[cell]
+        if cell in LEDGE_ALLOWED_DIR:
+            return (dx, dy) == LEDGE_ALLOWED_DIR[cell]
         return cell not in blocked_chars
 
     if not _passable(sx, sy):
@@ -214,7 +214,7 @@ def find_path_to_edge(
         cx, cy = current
         g_cur = g_score[current]
 
-        for dx, dy in _NEIGHBORS:
+        for dx, dy in NEIGHBORS:
             nx, ny = cx + dx, cy + dy
             if not (0 <= nx < width and 0 <= ny < height):
                 continue
@@ -257,7 +257,7 @@ def path_to_buttons(path: List[Tuple[int, int]], frames_per_tile: int = 16) -> s
         nx, ny = path[i]
         dx = nx - px
         dy = ny - py
-        direction = _DIRECTION_MAP.get((dx, dy))
+        direction = DIR_BUTTONS.get((dx, dy))
         if direction is None:
             continue
 

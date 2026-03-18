@@ -30,6 +30,7 @@ from claude_player.utils.ram_constants import (
     ADDR_MENU_ITEM as _ADDR_MENU_ITEM,
     ADDR_MENU_TOP_Y as _ADDR_MENU_TOP_Y,
     ADDR_MENU_TOP_X as _ADDR_MENU_TOP_X,
+    ADDR_POKEDEX_OWNED as _ADDR_POKEDEX_OWNED,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,9 +103,6 @@ _ADDR_ENEMY_SPD_MOD  = 0xCD30
 _ADDR_ENEMY_SPC_MOD  = 0xCD31
 _ADDR_ENEMY_ACC_MOD  = 0xCD32
 _ADDR_ENEMY_EVA_MOD  = 0xCD33
-
-# Pokedex ownership bitfield — bit N set = national dex #N is owned (caught)
-_ADDR_POKEDEX_OWNED = 0xD2F7  # wPokedexOwned: 19 bytes covering dex #1-151
 
 # Bag / party constants (battle-specific)
 _BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke

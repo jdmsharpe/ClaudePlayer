@@ -25,7 +25,12 @@ from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.menu_context import extract_menu_context
 from claude_player.utils.terminal_display import TerminalDisplay
 from claude_player.utils.sound_output import SoundOutput
-from claude_player.utils.ram_constants import ADDR_IS_IN_BATTLE, ADDR_CUR_MAP
+from claude_player.utils.ram_constants import (
+    ADDR_IS_IN_BATTLE, ADDR_CUR_MAP,
+    ADDR_PLAYER_Y, ADDR_PLAYER_X,
+    ADDR_PLAYER_NAME, ADDR_PLAYER_ID,
+    ADDR_POKEDEX_OWNED, ADDR_POKEDEX_SEEN,
+)
 from claude_player.utils.cost_tracker import CostTracker
 from claude_player.agent.turn_context import TurnContextBuilder
 from claude_player.agent.memory_manager import MemoryManager
@@ -761,21 +766,21 @@ class GameAgent:
                 f"[cursor:{mt['cursor']}/{mt.get('max_item', 0)}]"
             )
 
-        # Read Pokédex caught count from RAM (wPokedexOwned = 0xD2F7, 19 bytes, 1 bit/mon)
-        dex_caught = sum(bin(self.pyboy.memory[0xD2F7 + i]).count("1") for i in range(19))
-        dex_seen = sum(bin(self.pyboy.memory[0xD30A + i]).count("1") for i in range(19))
+        # Read Pokédex caught/seen counts from RAM (19-byte bitfields, 1 bit per species)
+        dex_caught = sum(bin(self.pyboy.memory[ADDR_POKEDEX_OWNED + i]).count("1") for i in range(19))
+        dex_seen = sum(bin(self.pyboy.memory[ADDR_POKEDEX_SEEN + i]).count("1") for i in range(19))
 
-        # Read trainer name from RAM (wPlayerName = 0xD158, 11 bytes, Gen 1 charset, 0x50=terminator)
+        # Read trainer name from RAM (11 bytes, Gen 1 charset, 0x50=terminator)
         raw = []
         for i in range(11):
-            b = self.pyboy.memory[0xD158 + i]
+            b = self.pyboy.memory[ADDR_PLAYER_NAME + i]
             if b == 0x50:
                 break
             raw.append(b)
         trainer_name = "".join(G1_CHARS.get(b, "") for b in raw).strip() or ""
 
-        # Trainer ID (wPlayerID = 0xD359, 2 bytes big-endian)
-        trainer_id = (self.pyboy.memory[0xD359] << 8) | self.pyboy.memory[0xD35A]
+        # Trainer ID (2 bytes big-endian)
+        trainer_id = (self.pyboy.memory[ADDR_PLAYER_ID] << 8) | self.pyboy.memory[ADDR_PLAYER_ID + 1]
 
         # Play time (wPlayTimeHours = 0xDA40 word, wPlayTimeMinutes = 0xDA42 byte)
         pt_hours = (self.pyboy.memory[0xDA40] << 8) | self.pyboy.memory[0xDA41]
@@ -1442,9 +1447,9 @@ class GameAgent:
                 if action:
                     logging.info(f"Executing pending action: {action} (remaining: {len(pending_actions)})")
                     # Record position before execution for movement feedback
-                    _pre_y = self.pyboy.memory[0xD361]
-                    _pre_x = self.pyboy.memory[0xD362]
-                    _pre_map = self.pyboy.memory[0xD35E]
+                    _pre_y = self.pyboy.memory[ADDR_PLAYER_Y]
+                    _pre_x = self.pyboy.memory[ADDR_PLAYER_X]
+                    _pre_map = self.pyboy.memory[ADDR_CUR_MAP]
                     try:
                         from claude_player.utils.game_utils import press_and_release_buttons
                         frame_cb = self.display.set_frame if self.web_streamer else None
@@ -1456,9 +1461,9 @@ class GameAgent:
                         logging.error(f"Error executing inputs '{action}': {str(e)}")
                         # Continue with next actions rather than crashing
                     # Record position after execution and store feedback
-                    _post_y = self.pyboy.memory[0xD361]
-                    _post_x = self.pyboy.memory[0xD362]
-                    _post_map = self.pyboy.memory[0xD35E]
+                    _post_y = self.pyboy.memory[ADDR_PLAYER_Y]
+                    _post_x = self.pyboy.memory[ADDR_PLAYER_X]
+                    _post_map = self.pyboy.memory[ADDR_CUR_MAP]
                     if _pre_map != _post_map:
                         self._last_action_feedback = f"Executed: {action} — map changed (warped)"
                     elif _pre_x == _post_x and _pre_y == _post_y:

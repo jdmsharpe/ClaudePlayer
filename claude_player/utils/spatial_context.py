@@ -4,6 +4,9 @@ from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
     ADDR_IS_IN_BATTLE,
+    ADDR_CUR_MAP,
+    ADDR_PLAYER_Y,
+    ADDR_PLAYER_X,
     ADDR_STATUS_FLAGS5,
     ADDR_WINDOW_Y,
     ADDR_TILE_PLAYER_ON,
@@ -25,9 +28,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Pokemon Red/Blue RAM addresses (spatial-specific, from pret/pokered)
 # ---------------------------------------------------------------------------
-_ADDR_CUR_MAP = 0xD35E
-_ADDR_PLAYER_Y = 0xD361       # Map-block coordinate
-_ADDR_PLAYER_X = 0xD362       # Map-block coordinate
+_ADDR_CUR_MAP = ADDR_CUR_MAP
+_ADDR_PLAYER_Y = ADDR_PLAYER_Y
+_ADDR_PLAYER_X = ADDR_PLAYER_X
 _ADDR_MAP_HEIGHT = 0xD368     # In blocks
 _ADDR_MAP_WIDTH = 0xD369      # In blocks
 _ADDR_NUM_WARPS = 0xD3AE
@@ -73,8 +76,8 @@ _ADDR_WALK_COUNTER   = 0xCFC5   # wWalkCounter – non-zero = mid-step animation
 _ADDR_STATUS_FLAGS5  = ADDR_STATUS_FLAGS5
 _ADDR_WINDOW_Y       = ADDR_WINDOW_Y
 _ADDR_SIM_JOYPAD_IDX = 0xCD38   # wSimulatedJoypadStatesIndex – non-zero = game running scripted input
-_ADDR_DISABLE_JOYPAD = ADDR_DISABLE_JOYPAD   # hDisableJoypadPolling – HRAM-level joypad disable flag
-_ADDR_TILE_PLAYER_ON = ADDR_TILE_PLAYER_ON   # hTilePlayerStandingOn – metatile block ID under player
+_ADDR_DISABLE_JOYPAD = ADDR_DISABLE_JOYPAD
+_ADDR_TILE_PLAYER_ON = ADDR_TILE_PLAYER_ON
 
 # Terrain classification RAM addresses
 _ADDR_GRASS_TILE       = 0xD535   # wGrassTile — grass tile value for current map

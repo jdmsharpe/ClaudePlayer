@@ -530,8 +530,8 @@ def _generate_battle_tip(
             hp_pct = player["hp"] * 100 // player["max_hp"]
             if hp_pct <= 20:
                 return (
-                    f"HP critical ({hp_pct}%) + unknown state — attempt RUN through overlay! "
-                    f"Send: B {_ABS_NAV_RUN} A B {_ABS_NAV_RUN} A"
+                    f"HP critical ({hp_pct}%) + unknown state — RUN immediately! "
+                    f"Use the run_from_battle tool (handles menu state automatically)."
                 )
         return (
             "Unknown battle state — likely a submenu or text overlay. "
@@ -620,9 +620,7 @@ def _generate_battle_tip(
         hp_pct = player["hp"] * 100 // player["max_hp"]
         if hp_pct <= 20 and menu_type in ("main", "fight"):
             return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
-                    f"B clears text overlay, {_ABS_NAV_RUN} navigates to RUN, A selects. "
-                    f"Sent twice in case Gen 1 run fails once. "
-                    f"Send: B {_ABS_NAV_RUN} A B {_ABS_NAV_RUN} A")
+                    f"Use the run_from_battle tool (handles menu navigation and retries automatically).")
 
     # Find the strongest usable damage move, weighted by Gen 1 damage mechanics
     etypes = enemy_types or []
@@ -696,7 +694,7 @@ def _generate_battle_tip(
 
     if menu_type in ("main", "fight") and not damage_moves:
         if battle_type == 1:  # wild — RUN is an option
-            return f"No usable damage moves — RUN from this wild battle! Send: B {_ABS_NAV_RUN} A"
+            return "No usable damage moves — RUN from this wild battle! Use the run_from_battle tool."
         # Trainer battle: cannot RUN. Check if switching to a mon with damage moves is viable.
         can_switch = alive_count > 1
         if can_switch:

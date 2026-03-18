@@ -156,10 +156,10 @@ def compute_nav(
         if target_map_id is not None:
             break  # Found a match in this tier, don't fall through
 
+    exclude_maps: set = set()
     if target_map_id is not None:
         # BFS with retry: if A* can't reach the first hop,
         # exclude it and re-BFS for an alternate route.
-        exclude_maps: set = set()
         for _attempt in range(3):
             map_path = world_map.find_map_path(
                 map_id, target_map_id, exclude_maps=exclude_maps,
@@ -189,7 +189,35 @@ def compute_nav(
             logging.info(f"NAV graph: {hop_name!r} unreachable via A*, excluding")
             exclude_maps.add(hop_id)
 
-    # ── Step 2: COMPASS fallback (no graph data or graph failed) ──
+    # ── Step 2a: Frontier-first when graph routing was tried but failed ──
+    # If the map graph FOUND a target but A* couldn't reach any hop's warp
+    # (common in partially-explored caves), prefer pushing into unexplored
+    # territory over compass fallback — compass often routes backward to the
+    # previous floor (e.g. B1F → 1F instead of B1F → B2F → Route 4).
+    if not wm_nav and target_map_id is not None and exclude_maps:
+        dead_end_tiles: set = set()
+        if dead_end_zones:
+            for dz_x, dz_y in dead_end_zones:
+                for dy in range(-2, 3):
+                    for dx in range(-2, 3):
+                        dead_end_tiles.add((dz_x + dx, dz_y + dy))
+        npc_blocked: set = set(npc_positions) if npc_positions else set()
+        frontier_path = world_map.find_frontier_path(
+            map_id, player_pos,
+            dead_end_tiles=dead_end_tiles,
+            blocked=npc_blocked,
+        )
+        if frontier_path and len(frontier_path) > 1:
+            buttons = WorldMap._path_to_buttons(frontier_path)
+            if buttons:
+                total_dist = len(frontier_path) - 1
+                wm_nav = (
+                    f"NAV(map): to unexplored frontier ({total_dist} tiles): "
+                    f"{buttons} — re-evaluate after executing"
+                )
+                logging.info(f"NAV frontier fallback (graph failed): {wm_nav}")
+
+    # ── Step 2b: COMPASS fallback (no graph data or frontier empty) ──
     if not wm_nav:
         goal_upper = goal_text.upper()
         preferred_dest, preferred_direction = _parse_compass_dest(

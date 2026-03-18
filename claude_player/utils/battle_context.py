@@ -641,6 +641,11 @@ def _generate_battle_tip(
             if m["power"] > 0 and m["pp"] > 0
         ]
 
+    # Filter out moves that do 0 effective damage (type immunity, e.g. Electric
+    # vs Ground) so the TIP recommends RUN/switch instead of a wasted attack.
+    if damage_moves:
+        damage_moves = [(m, s) for m, s in damage_moves if _ep((m, s)) > 0.0]
+
     if menu_type in ("main", "fight") and damage_moves:
         best_move, best_slot = max(damage_moves, key=_ep)
         # U×num_moves resets to slot 0 (safe no-op at top), then D×best_slot

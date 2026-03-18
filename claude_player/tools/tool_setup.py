@@ -201,7 +201,9 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         if first_blocked:
             header += f" BLOCKED at tile {first_blocked}"
 
-        return [{"type": "text", "text": header + "\n" + "\n".join(lines)}]
+        result = header + "\n" + "\n".join(lines)
+        result += "\n⚠ REMINDER: check_tiles is read-only. You MUST also call send_inputs this turn."
+        return [{"type": "text", "text": result}]
 
     # Register run_from_battle tool — generates button sequence, queued by game_agent
     @registry.register(
@@ -223,10 +225,9 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             return [{"type": "text", "text": "Error: Cannot run from trainer battles — must fight"}]
 
         # Detect current battle submenu to generate the right preamble.
-        # The tool often fires ~3s after battle start, while the intro
-        # animation ("Wild X appeared!", "Go! CHARMELEON!") takes ~5s.
-        # Pressing D R A during the intro is ignored — we must advance
-        # through text first.
+        # With _BATTLE_START_SETTLE=6s, analysis starts ~6s after battle start.
+        # By then, intro animations are usually done and submenu detection works.
+        # The "unknown" branch is a safety net for edge cases (text overlay, etc.).
         submenu = _detect_battle_submenu(self.pyboy)
 
         # RUN tail: navigate to RUN + retry once if escape fails
@@ -244,10 +245,10 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             sequence = f"B B {run_tail}"
         else:
             # Intro text, text overlay, or unknown state.
-            # A presses advance text; W32 waits let animations play.
-            # 3x (A W32) covers "Wild X appeared!" + "Go! POKEMON!" + buffer.
-            # W48 lets the main menu render before we navigate.
-            sequence = f"A W32 A W32 A W32 W48 {run_tail}"
+            # A presses advance text; W64 waits give animations time to finish.
+            # 3x (A W64) covers "Wild X appeared!" + "Go! POKEMON!" + buffer.
+            # W64 lets the main menu fully render before we navigate.
+            sequence = f"A W64 A W64 A W64 W64 {run_tail}"
 
         logging.info(f"run_from_battle: submenu={submenu}, sequence length={len(sequence.split())}")
         return [{"type": "text", "text": sequence}]

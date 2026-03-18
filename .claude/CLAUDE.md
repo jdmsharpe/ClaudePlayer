@@ -103,7 +103,8 @@ All RAM addresses reference the pret/pokered disassembly. Shared addresses (play
 - Coordinates (`ADDR_PLAYER_Y`/`ADDR_PLAYER_X`) are in **block units** (1 block = 2×2 tiles = 16px step); warp entries and NPC sprite positions share this space (sprite state adds a constant +4 border offset)
 - `hTileAnimations` at `0xFFD7`: 0=indoor/building (no animations), 1=cave (water animated), 2=outdoor (water+flower animated) — sourced from annotated hram.asm
 - HRAM constants: `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_DISABLE_JOYPAD` (FFF9)
-- Battle context reads Pokemon stats, moves, HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD)
+- Battle context reads Pokemon stats, moves, HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD). TIP generation filters out moves with 0x type effectiveness (immunity) before recommending — if all damage moves are immune, falls through to RUN/switch advice.
+- **Battle start settle**: `_BATTLE_START_SETTLE = 6.0s` in `game_agent.py` — analysis is gated until 6s after battle interrupt to let intro animations finish. `run_from_battle` preamble (A W64 × 3 + W64) provides additional safety for the "unknown" submenu case.
 - `0xCC2F` is dual-purpose: party index of sent-out Pokemon outside the fight submenu, last A-confirmed fight slot (0–3) inside it
 - Event flags at `ADDR_EVENT_FLAGS` track story progression milestones
 - Sprite data starts at `0xC100` with 16-byte stride per sprite
@@ -124,7 +125,7 @@ The system prompt (`claude_interface.py: _build_system_prompt`) must stay **abov
 - `<notation>` — button input format rules
 - `<spatial_context>` — grid legend, movement rules, warp mechanics
 - `<navigation>` — **critical**: COMPASS vs NAV priority rules, stuck recovery, warp pathing, dead-end behavior. Added to prevent the agent from converting compass bearings into frame inputs (e.g. "6 LEFT" → "L96") which walks into walls.
-- **NAV pipeline** (in `agent/nav_planner.py`, entry point `compute_nav()`): (1) **Map graph** — extract target map from goal text (tactical first, then strategic fallback), BFS to find next hop, A\* to that hop's warp. If A\* fails (e.g. ledges block), exclude and retry BFS up to 3 times. (2) **COMPASS fallback** — parse direction from goal text, match against COMPASS entries. (3) **Frontier exploration** — A\* to nearest unexplored tile edge.
+- **NAV pipeline** (in `agent/nav_planner.py`, entry point `compute_nav()`): (1) **Map graph** — extract target map from goal text (tactical first, then strategic fallback), BFS to find next hop, A\* to that hop's warp. If A\* fails (e.g. ledges block), exclude and retry BFS up to 3 times. (2a) **Frontier-first fallback** — when graph routing was tried but all hops unreachable (common in partially-explored caves), push into unexplored territory instead of routing backward to the previous floor. (2b) **COMPASS fallback** — parse direction from goal text, match against COMPASS entries. (3) **Frontier exploration** — A\* to nearest unexplored tile edge.
 - **Viewport warp pathing**: `find_path()` in `pathfinding.py` accepts `extra_passable` positions. When computing overshoot paths to warps, the target warp tile is marked passable so A\* routes *through* it (not around it). Without this, 'W' tiles are blocked in `DEFAULT_BLOCKED`, causing paths to circle around warps without triggering them.
 - `<battle_context>` — battle menu layout, RUN sequences, type matchups, healing thresholds
 - `<menu_context>` — menu navigation, Pokemon menu, save mechanics

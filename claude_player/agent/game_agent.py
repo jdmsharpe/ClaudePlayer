@@ -141,6 +141,10 @@ class GameAgent:
         self._battle_stuck_count = 0
         self._last_battle_snapshot = None  # (player_hp, enemy_hp, menu_type, cursor)
 
+        # Per-turn token/cost stash for TURN_SUMMARY logging
+        self._last_turn_tokens = 0
+        self._last_turn_cost = 0.0
+
         # Cumulative token/cost tracking (deferred until after _save_dir is set)
 
         # Injection-policy state is managed by TurnContextBuilder (initialized below)
@@ -652,11 +656,6 @@ class GameAgent:
         # Increment turn counter
         self.game_state.increment_turn()
 
-        # Log the turn
-        current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        logging.info(f"======= NEW TURN: {current_time_str} =======")
-        self.game_state.log_state()
-
         # Extract display text for terminal
         spatial_grid = ""
         location = ""
@@ -667,6 +666,16 @@ class GameAgent:
 
         self._was_in_battle = self._in_battle
         self._in_battle = bool(battle_data and battle_data.get("text"))
+
+        # Log the turn (after battle state is known, with map context)
+        current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logging.info(f"======= NEW TURN: {current_time_str} =======")
+        self.game_state.log_state(
+            map_id=spatial_data.get("map_number") if spatial_data else self._current_map_id,
+            map_name=spatial_data.get("map_name") if spatial_data else self._current_map_name,
+            player_pos=spatial_data.get("player_pos") if spatial_data else None,
+            in_battle=self._in_battle,
+        )
 
         # fight_cursor is now read from wPlayerMoveListIndex RAM in extract_battle_context.
         # No client-side tracking needed — the TIP uses U U U reset so cursor position
@@ -930,7 +939,7 @@ class GameAgent:
                 # Recovery escalation: disable thinking after repeated thinking-only failures
                 if attempt > 0 and self._consecutive_thinking_only >= 2:
                     action_config["THINKING"] = False
-                    logging.warning("RECOVERY: Temporarily disabling thinking to force output")
+                    logging.warning(f"RECOVERY: t={self.game_state.turn_count} Temporarily disabling thinking to force output")
 
                 # Send request to Claude
                 message = self.claude.send_request(
@@ -985,12 +994,16 @@ class GameAgent:
                         f"cache_read={cache_read} cache_create={cache_create} ({pct:.0f}% cached) "
                         f"| turn=${turn_cost:.4f} session=${self.cost_tracker.cost_usd:.4f}"
                     )
+                    # Stash for TURN_SUMMARY (emitted at end of analysis cycle)
+                    self._last_turn_tokens = input_tok + output_tok + cache_read + cache_create
+                    self._last_turn_cost = turn_cost
 
                 # Detect thinking-only responses (no text or tool output)
                 if not message_content["text_blocks"] and not message_content["tool_use_blocks"]:
                     self._consecutive_thinking_only += 1
                     logging.warning(
-                        f"THINKING-ONLY RESPONSE (#{self._consecutive_thinking_only}, "
+                        f"THINKING-ONLY RESPONSE: t={self.game_state.turn_count} "
+                        f"(#{self._consecutive_thinking_only}, "
                         f"attempt {attempt + 1}/{max_retries + 1}): Model produced thinking "
                         f"but no text or tool output."
                     )
@@ -1006,10 +1019,10 @@ class GameAgent:
                         }
                         self.chat_history.append(nudge)
                         self.game_state.add_to_complete_history(nudge)
-                        logging.info("RECOVERY: Appended nudge message, retrying...")
+                        logging.info(f"RECOVERY: t={self.game_state.turn_count} Appended nudge message, retrying...")
                         continue  # Retry
                     else:
-                        logging.warning("RECOVERY: Max retries reached, proceeding with empty response")
+                        logging.warning(f"RECOVERY: t={self.game_state.turn_count} Max retries reached, proceeding with empty response")
                 else:
                     # Successful response — reset counter
                     self._consecutive_thinking_only = 0
@@ -1305,10 +1318,13 @@ class GameAgent:
         last_map_change_time = 0.0
         _MAP_TRANSITION_SETTLE = 1.5  # seconds
         # Minimum settle time after battle START before re-analyzing.
-        # Battle intro animations ("Wild X appeared!", "Go! POKEMON!") take ~5s;
+        # Battle intro animations ("Wild X appeared!", "Go! POKEMON!") take ~5-6s;
         # analyzing too early produces stale submenu detection and wasted turns.
+        # With 6s settle + ~2-3s API latency, first inputs land at ~8-9s — well
+        # past the intro.  Previous value of 4.0s caused run_from_battle to fire
+        # during animations, sending D R A into the fight menu instead of RUN.
         last_battle_start_time = 0.0
-        _BATTLE_START_SETTLE = 4.0  # seconds
+        _BATTLE_START_SETTLE = 6.0  # seconds
 
         # Add threading lock for shared variables
         lock = threading.Lock()
@@ -1336,7 +1352,7 @@ class GameAgent:
                 if not actions and message_content and message_content.get("tool_use_blocks"):
                     if any(t.name != "send_inputs" for t in message_content["tool_use_blocks"]):
                         no_action = True
-                        logging.warning("NO-ACTION TURN: Model used tools but didn't send_inputs — nudging")
+                        logging.warning(f"NO-ACTION TURN: t={self.game_state.turn_count} Model used tools but didn't send_inputs — nudging")
                         nudge = {
                             "role": "user",
                             "content": [{"type": "text", "text":
@@ -1367,6 +1383,37 @@ class GameAgent:
                         min_interval = self.config.CONTINUOUS_ANALYSIS_INTERVAL
                         max_interval = getattr(self.config, 'MAX_ADAPTIVE_INTERVAL', 15.0)
                         adaptive_interval = max(min_interval, min(adaptive_interval, max_interval))
+
+                # Structured TURN_SUMMARY — one grepable line per turn
+                _sd = captured_state.get("spatial_data") or {}
+                _map_id = _sd.get("map_number", self._current_map_id)
+                _map_name = _sd.get("map_name") or self._current_map_name or "?"
+                _map_str = f"0x{_map_id:02X}({_map_name})" if _map_id is not None else f"?({_map_name})"
+                _pos = _sd.get("player_pos")
+                _pos_str = f"({_pos[0]},{_pos[1]})" if _pos else "?"
+                _hp_str = ""
+                if self.game_state.party_summary:
+                    _hp_match = re.search(r'(\d+)%', self.game_state.party_summary)
+                    if _hp_match:
+                        _hp_str = f" hp={_hp_match.group(1)}%"
+                _tools_str = ""
+                if message_content and message_content.get("tool_use_blocks"):
+                    _tool_names = [t.name for t in message_content["tool_use_blocks"]]
+                    _tools_str = f" tools={'+'.join(_tool_names)}"
+                _actions_str = f" actions=\"{'; '.join(actions)}\"" if actions else ""
+                _flags = ""
+                if self._in_battle:
+                    _flags += " battle=true"
+                if no_action:
+                    _flags += " NO_ACTION"
+                logging.info(
+                    f"TURN_SUMMARY: t={self.game_state.turn_count}"
+                    f" map={_map_str} pos={_pos_str}{_hp_str}{_flags}"
+                    f" goal=\"{self.game_state.current_goal or 'None'}\""
+                    f" cost=${self._last_turn_cost:.4f} tokens={self._last_turn_tokens}"
+                    f"{_tools_str}{_actions_str}"
+                    f" duration={last_analysis_duration:.1f}s"
+                )
 
                 logging.info(f"======= END ANALYSIS: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =======")
                 timing_parts = f"total={last_analysis_duration:.2f}s (prep={prep_duration:.2f}s, action={action_duration:.2f}s)"
@@ -1534,6 +1581,7 @@ class GameAgent:
                         self._last_action_feedback = f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}). Path was blocked."
                     else:
                         self._last_action_feedback = f"Executed: {action} — moved ({_pre_x},{_pre_y})→({_post_x},{_post_y})"
+                    logging.info(f"OUTCOME: t={self.game_state.turn_count} {self._last_action_feedback}")
                     # Refresh battle context after action so the web/terminal cursor
                     # matches the live game state (cursor RAM updates immediately on button press)
                     if self._in_battle:
@@ -1588,7 +1636,7 @@ class GameAgent:
                             pending_actions.clear()
                             adaptive_interval = self.config.CONTINUOUS_ANALYSIS_INTERVAL
                             last_action_time = 0     # bypass action settle check
-                            logging.info("INTERRUPT: analysis finished post-interrupt, scheduling re-analysis")
+                            logging.info(f"INTERRUPT: t={self.game_state.turn_count} analysis finished post-interrupt, scheduling re-analysis")
                             interrupt_fired = False
                     if fatal_error_msg:
                         logging.critical(f"Stopping continuous mode due to fatal error: {fatal_error_msg}")
@@ -1641,7 +1689,7 @@ class GameAgent:
                             # Stale analysis in flight — discard its future actions
                             interrupt_fired = True
                             pending_actions.clear()
-                            logging.info(f"INTERRUPT: {reason} — discarding pending actions, will re-analyze immediately")
+                            logging.info(f"INTERRUPT: t={self.game_state.turn_count} {reason} — discarding pending actions, will re-analyze immediately")
                             self.display.print_event(f"Interrupt: {reason}")
                         else:
                             # Either not analyzing, or already interrupted.
@@ -1651,9 +1699,9 @@ class GameAgent:
                             adaptive_interval = self.config.CONTINUOUS_ANALYSIS_INTERVAL
                             last_action_time = 0  # bypass settle check
                             if discarded:
-                                logging.info(f"INTERRUPT: {reason} — discarded {discarded} stale queued actions, re-analyzing soon")
+                                logging.info(f"INTERRUPT: t={self.game_state.turn_count} {reason} — discarded {discarded} stale queued actions, re-analyzing soon")
                             else:
-                                logging.info(f"INTERRUPT: {reason} — idle transition, scheduling re-analysis")
+                                logging.info(f"INTERRUPT: t={self.game_state.turn_count} {reason} — idle transition, scheduling re-analysis")
                             self.display.print_event(f"Interrupt: {reason}")
 
                     # Immediately refresh display context so dashboard reflects new state

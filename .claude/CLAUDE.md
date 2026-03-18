@@ -43,7 +43,11 @@ Key entry: `play.py` -> `claude_player/main.py` -> `game_agent.py` main loop.
 - **RAM addresses**: prefixed with `ADDR_`, sourced from pret/pokered disassembly. Shared addresses live in `utils/ram_constants.py`; module-specific addresses stay local. Import the raw name — no `as _` aliasing.
 - **Game data**: static lookup tables (species, moves, items, maps) live in `claude_player/data/`; logic modules import from there
 - **Shared helpers**: `read_word()` and `decode_status()` in `ram_constants.py` — used by both `battle_context` and `party_context`
-- **Logging**: `logging` module everywhere; file=INFO+, console=WARNING+; rotating handler (5MB, 2 backups)
+- **Logging**: `logging` module everywhere; file=INFO+, console=WARNING+; rotating handler (5MB, 2 backups). Key log patterns for analysis:
+  - `TURN_SUMMARY: t=N map=0xHH(Name) pos=(x,y) hp=N% goal="..." cost=$N tokens=N tools=... actions="..." duration=Ns` — one grepable line per turn with all dimensions
+  - `OUTCOME: t=N Executed: ... — moved/UNCHANGED/warped` — action result (logged at execution time, not next turn)
+  - `LOCATION: map=0xHH (Name) pos=(x,y)` — logged in turn header alongside GAME/GOAL/TURN
+  - `INTERRUPT: t=N ...`, `RECOVERY: t=N ...`, `THINKING-ONLY RESPONSE: t=N ...`, `NO-ACTION TURN: t=N ...` — all events tagged with turn number for correlation
 - **No test suite** — no pytest, unittest, or test files exist
 - **Imports**: stdlib -> third-party (pyboy, flask, anthropic) -> local (claude_player.*)
 

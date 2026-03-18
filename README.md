@@ -84,16 +84,22 @@ Configuration is loaded from `config.json` (created automatically on first run i
     "THINKING": true,                    // Enable extended thinking
     "DYNAMIC_THINKING": true,            // Allow Claude to toggle thinking on/off
     "EFFICIENT_TOOLS": true,             // Use token-efficient-tools beta
-    "MAX_TOKENS": 8192,                  // Maximum tokens per response
-    "THINKING_BUDGET": 4096              // Maximum tokens for thinking
+    "MAX_TOKENS": 4096,                  // Maximum tokens per response
+    "THINKING_BUDGET": 2048              // Maximum tokens for thinking
   },
 
   // Action mode overrides (inherits MODEL_DEFAULTS; add keys here to override)
   "ACTION": {},
 
-  // Memory agent settings
+  // Memory agent settings (inherits MODEL_DEFAULTS; add keys here to override)
   "MEMORY": {
-    "MEMORY_INTERVAL": 30                 // Run memory agent every N turns
+    "MEMORY_INTERVAL": 30,               // Run memory agent every N turns
+    "MODEL": "claude-sonnet-4-6",        // Claude model to use
+    "THINKING": true,
+    "DYNAMIC_THINKING": true,
+    "EFFICIENT_TOOLS": true,
+    "MAX_TOKENS": 8192,
+    "THINKING_BUDGET": 4096
   }
 }
 ```

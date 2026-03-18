@@ -52,7 +52,8 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
         if has_spatial:
             static_parts.append("""
 <spatial_context>
-Grid legend: .=walkable #=blocked ,=grass ==water v/>/<= ledge T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost s=sign P=PC. 1 cell=16 frames.
+Grid legend: .=walkable #=blocked ,=grass ==water T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost s=sign P=PC. 1 cell=16 frames.
+LEDGES: v=jump DOWN only (blocks UP), <=jump LEFT only (blocks RIGHT), >=jump RIGHT only (blocks LEFT). Ledges are one-way — you CANNOT move against the arrow. Plan routes around them.
 FOLLOW [path:] hints — they route around walls. NAV(map) = A* through explored map (best signal). If [no path found], try 1-tile steps.
 MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A).
 Use large moves (D96, R128) to cover ground fast. NPCs/ITEMS: Walk adjacent + face + A. Always pick up i tiles.
@@ -61,7 +62,7 @@ NAME ENTRY: START to finalize. If RAM says dialogue but nothing visible, try mov
 <navigation>
 COMPASS vs NAV: COMPASS shows crow-flies direction and distance to off-screen exits. These are NOT walkable paths — walls, corridors, and obstacles lie between you and the target. NEVER convert compass block distances into frame inputs (e.g. "6 LEFT, 3 DOWN" does NOT mean "L96 D48"). Always use the NAV(map) A* path instead — it routes around walls through explored tiles.
 PRIORITY: NAV(map) > [path:] hints > COMPASS bearing. If NAV(map) is present, follow it. If only COMPASS is available, move in the general compass direction using 1-tile steps (U16/D16/L16/R16) and re-evaluate each turn.
-STUCK RECOVERY: If your position is unchanged after a move, you walked into a wall. Do NOT retry the same direction. Try perpendicular directions or follow NAV(map) detour suggestions. If STUCK warnings appear, you are looping — pick a direction you have NOT tried in the last 5 turns.
+STUCK RECOVERY: If your position is unchanged after a move, you walked into a wall. Do NOT retry the same direction. Use check_tiles to scan for obstacles before guessing. Try perpendicular directions or follow NAV(map) detour suggestions. If STUCK warnings appear, you are looping — pick a direction you have NOT tried in the last 5 turns.
 WARP PATHING: Warps often require indirect paths through corridors and around walls. A warp that is "3 DOWN, 6 LEFT" may require going UP first to find a corridor. Trust NAV(map) for warp routing — it computes the actual walkable path.
 DEAD ENDS: If the context says "dead-end" or "looping", leave immediately in the suggested direction. Do not attempt to reach a compass target through a dead-end area.
 EXPLORED MAP: The large map shows all tiles you've visited with @ as your position. Use it to identify corridors you haven't explored yet. The map accumulates across turns — revisiting explored areas wastes time. Head toward unexplored edges (shown by ? or map boundaries) to discover new paths.
@@ -72,7 +73,7 @@ CONNECTIONS: Map edges marked in COMPASS as connections (e.g. "Route 3: ~5 block
 Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
 Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.
 FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with HP>0, or D A=NO (wild only).
-RUN: In wild battles, RUN is bottom-right (D R A from FIGHT). Gen 1 escape can fail — send the sequence twice (B D R A B D R A) to retry automatically. Against trainers, RUN always fails — you must fight.
+RUN: In wild battles, use run_from_battle tool — it handles menu navigation, text dismissal, and auto-retry in one call. Against trainers, RUN always fails — you must fight.
 TYPE MATCHUPS: Water beats Fire/Rock/Ground. Electric beats Water/Flying. Fire beats Grass/Bug/Ice. Grass beats Water/Rock/Ground. Use super-effective moves when possible — they deal 2x damage. Avoid not-very-effective moves (0.5x). Normal moves don't affect Ghost types.
 HEALING: Use potions (ITEM menu: D to POTION, A, pick Pokemon, A) when HP is below 30%. Visit Pokemon Centers (enter building, walk to counter, talk to nurse) whenever HP drops below 50% and one is nearby. The HEAL line in context means healing is urgent.
 WILD ENCOUNTERS: In caves and grass, wild Pokemon appear randomly. RUN from encounters when your team is weak or you're trying to navigate. Only fight if you need XP or are trying to catch something.

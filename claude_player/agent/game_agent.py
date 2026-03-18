@@ -1075,6 +1075,38 @@ class GameAgent:
                     "tool_use_id": tool_use_id,
                     "content": [{"type": "text", "text": "Input queued for execution"}]
                 })
+            elif tool_name == "run_from_battle":
+                # run_from_battle generates a button sequence — queue it like send_inputs
+                try:
+                    result_content = self.tool_registry.execute_tool(tool_name, tool_input, tool_use_id)
+                    result_text = result_content[0]["text"]
+                    if result_text.startswith("Error:"):
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": result_content
+                        })
+                    else:
+                        # Result text IS the button sequence
+                        pending_actions.append(result_text)
+                        logging.info(f"Queued run_from_battle: {result_text} (queue size: {len(pending_actions)})")
+                        self.display.update(last_action=f"RUN: {result_text}")
+                        self._action_history.append((self.game_state.turn_count, result_text))
+                        if len(self._action_history) > self._max_action_history:
+                            self._action_history.pop(0)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": [{"type": "text", "text": "Run sequence queued — will attempt to flee twice with auto-retry"}]
+                        })
+                except Exception as e:
+                    error_msg = f"ERROR executing run_from_battle: {str(e)}"
+                    logging.error(error_msg)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": [{"type": "text", "text": f"Error: {str(e)}"}]
+                    })
             else:
                 try:
                     tool_result_content = self.tool_registry.execute_tool(tool_name, tool_input, tool_use_id)
@@ -1430,7 +1462,7 @@ class GameAgent:
         # FPS tracking
         fps_frame_count = 0
         fps_last_log_time = time.time()
-        fps_log_interval = 10  # Log FPS every 10 seconds
+        fps_log_interval = 60  # Log FPS every 60 seconds (only warnings at degraded FPS)
         current_fps = 0.0
 
         # Main continuous emulation loop
@@ -1601,7 +1633,11 @@ class GameAgent:
                 fps_elapsed = current_time - fps_last_log_time
                 if fps_elapsed >= fps_log_interval:
                     current_fps = fps_frame_count / fps_elapsed
-                    logging.info(f"FPS: {current_fps:.1f} (target: 59.7, frames: {fps_frame_count} in {fps_elapsed:.1f}s)")
+                    fps_target = 59.7
+                    if current_fps < fps_target * 0.9:
+                        logging.warning(f"FPS: {current_fps:.1f} (target: {fps_target}, frames: {fps_frame_count} in {fps_elapsed:.1f}s)")
+                    else:
+                        logging.debug(f"FPS: {current_fps:.1f} (target: {fps_target}, frames: {fps_frame_count} in {fps_elapsed:.1f}s)")
                     self.display.update(fps=current_fps)
                     fps_frame_count = 0
                     fps_last_log_time = current_time

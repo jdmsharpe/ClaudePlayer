@@ -1000,8 +1000,11 @@ class GameAgent:
                     spatial_text = "\n".join(new_lines)
             user_content.append({"type": "text", "text": spatial_text})
 
-        # Menu context: inject every turn when active (menus change frequently)
-        if menu_data and menu_data.get("text"):
+        # Menu context: inject every turn when active (menus change frequently).
+        # Skip on the turn battle just ended — RAM cursor values are stale and
+        # get misidentified as item_submenu (Y=14 X=15 from battle RUN cursor).
+        just_exited_battle = self._was_in_battle and not self._in_battle
+        if menu_data and menu_data.get("text") and not just_exited_battle:
             user_content.append({"type": "text", "text": menu_data["text"]})
 
         # Party status: inject only on meaningful changes or periodically

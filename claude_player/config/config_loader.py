@@ -59,7 +59,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "ENABLE_SOUND": True,
         "SOUND_VOLUME": 50,
         "MAX_HISTORY_MESSAGES": 15,
-        "MAX_SCREENSHOTS": 2,
+        "MAX_SCREENSHOTS": 1,
         "BOOT_FRAMES": 400,
         "CUSTOM_INSTRUCTIONS": "",
         "WEB_PORT": 0,

@@ -276,7 +276,7 @@ class TurnContextBuilder:
                 "type": "text",
                 "text": (
                     f"CRITICAL HP: {fainted}/{total_count} fainted, {hp_pct}% HP."
-                    f" Heal soon — either head to a Pokemon Center or fight in battle"
+                    f" Heal soon — either head to a Pokémon Center or fight in battle"
                     f" to black out (free teleport to nearest Center)."
                 )
             })

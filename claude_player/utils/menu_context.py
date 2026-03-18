@@ -1,4 +1,4 @@
-"""Pokemon Red overworld menu context reader.
+"""Pokémon Red overworld menu context reader.
 
 Reads menu cursor RAM to identify which menu is active outside of battle
 and provides structured navigation hints with compound input strings.
@@ -40,7 +40,7 @@ _ADDR_NAMING_TYPE   = 0xD07D  # wNamingScreenType (0=player,1=rival,2=pokemon)
 _START_ITEMS_POKEDEX = ["POKEDEX", "POKEMON", "ITEM", "player", "SAVE", "OPTION", "EXIT"]
 _START_ITEMS_NO_DEX = ["POKEMON", "ITEM", "player", "SAVE", "OPTION", "EXIT"]
 
-_NAMING_TYPES = {0: "Player name", 1: "Rival name", 2: "Pokemon nickname"}
+_NAMING_TYPES = {0: "Player name", 1: "Rival name", 2: "Pokémon nickname"}
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +128,9 @@ def _format_party_menu(
     """Format party list with HP/status and switch TIP."""
     lines = ["=== MENU CONTEXT ==="]
     if swap_pending:
-        lines.append("MENU: Pokemon Party [SWAP MODE]")
+        lines.append("MENU: Pokémon Party [SWAP MODE]")
     else:
-        lines.append("MENU: Pokemon Party")
+        lines.append("MENU: Pokémon Party")
 
     party = party_data.get("party", []) if party_data else []
     lead_fainted = False
@@ -165,7 +165,7 @@ def _format_party_menu(
                 f"send: {tip_seq}"
             )
         else:
-            lines.append("TIP: SWAP MODE — navigate to target Pokemon, press A to open submenu, then A to select SWAP.")
+            lines.append("TIP: SWAP MODE — navigate to target Pokémon, press A to open submenu, then A to select SWAP.")
     elif lead_fainted and first_alive_slot is not None:
         target = party[first_alive_slot]
         nav = "D " * first_alive_slot
@@ -177,7 +177,7 @@ def _format_party_menu(
             f"(open CATERPIE menu → SWITCH → confirm → move to {target['name']} → SWAP → confirm)"
         )
     else:
-        lines.append("TIP: Select a Pokemon with A to view stats/use field move. B to close.")
+        lines.append("TIP: Select a Pokémon with A to view stats/use field move. B to close.")
 
     return "\n".join(lines)
 
@@ -247,7 +247,7 @@ def _format_party_submenu(cursor: int, max_item: int) -> str:
     Gen 1 party submenu order: [field_move_1, ..., STATS, SWITCH, CANCEL]
     CANCEL is always last (max_item), SWITCH second-to-last, STATS third-to-last.
     """
-    lines = ["=== MENU CONTEXT ===", "MENU: Pokemon Action"]
+    lines = ["=== MENU CONTEXT ===", "MENU: Pokémon Action"]
 
     # Build option list: field moves (if any) + STATS + SWITCH + CANCEL
     options = []

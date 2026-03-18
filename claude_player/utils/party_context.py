@@ -1,9 +1,9 @@
-"""Pokemon Red party context reader.
+"""Pokémon Red party context reader.
 
 Reads party RAM to give the agent awareness of its full team:
 species, levels, HP, status conditions, moves + PP, and stats.
 Always available (not battle-specific), enabling smart decisions
-like healing at a Pokemon Center when the party is hurting.
+like healing at a Pokémon Center when the party is hurting.
 
 RAM addresses and struct layout from pret/pokered wram.asm.
 """
@@ -66,7 +66,7 @@ _ADDR_PARTY_NICK1 = 0xD2B5
 _NICK_SIZE = 11
 
 def _decode_nickname(pyboy: PyBoy, slot: int) -> str:
-    """Read and decode a Gen 1 party Pokemon nickname."""
+    """Read and decode a Gen 1 party Pokémon nickname."""
     base = _ADDR_PARTY_NICK1 + slot * _NICK_SIZE
     chars = []
     for i in range(10):
@@ -127,14 +127,14 @@ def _read_exp(pyboy: PyBoy, addr: int) -> int:
 
 
 def _read_party_pokemon(pyboy: PyBoy, slot: int) -> Optional[Dict[str, Any]]:
-    """Read one party Pokemon's data from RAM.
+    """Read one party Pokémon's data from RAM.
 
     Args:
         pyboy: PyBoy instance.
         slot: Party slot index (0-5).
 
     Returns:
-        Dict with Pokemon data, or None if slot is empty.
+        Dict with Pokémon data, or None if slot is empty.
     """
     base = ADDR_PARTY_BASE + (slot * PARTY_MON_SIZE)
 
@@ -221,16 +221,16 @@ def assess_party_health(party: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Assess overall party health and return a recommendation.
 
     Args:
-        party: List of Pokemon dicts from _read_party_pokemon.
+        party: List of Pokémon dicts from _read_party_pokemon.
 
     Returns:
         Dict with keys:
-            alive (int): count of non-fainted Pokemon
-            fainted (int): count of fainted Pokemon
+            alive (int): count of non-fainted Pokémon
+            fainted (int): count of fainted Pokémon
             total_hp_pct (int): weighted HP percentage across the team
-            low_pp (bool): True if any alive Pokemon has all damage moves at 0 PP
-            status_count (int): number of Pokemon with non-OK status conditions
-            needs_healing (bool): True if party should visit a Pokemon Center
+            low_pp (bool): True if any alive Pokémon has all damage moves at 0 PP
+            status_count (int): number of Pokémon with non-OK status conditions
+            needs_healing (bool): True if party should visit a Pokémon Center
             recommendation (str|None): advice string for the agent, or None
     """
     # Compute base stats once
@@ -250,7 +250,7 @@ def assess_party_health(party: List[Dict[str, Any]]) -> Dict[str, Any]:
         if mon["hp"] > 0 and any(m["power"] > 0 for m in mon["moves"])
     )
 
-    # Lead Pokemon (slot 0) awareness
+    # Lead Pokémon (slot 0) awareness
     lead = party[0]
     lead_fainted = lead["hp"] == 0
     lead_low_hp = lead["hp_pct"] <= 25 and lead["hp"] > 0
@@ -264,10 +264,10 @@ def assess_party_health(party: List[Dict[str, Any]]) -> Dict[str, Any]:
     recommendation = None
     needs_healing = False
 
-    heal_where = "Heal at Pokemon Center (or Mom in Pallet Town)"
+    heal_where = "Heal at Pokémon Center (or Mom in Pallet Town)"
 
     if alive == 0:
-        recommendation = f"CRITICAL: All Pokemon fainted! {heal_where}!"
+        recommendation = f"CRITICAL: All Pokémon fainted! {heal_where}!"
         needs_healing = True
     elif total_hp_pct < 25 or (fainted >= 2 and alive == 1):
         recommendation = f"URGENT: {heal_where}!"
@@ -283,7 +283,7 @@ def assess_party_health(party: List[Dict[str, Any]]) -> Dict[str, Any]:
         recommendation = f"Warning: {poisoned} poisoned — losing HP while walking!"
         needs_healing = poisoned >= alive  # only urgent if whole team is poisoned
     elif lead_low_hp:
-        recommendation = "Lead Pokemon HP is low — consider healing"
+        recommendation = "Lead Pokémon HP is low — consider healing"
 
     return {
         "alive": alive,
@@ -307,7 +307,7 @@ def _assess_team_strategy(
     """Analyze the team composition and produce actionable tips.
 
     Args:
-        party: List of Pokemon dicts from _read_party_pokemon.
+        party: List of Pokémon dicts from _read_party_pokemon.
         badge_count: Number of badges earned (0-8).
 
     Returns:
@@ -315,12 +315,12 @@ def _assess_team_strategy(
     """
     alive = [mon for mon in party if mon["hp"] > 0]
 
-    # Collect species types across alive Pokemon
+    # Collect species types across alive Pokémon
     party_types: set[str] = set()
     for mon in alive:
         party_types.update(mon["types"])
 
-    # Collect damaging move types across alive Pokemon
+    # Collect damaging move types across alive Pokémon
     move_types: set[str] = set()
     for mon in alive:
         for move in mon["moves"]:
@@ -344,7 +344,7 @@ def _assess_team_strategy(
     tips: List[str] = []
 
     if len(party) < 4 and badge_count >= 1:
-        tips.append(f"Catch more Pokemon — only {len(party)}/6 slots used")
+        tips.append(f"Catch more Pokémon — only {len(party)}/6 slots used")
 
     if next_gym and not has_coverage and next_gym["wanted_types"]:
         type_list = " or ".join(sorted(next_gym["wanted_types"]))

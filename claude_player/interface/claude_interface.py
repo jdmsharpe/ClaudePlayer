@@ -71,16 +71,16 @@ CONNECTIONS: Map edges marked in COMPASS as connections (e.g. "Route 3: ~5 block
 GOALS: You have two goal tiers. STRATEGIC GOAL = milestone objective (auto-set from story flags, e.g. "Beat Brock"). TACTICAL GOAL = immediate map-specific action (auto-derived from your location, e.g. "Enter Pewter Gym from north"). NAV routes toward the TACTICAL GOAL when present. Use set_tactical_goal for in-map sub-tasks; use set_strategic_goal to redirect the mission. Tactical goals auto-clear on map change.
 </navigation>
 <battle_context>
-Shows both Pokemon's stats, moves (power=0 = status), and a TIP.
+Shows both Pokémon's stats, moves (power=0 = status), and a TIP.
 Main menu: FIGHT(0)/ITEM(1) left, PKMN(2)/RUN(3) right. A=confirm, B=back. In submenu/text: B to return, A to advance.
 FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with HP>0, or D A=NO (wild only).
 RUN: In wild battles, use run_from_battle tool — it handles menu navigation, text dismissal, and auto-retry in one call. Against trainers, RUN always fails — you must fight.
 TYPE MATCHUPS: Water beats Fire/Rock/Ground. Electric beats Water/Flying. Fire beats Grass/Bug/Ice. Grass beats Water/Rock/Ground. Use super-effective moves when possible — they deal 2x damage. Avoid not-very-effective moves (0.5x). Normal moves don't affect Ghost types.
-HEALING: Use potions (ITEM menu: D to POTION, A, pick Pokemon, A) when HP is below 30%. Visit Pokemon Centers (enter building, walk to counter, talk to nurse) whenever HP drops below 50% and one is nearby. The HEAL line in context means healing is urgent.
-WILD ENCOUNTERS: In caves and grass, wild Pokemon appear randomly. RUN from encounters when your team is weak or you're trying to navigate. Only fight if you need XP or are trying to catch something.
-TRAINERS: Trainer battles are mandatory when you walk into their line of sight. You cannot run. Focus on type advantages and use your strongest moves. Switch Pokemon if the current one is at a type disadvantage.
+HEALING: Use potions (ITEM menu: D to POTION, A, pick Pokémon, A) when HP is below 30%. Visit Pokémon Centers (enter building, walk to counter, talk to nurse) whenever HP drops below 50% and one is nearby. The HEAL line in context means healing is urgent.
+WILD ENCOUNTERS: In caves and grass, wild Pokémon appear randomly. RUN from encounters when your team is weak or you're trying to navigate. Only fight if you need XP or are trying to catch something.
+TRAINERS: Trainer battles are mandatory when you walk into their line of sight. You cannot run. Focus on type advantages and use your strongest moves. Switch Pokémon if the current one is at a type disadvantage.
 STAT MOVES: Moves like GROWL, LEER, TAIL WHIP lower enemy stats but deal no damage. Only use them if you plan to stay in the fight for multiple turns and need the edge. In most wild battles, just attack or run.
-LEVEL ADVANTAGE: If your Pokemon is 5+ levels above the opponent, most attacks will KO in 1-2 hits. If 5+ levels below, consider switching or running. Check the level display in battle context to judge.
+LEVEL ADVANTAGE: If your Pokémon is 5+ levels above the opponent, most attacks will KO in 1-2 hits. If 5+ levels below, consider switching or running. Check the level display in battle context to judge.
 POKEMON CENTERS: Free full heal for your entire party. Always heal before gym battles and after dungeons. The nurse dialogue requires A to start, A to confirm, then A to dismiss — three A presses total.
 </battle_context>
 <menu_context>
@@ -92,7 +92,7 @@ SAVE: START → SAVE → A to save progress. The game auto-saves state separatel
             static_parts.append("""
 <authority>
 PARTY STATUS, SPATIAL/BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Trust over memory.
-HEAL line = prioritize Pokemon Center. WARNING = address before main goal.
+HEAL line = prioritize Pokémon Center. WARNING = address before main goal.
 </authority>
 <memory>
 Your persistent memory is auto-injected each turn as <memory> in the user message.

@@ -61,7 +61,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 - **Tool registry**: decorator pattern (`@registry.register(...)`) in `tool_registry.py`
 - **Memory system**: background Haiku subagent updates `saves/MEMORY.md` every N turns (80-line cap)
 - **World map**: persistent per-map tile accumulator with A* pathfinding in `world_map.py`. Includes a **map connectivity graph** (`map_graph`) that records bidirectional edges between maps from warps and connections. BFS on this graph provides map-level pathfinding so the NAV pipeline can identify the correct next-hop map (e.g. "go to Mt. Moon 1F" instead of "go to Cerulean City" when ledges block the direct route). The graph builds incrementally as maps are visited and persists in `world_map.json`. Map 0xFF ("outside / last map") warps are resolved to the actual previous map ID via `last_map_id`.
-- **Web dashboard**: Flask in daemon thread, shares state via `TerminalDisplay` with thread locks
+- **Web dashboard**: Flask in daemon thread, shares state via `TerminalDisplay` with thread locks. Browser audio streaming via `SoundOutput` (`utils/sound_output.py`) buffers PyBoy APU frames into WAV chunks served at `GET /audio/chunk`.
 - **Config**: `config.json` auto-created on first run; deep-merged with defaults from `config_loader.py`
 
 ## Cost Tracking
@@ -111,6 +111,7 @@ When modifying RAM readers, verify addresses against <https://github.com/pret/po
 
 Runtime config in `config.json` — see `config/config_class.py` for the full TypedDict schema.
 Key sections: `MODEL_DEFAULTS`, `ACTION`, `MEMORY`, `STUCK` detection thresholds.
+`ENABLE_SOUND` (default `true`): when `false`, PyBoy skips APU sampling entirely (`tick(sound=False)`). Browser audio streaming via `SoundOutput` is also disabled.
 
 ## System Prompt & Navigation
 

@@ -70,7 +70,8 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
 
     try:
         _stopping = lambda: stop_event is not None and stop_event.is_set()
-        _tick = lambda: (pyboy.tick(), frame_callback and frame_callback(pyboy.screen.image), sound_callback and sound_callback())
+        _sound = sound_callback is not None
+        _tick = lambda: (pyboy.tick(sound=_sound), frame_callback and frame_callback(pyboy.screen.image), sound_callback and sound_callback())
         total_dir_frames = 0
 
         for raw_token in input_string.strip().split():

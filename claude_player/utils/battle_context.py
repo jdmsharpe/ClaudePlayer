@@ -1,7 +1,7 @@
-"""Pokemon Red battle context reader.
+"""Pokémon Red battle context reader.
 
 Reads battle RAM to provide structured data about the current fight:
-both Pokemon's stats, available moves with power/PP, and menu cursor
+both Pokémon's stats, available moves with power/PP, and menu cursor
 position.  Injected as text context during battles, replacing the
 spatial grid (which is useless on the battle screen).
 
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # RAM addresses (battle-specific, not shared)
 # ---------------------------------------------------------------------------
 
-# Player's active Pokemon (wBattleMon)
+# Player's active Pokémon (wBattleMon)
 _ADDR_PLAYER_SPECIES = 0xD014
 _ADDR_PLAYER_HP      = 0xD015  # 2 bytes, big-endian
 _ADDR_PLAYER_STATUS  = 0xD018
@@ -56,7 +56,7 @@ _ADDR_PLAYER_PP      = 0xD02D  # 4 bytes (PP per move slot)
 _ADDR_PLAYER_TYPE1   = 0xD019
 _ADDR_PLAYER_TYPE2   = 0xD01A
 
-# Enemy's active Pokemon (wEnemyMon)
+# Enemy's active Pokémon (wEnemyMon)
 _ADDR_ENEMY_SPECIES  = 0xCFE5
 _ADDR_ENEMY_HP       = 0xCFE6  # 2 bytes, big-endian
 _ADDR_ENEMY_STATUS   = 0xCFE9
@@ -72,7 +72,7 @@ _ADDR_ENEMY_SPC      = 0xCFFC
 _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
 # CC2F is dual-purpose in battle: it stores the party index of the currently-sent-out
-# Pokemon (0-5) for the send-out flow, AND the last A-confirmed fight-menu slot (0-3).
+# Pokémon (0-5) for the send-out flow, AND the last A-confirmed fight-menu slot (0-3).
 # We clamp to num_moves-1 and use it as a ground-truth check only — don't rely on it
 # for navigation (see _fight_nav_presses which resets cursor position explicitly).
 _ADDR_PLAYER_MOVE_LIST_IDX = 0xCC2F
@@ -98,7 +98,7 @@ _ADDR_PLAYER_SPD_MOD = 0xCD1C
 _ADDR_PLAYER_SPC_MOD = 0xCD1D
 _ADDR_PLAYER_ACC_MOD = 0xCD1E
 _ADDR_PLAYER_EVA_MOD = 0xCD1F
-# CD2D = engaged trainer class / legendary Pokemon ID (not a stage modifier)
+# CD2D = engaged trainer class / legendary Pokémon ID (not a stage modifier)
 _ADDR_ENEMY_ATK_MOD  = 0xCD2E  # Enemy ATK stage (or trainer roster ID outside battle)
 _ADDR_ENEMY_DEF_MOD  = 0xCD2F
 _ADDR_ENEMY_SPD_MOD  = 0xCD30
@@ -109,7 +109,7 @@ _ADDR_ENEMY_EVA_MOD  = 0xCD33
 # Bag / party constants (battle-specific)
 # Regular Poke Balls only (Safari Ball 0x08 excluded — Safari Zone uses
 # its own counter at _ADDR_NUM_SAFARI_BALLS, not the bag).
-_BATTLE_BATTLE_BALL_IDS     = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
+_BATTLE_BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ def _read_pokemon(
     type1_addr: int = 0,
     type2_addr: int = 0,
 ) -> Optional[Dict[str, Any]]:
-    """Read a battle Pokemon's data from RAM."""
+    """Read a battle Pokémon's data from RAM."""
     species_id = pyboy.memory[species_addr]
     if species_id == 0:
         return None  # slot empty or data not ready
@@ -508,7 +508,7 @@ def _generate_battle_tip(
         else:  # trainer battle — must continue
             return (
                 "FAINT FLOW: 'Use next POKEMON?' prompt. Trainer battle — must send out another. "
-                "Send: A, then D/U to find a Pokemon with HP > 0, then A to select it. "
+                "Send: A, then D/U to find a Pokémon with HP > 0, then A to select it. "
                 "Skip fainted mons — selecting one shows 'There's no will to fight!'."
             )
 
@@ -517,8 +517,8 @@ def _generate_battle_tip(
     if menu_type == "pkmn":
         return (
             f"PKMN SWITCH SCREEN (cursor on slot {cursor+1}). "
-            "D/U to navigate party, A to switch in that Pokemon, B to cancel. "
-            "WARNING: pressing A on the already-active Pokemon shows 'already out!' "
+            "D/U to navigate party, A to switch in that Pokémon, B to cancel. "
+            "WARNING: pressing A on the already-active Pokémon shows 'already out!' "
             "and loops back here — navigate to a different slot first."
         )
 
@@ -709,7 +709,7 @@ def _generate_battle_tip(
         nav = _fight_nav_presses(0, num_moves)
         compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
-                f"→ blackout → free heal at Pokemon Center. Send: {compound}")
+                f"→ blackout → free heal at Pokémon Center. Send: {compound}")
 
     # Low HP
     if player["hp"] > 0 and player["hp"] <= player["max_hp"] // 4:
@@ -730,12 +730,12 @@ def _generate_safari_tip(
       THROW ROCK(1)=D L A  |  RUN(3)=D R A
 
     Safari mechanics:
-      THROW ROCK: raises catch rate, but also raises the wild Pokemon's flee chance.
+      THROW ROCK: raises catch rate, but also raises the wild Pokémon's flee chance.
       BAIT:       lowers flee chance, but also lowers the catch rate.
       BALL:       attempt capture using current modified catch rate.
 
     Args:
-        enemy:        Enemy Pokemon data dict (name, level, status, etc.)
+        enemy:        Enemy Pokémon data dict (name, level, status, etc.)
         menu_type:    "main", "unknown", etc. (from _detect_battle_submenu)
         safari_state: Dict from _read_safari_state (balls, steps, bait_count, rock_count).
 
@@ -833,7 +833,7 @@ def _format_battle_text(
             f"BALL: U L A | THROW ROCK: D L A | BAIT: U R A | RUN: D R A"
         )
     else:
-        # Player Pokemon
+        # Player Pokémon
         status_str = f" {player['status']}" if player["status"] != "OK" else ""
         player_type_str = f" [{'/'.join(player.get('types', []))}]" if player.get("types") else ""
         lines.append(
@@ -896,7 +896,7 @@ def _format_battle_text(
     # VS separator
     lines.append("──────────── VS ────────────")
 
-    # Enemy Pokemon
+    # Enemy Pokémon
     enemy_status = f" {enemy['status']}" if enemy["status"] != "OK" else ""
     enemy_type_str = f" [{'/'.join(enemy.get('types', []))}]" if enemy.get("types") else ""
     lines.append(
@@ -989,7 +989,7 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
         )
 
         if not player or not enemy:
-            logger.debug("Battle context: Pokemon data not ready")
+            logger.debug("Battle context: Pokémon data not ready")
             return None
 
         cursor = pyboy.memory[ADDR_MENU_ITEM]

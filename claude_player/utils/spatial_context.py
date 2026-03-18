@@ -26,7 +26,7 @@ TILE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Pokemon Red/Blue RAM addresses (spatial-specific, from pret/pokered)
+# Pokémon Red/Blue RAM addresses (spatial-specific, from pret/pokered)
 # ---------------------------------------------------------------------------
 _ADDR_MAP_HEIGHT = 0xD368     # In blocks
 _ADDR_MAP_WIDTH = 0xD369      # In blocks
@@ -37,7 +37,7 @@ _MAX_WARPS = 32
 # Address computed at runtime: D3AF + num_warps * 4
 _MAX_SIGNS = 16
 
-# Maps where signs are PC terminals (Pokemon Centers)
+# Maps where signs are PC terminals (Pokémon Centers)
 _POKEMON_CENTER_MAPS = {
     0x29, 0x3A, 0x40, 0x44, 0x51, 0x59, 0x85, 0x8D, 0x9A, 0xAB, 0xB6,
 }
@@ -228,7 +228,7 @@ def _build_tile_legend(visible: List[List[int]]) -> Dict[int, str]:
 def _extract_collision_data(pyboy: PyBoy) -> Optional[List[List[int]]]:
     """Extract walkability collision data from PyBoy's game wrapper.
 
-    Available for Pokemon Red/Blue via the built-in game wrapper plugin.
+    Available for Pokémon Red/Blue via the built-in game wrapper plugin.
     Returns [y][x] grid where 0 = blocked, non-zero = walkable, or None.
     """
     try:
@@ -441,15 +441,15 @@ def _check_missable_hidden(pyboy: PyBoy, sprite_slot: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Warp / map data from Pokemon Red RAM
+# Warp / map data from Pokémon Red RAM
 # ---------------------------------------------------------------------------
 
 def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
-    """Read warp positions and map info from Pokemon Red RAM.
+    """Read warp positions and map info from Pokémon Red RAM.
 
     Returns a dict with map info, player map position, and a list of warps
     with relative directions from the player.  Returns None when data is
-    unavailable (e.g. during title screen or non-Pokemon-Red games).
+    unavailable (e.g. during title screen or non-Pokémon-Red games).
     """
     try:
         map_number = pyboy.memory[ADDR_CUR_MAP]
@@ -551,7 +551,7 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
 
 
 def _extract_npc_data(pyboy: PyBoy, map_number: Optional[int] = None) -> Optional[List[Dict[str, Any]]]:
-    """Read NPC/item sprite data from Pokemon Red RAM.
+    """Read NPC/item sprite data from Pokémon Red RAM.
 
     Returns a list of dicts with name, relative position (dy/dx in map tiles),
     picture ID, and an is_item flag.  Returns None when unavailable.
@@ -1156,7 +1156,7 @@ def _format_spatial_text(
                     grid[y][x] = 'T'
 
     # Player screen position from OAM sprite 0
-    # Pokemon uses 8x16 sprites — the OAM Y is the sprite top.  The feet
+    # Pokémon uses 8x16 sprites — the OAM Y is the sprite top.  The feet
     # (collision point) are in the LOWER 8px of the sprite = tile_y + 1.
     # We must add +1 BEFORE the //2 division so that even tile_y values
     # (e.g. tile_y=10, feet at tile 11 = metatile 5) don't get bumped to
@@ -1314,9 +1314,9 @@ def _format_spatial_text(
     if (_compass_targets and player_screen_pos and grid
             and (has_collision or terrain is not None)):
         from claude_player.utils.pathfinding import find_path_to_edge, path_to_buttons
-        # Sort: non-Pokemon-Centers first (caves, gyms, connections are real goals),
+        # Sort: non-Pokémon-Centers first (caves, gyms, connections are real goals),
         # then furthest-first within each group. This prevents the NAV from
-        # directing toward a Pokemon Center when a cave entrance or route exit
+        # directing toward a Pokémon Center when a cave entrance or route exit
         # is the actual navigation target.
         _compass_targets.sort(key=lambda t: (t[3], -t[1]))
         _nav_shown = False
@@ -1478,7 +1478,7 @@ def extract_spatial_context(
             story_progress = None
 
         # Filter out hidden/event sprites with stale positions far from player.
-        # Pokemon Red loads ALL map sprites (including event-hidden ones like
+        # Pokémon Red loads ALL map sprites (including event-hidden ones like
         # Oak waiting on Route 1) — their MapY/MapX values can be stale.
         # Use the visible screen grid (10x9) as the bound, not map dimensions,
         # because small maps (5x6) were incorrectly filtering valid nearby NPCs.

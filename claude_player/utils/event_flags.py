@@ -1,4 +1,4 @@
-"""Pokemon Red event flag reader and story progression tracker.
+"""Pokémon Red event flag reader and story progression tracker.
 
 Event flags are stored as a bit array at wEventFlags (0xD747), spanning
 320 bytes (2560 bits).  Flag N lives at byte 0xD747 + (N // 8), bit N % 8.
@@ -60,7 +60,7 @@ _ITEM_ID_CHECKS: Dict[int, tuple] = {
 STORY_PROGRESSION: List[Tuple[int, str, str]] = [
     # Flag numbers parsed from pret/pokered event_constants.asm via const_def/const_skip tracing
     (0x027, "Oak appeared in Pallet",              "Start a new game (press A through intro/naming). Then go downstairs, exit house, walk NORTH into Route 1 tall grass to trigger Oak"),
-    (0x022, "Got starter Pokemon",                 "Go to Oak's Lab and choose a starter Pokemon"),
+    (0x022, "Got starter Pokémon",                 "Go to Oak's Lab and choose a starter Pokémon"),
     (0x023, "Battled rival in Oak's Lab",          "Walk toward the exit door of Oak's Lab — your rival will stop you and challenge you automatically (do NOT talk to him, just walk south to the door)"),
     (0x039, "Got Oak's Parcel",                    "Go NORTH through Route 1 to Viridian City and pick up Oak's Parcel from the Poke Mart clerk"),
     (0x025, "Got Pokedex",                         "Return SOUTH to Pallet Town and deliver the parcel to Prof. Oak in Oak's Lab to get the Pokedex"),
@@ -70,25 +70,25 @@ STORY_PROGRESSION: List[Tuple[int, str, str]] = [
     (0x0BF, "Beat Misty",                          "Enter Cerulean Gym (northeast part of Cerulean City) and defeat Misty to earn the Cascade Badge"),
     (  -3,  "Got S.S. Ticket from Bill",           "Head NORTH from Cerulean through Routes 24 and 25 to Bill's House at the eastern end — talk to Bill to help him change back to human form and receive the S.S. Ticket"),
     (0x5E0, "Got HM01 Cut",                        "Go SOUTH from Cerulean through Routes 5 and 6 to Vermilion City, board S.S. Anne at the dock (show the S.S. Ticket to the guard), and get HM01 Cut from the seasick captain"),
-    (0x167, "Beat Lt. Surge",                      "Teach HM01 Cut to a Pokemon, use Cut on the tree blocking Vermilion Gym, and defeat Lt. Surge to earn the Thunder Badge"),
+    (0x167, "Beat Lt. Surge",                      "Teach HM01 Cut to a Pokémon, use Cut on the tree blocking Vermilion Gym, and defeat Lt. Surge to earn the Thunder Badge"),
     (  -4,  "Got Silph Scope from Rocket Hideout", "Go to Celadon City and infiltrate Team Rocket's hideout under the Game Corner (hidden stairs inside the Game Corner) — fight down to B4F and defeat Giovanni to get the Silph Scope"),
     (0x1A9, "Beat Erika",                          "Enter Celadon Gym (west side of Celadon City, accessible via back tree passage) and defeat Erika to earn the Rainbow Badge"),
-    (0x128, "Got Poke Flute",                      "Go to Lavender Town and climb Pokemon Tower — use the Silph Scope on 7F to reveal the ghost (Marowak), defeat it, then free Mr. Fuji at the top to receive the Poke Flute"),
+    (0x128, "Got Poke Flute",                      "Go to Lavender Town and climb Pokémon Tower — use the Silph Scope on 7F to reveal the ghost (Marowak), defeat it, then free Mr. Fuji at the top to receive the Poke Flute"),
     (0x259, "Beat Koga",                           "Go to Fuchsia City (via Cycling Road with Bicycle, or south via Routes 12-15) and defeat Koga to earn the Soul Badge"),
     (0x880, "Got HM03 Surf",                       "Enter Fuchsia City Safari Zone and find the Secret House in the west area to receive HM03 Surf"),
     (  -5,  "Got Gold Teeth",                      "Find and pick up the Gold Teeth item on the ground in Safari Zone West — you'll need them to trade to the Warden for HM04 Strength"),
-    (  -6,  "Got HM04 Strength from Warden",       "Visit the Safari Zone Warden's house (south of Fuchsia Pokemon Center) and give him the Gold Teeth to receive HM04 Strength"),
+    (  -6,  "Got HM04 Strength from Warden",       "Visit the Safari Zone Warden's house (south of Fuchsia Pokémon Center) and give him the Gold Teeth to receive HM04 Strength"),
     (  -7,  "Bought Celadon Dept Store drink",     "Go to Celadon Dept Store and take the elevator to the rooftop (5F) — buy a FRESH WATER, SODA POP, or LEMONADE from the vending machine to bribe Saffron City guards"),
     (  -8,  "Cleared Silph Co.",                   "Go to Saffron City (show a drink to the guard at any entrance gate), find Silph Co. (large tower in center of Saffron), work through the building and defeat Giovanni to liberate it"),
     (0x361, "Beat Sabrina",                        "Enter Saffron Gym (now accessible after Silph Co. is cleared) and defeat Sabrina to earn the Marsh Badge"),
     (  -9,  "Surfed to Cinnabar Island",           "Teach HM03 Surf, then Surf south from Pallet Town (south edge of Pallet) or from Fuchsia City via Routes 19 and 20 to reach Cinnabar Island"),
-    ( -10,  "Got Secret Key from Pokemon Mansion", "Enter Pokemon Mansion on Cinnabar Island and navigate to the basement (B1F) to find the Secret Key that unlocks Cinnabar Gym"),
+    ( -10,  "Got Secret Key from Pokémon Mansion", "Enter Pokémon Mansion on Cinnabar Island and navigate to the basement (B1F) to find the Secret Key that unlocks Cinnabar Gym"),
     (0x299, "Beat Blaine",                         "Enter Cinnabar Gym (unlocked with the Secret Key) and defeat Blaine to earn the Volcano Badge"),
     (0x051, "Beat Giovanni (Viridian Gym)",        "Return to Viridian City Gym (now open) and defeat Giovanni to earn the Earth Badge"),
     ( -11,  "Reached Victory Road",                "Head WEST from Viridian City to Route 22, then NORTH through Route 23 (badge checkers verify all 8 badges at each gate) to reach the Victory Road cave entrance"),
     ( -12,  "Through Victory Road",                "Navigate all three floors of Victory Road (use HM04 Strength to push boulders) and exit north to reach Indigo Plateau"),
-    (0x8FE, "Beat Lance (Elite Four)",             "Defeat all four Elite Four members at Indigo Plateau: Lorelei (Ice), Bruno (Fighting), Agatha (Ghost), and Lance (Dragon) — heal your team at the Pokemon Center first"),
-    (0x901, "Beat Champion",                       "After defeating the Elite Four, defeat Blue (your rival) to become Pokemon Champion"),
+    (0x8FE, "Beat Lance (Elite Four)",             "Defeat all four Elite Four members at Indigo Plateau: Lorelei (Ice), Bruno (Fighting), Agatha (Ghost), and Lance (Dragon) — heal your team at the Pokémon Center first"),
+    (0x901, "Beat Champion",                       "After defeating the Elite Four, defeat Blue (your rival) to become Pokémon Champion"),
     (0x8C1, "Caught Mewtwo",                       "Go to Cerulean Cave (accessible from north Cerulean City after becoming Champion — need HM03 Surf) and catch Mewtwo"),
 ]
 
@@ -221,7 +221,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     # Through Mt. Moon (-2)
     (  -2,  0x02): "Visit Pewter Mart first (Potions, Antidotes) — Mt. Moon has no shop. Mart is EAST of gym but a wall blocks direct access; follow the NAV path around the buildings. Then head EAST to Route 3.",
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
-    (  -2,  0x44): "Pokemon Center rest stop.",
+    (  -2,  0x44): "Pokémon Center rest stop.",
     (  -2,  0x3B): "Navigate Mt. Moon 1F. Do NOT use W0/W1 warps — those exit to Route 4 entrance (wrong side, ledges block east). Go DEEPER: find stairs down to B1F in the cave interior.",
     (  -2,  0x3C): "Continue through Mt. Moon B1F. Find the stairs down to B2F — do NOT go back up to 1F.",
     (  -2,  0x3D): "Navigate Mt. Moon B2F to the exit stairs. Rocket Grunts guard the fossils — fight through or go around. Exit leads up to 1F east section → Route 4 exit → Cerulean City.",
@@ -258,13 +258,13 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (0x1A9, 0x06): "Enter Celadon Gym (west side of Celadon City — enter through the tree passage in the back) and defeat Erika.",
     (0x1A9, 0x86): "Navigate through the grass trainers and defeat Erika at the back of the gym.",
     # Got Poke Flute (0x128)
-    (0x128, 0x04): "Stock up at Lavender Town Poke Mart (Potions, Antidotes) before climbing — Pokemon Tower has no shop. Then enter the tower and climb to the 7th floor.",
-    (0x128, 0x8E): "Climb Pokemon Tower — ascend floor by floor, battling Rocket Grunts.",
-    (0x128, 0x8F): "Continue up Pokemon Tower to 3F.",
-    (0x128, 0x90): "Continue up Pokemon Tower to 4F.",
-    (0x128, 0x91): "Continue up Pokemon Tower to 5F.",
-    (0x128, 0x92): "Continue up Pokemon Tower to 6F.",
-    (0x128, 0x93): "Continue up Pokemon Tower to 7F.",
+    (0x128, 0x04): "Stock up at Lavender Town Poke Mart (Potions, Antidotes) before climbing — Pokémon Tower has no shop. Then enter the tower and climb to the 7th floor.",
+    (0x128, 0x8E): "Climb Pokémon Tower — ascend floor by floor, battling Rocket Grunts.",
+    (0x128, 0x8F): "Continue up Pokémon Tower to 3F.",
+    (0x128, 0x90): "Continue up Pokémon Tower to 4F.",
+    (0x128, 0x91): "Continue up Pokémon Tower to 5F.",
+    (0x128, 0x92): "Continue up Pokémon Tower to 6F.",
+    (0x128, 0x93): "Continue up Pokémon Tower to 7F.",
     (0x128, 0x94): "On 7F: use the Silph Scope near the ghost to reveal Marowak — defeat it (no Pokeballs), then defeat the Rocket Grunts and free Mr. Fuji to receive the Poke Flute.",
     # Beat Koga (0x259)
     (0x259, 0x07): "Enter Fuchsia Gym and defeat Koga.",
@@ -281,8 +281,8 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -5,  0xDB): "Search Safari Zone West for the Gold Teeth item on the ground.",
     (  -5,  0x07): "Enter the Safari Zone gate (south Fuchsia City) to find the Gold Teeth.",
     # Got HM04 Strength from Warden (-6)
-    (  -6,  0x9C): "Exit the Safari Zone and head to the Warden's House south of the Pokemon Center.",
-    (  -6,  0x07): "Visit the Warden's House (south of Fuchsia Pokemon Center) and give him the Gold Teeth.",
+    (  -6,  0x9C): "Exit the Safari Zone and head to the Warden's House south of the Pokémon Center.",
+    (  -6,  0x07): "Visit the Warden's House (south of Fuchsia Pokémon Center) and give him the Gold Teeth.",
     (  -6,  0x9B): "Give the Gold Teeth to the Safari Zone Warden to receive HM04 Strength.",
     # Bought Celadon drink (-7)
     (  -7,  0x07): "Head NORTH or WEST toward Celadon City to reach the Dept Store.",
@@ -308,12 +308,12 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -9,  0x1E): "Continue SOUTH through Route 19.",
     (  -9,  0x1F): "Continue WEST through Route 20 (Seafoam Islands are here).",
     (  -9,  0x20): "Continue SOUTH through Route 21 to reach Cinnabar Island.",
-    # Got Secret Key from Pokemon Mansion (-10)
-    ( -10,  0x08): "Stock up at Cinnabar Island Poke Mart (Hyper Potions, Revives, Antidotes) before entering — Pokemon Mansion has no shop. Then enter the Mansion (the ruined building in north Cinnabar Island) and navigate to the basement.",
-    ( -10,  0xA5): "Explore Pokemon Mansion 1F — find the stairs to upper floors and down to B1F.",
-    ( -10,  0xD6): "Continue through Pokemon Mansion 2F.",
-    ( -10,  0xD7): "Continue through Pokemon Mansion 3F — find the stairs down to B1F.",
-    ( -10,  0xD8): "You're in Pokemon Mansion B1F — find the Secret Key on the ground.",
+    # Got Secret Key from Pokémon Mansion (-10)
+    ( -10,  0x08): "Stock up at Cinnabar Island Poke Mart (Hyper Potions, Revives, Antidotes) before entering — Pokémon Mansion has no shop. Then enter the Mansion (the ruined building in north Cinnabar Island) and navigate to the basement.",
+    ( -10,  0xA5): "Explore Pokémon Mansion 1F — find the stairs to upper floors and down to B1F.",
+    ( -10,  0xD6): "Continue through Pokémon Mansion 2F.",
+    ( -10,  0xD7): "Continue through Pokémon Mansion 3F — find the stairs down to B1F.",
+    ( -10,  0xD8): "You're in Pokémon Mansion B1F — find the Secret Key on the ground.",
     # Beat Blaine (0x299)
     (0x299, 0x08): "Enter Cinnabar Gym (unlocked with the Secret Key) and defeat Blaine.",
     (0x299, 0xA6): "Answer the quiz questions (or fight skipped trainers) and defeat Blaine.",
@@ -321,18 +321,18 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (0x051, 0x01): "Enter Viridian Gym (north Viridian City — now open) and defeat Giovanni.",
     (0x051, 0x2D): "Navigate the spinning tiles in Viridian Gym and defeat Giovanni to earn the Earth Badge.",
     # Reached Victory Road (-11)
-    ( -11,  0x01): "Head WEST from Viridian City to Route 22, then NORTH toward the Pokemon League.",
-    ( -11,  0x21): "Continue NORTH through Route 22 to the Pokemon League gatehouse.",
+    ( -11,  0x01): "Head WEST from Viridian City to Route 22, then NORTH toward the Pokémon League.",
+    ( -11,  0x21): "Continue NORTH through Route 22 to the Pokémon League gatehouse.",
     ( -11,  0x22): "Head NORTH through Route 23 — badge checkers verify all 8 badges at each gate.",
     # Through Victory Road (-12)
     ( -12,  0x22): "Last chance to stock up — buy Full Restores, Hyper Potions, and Revives from Viridian City before entering Victory Road (no shops inside). Then enter the cave at the north end of Route 23.",
     ( -12,  0x6C): "Navigate Victory Road 1F — use HM04 Strength to push boulders blocking the path.",
     ( -12,  0xC2): "Continue through Victory Road 2F.",
     ( -12,  0xC6): "Continue through Victory Road 3F to the exit.",
-    ( -12,  0x09): "You've reached Indigo Plateau! Enter the Pokemon League building to face the Elite Four.",
+    ( -12,  0x09): "You've reached Indigo Plateau! Enter the Pokémon League building to face the Elite Four.",
     # Beat Lance / Elite Four (0x8FE)
-    (0x8FE, 0x09): "Heal at the Pokemon Center, then buy Full Restores, Max Potions, and Revives from the Indigo Plateau Mart before entering the Pokemon League to face the Elite Four.",
-    (0x8FE, 0xAE): "Heal at the Pokemon Center, then face: Lorelei (Ice), Bruno (Fighting), Agatha (Ghost), Lance (Dragon).",
+    (0x8FE, 0x09): "Heal at the Pokémon Center, then buy Full Restores, Max Potions, and Revives from the Indigo Plateau Mart before entering the Pokémon League to face the Elite Four.",
+    (0x8FE, 0xAE): "Heal at the Pokémon Center, then face: Lorelei (Ice), Bruno (Fighting), Agatha (Ghost), Lance (Dragon).",
 }
 
 

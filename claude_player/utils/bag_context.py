@@ -1,4 +1,4 @@
-"""Pokemon Red bag/inventory context reader.
+"""Pokémon Red bag/inventory context reader.
 
 Reads bag RAM to give the agent awareness of its items, money, and badges.
 Enables smart decisions like knowing it has healing items, which HMs are
@@ -179,7 +179,7 @@ def assess_inventory(
 
     # No Poke Balls warning (early game)
     if pokeballs == 0 and badge_count < 2:
-        warnings.append("No Poke Balls — buy some to catch Pokemon")
+        warnings.append("No Poke Balls — buy some to catch Pokémon")
 
     return {
         "key_items": key_items,

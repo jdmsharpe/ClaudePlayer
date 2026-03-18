@@ -37,7 +37,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
     # Register set_strategic_goal tool
     @registry.register(
         name="set_strategic_goal",
-        description="Set the high-level strategic goal (milestone objective). Auto-goal normally handles this from story flags. Only use to override with a specific mission like 'heal at Pokemon Center' or 'buy Potions at Mart'. Clears any tactical override so map-based hints resume.",
+        description="Set the high-level strategic goal (milestone objective). Auto-goal normally handles this from story flags. Only use to override with a specific mission like 'heal at Pokémon Center' or 'buy Potions at Mart'. Clears any tactical override so map-based hints resume.",
         input_schema={
             "type": "object",
             "properties": {
@@ -223,7 +223,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             # In fight submenu — B to back out, then RUN
             sequence = f"B {run_tail}"
         elif submenu == "pkmn":
-            # In Pokemon submenu — B B to back out, then RUN
+            # In Pokémon submenu — B B to back out, then RUN
             sequence = f"B B {run_tail}"
         else:
             # Intro text, text overlay, or unknown state.

@@ -1,4 +1,4 @@
-"""Pokemon Red map data: ID -> name mapping.
+"""Pokémon Red map data: ID -> name mapping.
 
 Complete mapping verified against:
 https://github.com/pret/pokered/blob/master/constants/map_constants.asm
@@ -55,7 +55,7 @@ MAP_NAMES: Dict[int, str] = {
     0x27: "Blue's House",
     0x28: "Oak's Lab",
     # Viridian City buildings
-    0x29: "Pokemon Center (Viridian)",
+    0x29: "Pokémon Center (Viridian)",
     0x2A: "Viridian Mart",
     0x2B: "Viridian School House",
     0x2C: "Viridian Nickname House",
@@ -75,7 +75,7 @@ MAP_NAMES: Dict[int, str] = {
     0x37: "Pewter Nidoran House",
     0x38: "Pewter Mart",
     0x39: "Pewter Speech House",
-    0x3A: "Pokemon Center (Pewter)",
+    0x3A: "Pokémon Center (Pewter)",
     # Mt. Moon
     0x3B: "Mt. Moon 1F",
     0x3C: "Mt. Moon B1F",
@@ -83,12 +83,12 @@ MAP_NAMES: Dict[int, str] = {
     # Cerulean City buildings
     0x3E: "Cerulean Trashed House",
     0x3F: "Cerulean Trade House",
-    0x40: "Pokemon Center (Cerulean)",
+    0x40: "Pokémon Center (Cerulean)",
     0x41: "Cerulean Gym",
     0x42: "Bike Shop",
     0x43: "Cerulean Mart",
     # Route 4
-    0x44: "Pokemon Center (Mt. Moon)",
+    0x44: "Pokémon Center (Mt. Moon)",
     0x45: "Cerulean Trashed House (Copy)",
     # Route 5
     0x46: "Route 5 Gate",
@@ -104,7 +104,7 @@ MAP_NAMES: Dict[int, str] = {
     0x4F: "Route 8 Gate",
     0x50: "Underground Path (Route 8)",
     # Rock Tunnel / Power Plant
-    0x51: "Pokemon Center (Rock Tunnel)",
+    0x51: "Pokémon Center (Rock Tunnel)",
     0x52: "Rock Tunnel 1F",
     0x53: "Power Plant",
     # Route 11
@@ -116,8 +116,8 @@ MAP_NAMES: Dict[int, str] = {
     # Bill's House
     0x58: "Bill's House",
     # Vermilion City buildings
-    0x59: "Pokemon Center (Vermilion)",
-    0x5A: "Pokemon Fan Club",
+    0x59: "Pokémon Center (Vermilion)",
+    0x5A: "Pokémon Fan Club",
     0x5B: "Vermilion Mart",
     0x5C: "Vermilion Gym",
     0x5D: "Vermilion Pidgey House",
@@ -135,7 +135,7 @@ MAP_NAMES: Dict[int, str] = {
     0x68: "S.S. Anne B1F Rooms",
     # Victory Road 1F
     0x6C: "Victory Road 1F",
-    # Pokemon League
+    # Pokémon League
     0x71: "Lance's Room",
     0x76: "Hall of Fame",
     # Underground Paths
@@ -154,7 +154,7 @@ MAP_NAMES: Dict[int, str] = {
     0x82: "Celadon Mansion 3F",
     0x83: "Celadon Mansion Roof",
     0x84: "Celadon Mansion Roof House",
-    0x85: "Pokemon Center (Celadon)",
+    0x85: "Pokémon Center (Celadon)",
     0x86: "Celadon Gym",
     0x87: "Game Corner",
     0x88: "Celadon Mart 5F",
@@ -163,22 +163,22 @@ MAP_NAMES: Dict[int, str] = {
     0x8B: "Celadon Chief House",
     0x8C: "Celadon Hotel",
     # Lavender Town buildings
-    0x8D: "Pokemon Center (Lavender)",
-    # Pokemon Tower
-    0x8E: "Pokemon Tower 1F",
-    0x8F: "Pokemon Tower 2F",
-    0x90: "Pokemon Tower 3F",
-    0x91: "Pokemon Tower 4F",
-    0x92: "Pokemon Tower 5F",
-    0x93: "Pokemon Tower 6F",
-    0x94: "Pokemon Tower 7F",
+    0x8D: "Pokémon Center (Lavender)",
+    # Pokémon Tower
+    0x8E: "Pokémon Tower 1F",
+    0x8F: "Pokémon Tower 2F",
+    0x90: "Pokémon Tower 3F",
+    0x91: "Pokémon Tower 4F",
+    0x92: "Pokémon Tower 5F",
+    0x93: "Pokémon Tower 6F",
+    0x94: "Pokémon Tower 7F",
     0x95: "Mr. Fuji's House",
     0x96: "Lavender Mart",
     0x97: "Lavender Cubone House",
     # Fuchsia City buildings
     0x98: "Fuchsia Mart",
     0x99: "Fuchsia Bill's Grandpa House",
-    0x9A: "Pokemon Center (Fuchsia)",
+    0x9A: "Pokémon Center (Fuchsia)",
     0x9B: "Warden's House",
     0x9C: "Safari Zone Gate",
     0x9D: "Fuchsia Gym",
@@ -191,15 +191,15 @@ MAP_NAMES: Dict[int, str] = {
     # Vermilion / Fuchsia extras
     0xA3: "Vermilion Old Rod House",
     0xA4: "Fuchsia Good Rod House",
-    # Pokemon Mansion
-    0xA5: "Pokemon Mansion 1F",
+    # Pokémon Mansion
+    0xA5: "Pokémon Mansion 1F",
     # Cinnabar Island buildings
     0xA6: "Cinnabar Gym",
     0xA7: "Cinnabar Lab",
     0xA8: "Cinnabar Lab Trade Room",
     0xA9: "Cinnabar Lab Metronome Room",
     0xAA: "Cinnabar Lab Fossil Room",
-    0xAB: "Pokemon Center (Cinnabar)",
+    0xAB: "Pokémon Center (Cinnabar)",
     0xAC: "Cinnabar Mart",
     # Indigo Plateau
     0xAE: "Indigo Plateau Lobby",
@@ -211,7 +211,7 @@ MAP_NAMES: Dict[int, str] = {
     0xB3: "Saffron Pidgey House",
     0xB4: "Saffron Mart",
     0xB5: "Silph Co. 1F",
-    0xB6: "Pokemon Center (Saffron)",
+    0xB6: "Pokémon Center (Saffron)",
     0xB7: "Mr. Psychic's House",
     # Route gates
     0xB8: "Route 15 Gate 1F",
@@ -248,10 +248,10 @@ MAP_NAMES: Dict[int, str] = {
     0xD3: "Silph Co. 6F",
     0xD4: "Silph Co. 7F",
     0xD5: "Silph Co. 8F",
-    # Pokemon Mansion upper floors
-    0xD6: "Pokemon Mansion 2F",
-    0xD7: "Pokemon Mansion 3F",
-    0xD8: "Pokemon Mansion B1F",
+    # Pokémon Mansion upper floors
+    0xD6: "Pokémon Mansion 2F",
+    0xD7: "Pokémon Mansion 3F",
+    0xD8: "Pokémon Mansion B1F",
     # Safari Zone
     0xD9: "Safari Zone East",
     0xDA: "Safari Zone North",
@@ -279,7 +279,7 @@ MAP_NAMES: Dict[int, str] = {
     # Trade / Battle
     0xEF: "Trade Center",
     0xF0: "Colosseum",
-    # Pokemon League rooms
+    # Pokémon League rooms
     0xF5: "Lorelei's Room",
     0xF6: "Bruno's Room",
     0xF7: "Agatha's Room",

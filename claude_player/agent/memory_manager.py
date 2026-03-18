@@ -11,7 +11,7 @@ MEMORY_MAX_LINES = 80
 MEMORY_WARN_LINES = 60
 
 MEMORY_SYSTEM_PROMPT = """\
-You maintain a concise MEMORY file for a Pokemon Red AI agent. The agent reads this \
+You maintain a concise MEMORY file for a Pokémon Red AI agent. The agent reads this \
 file via a tool call, so every line costs a turn — keep it SHORT.
 
 Your job: read the current memory and recent gameplay, then produce an UPDATED file.
@@ -20,7 +20,7 @@ HARD LIMIT: 80 lines max. Aim for 40-60 lines.
 
 Sections (use exactly these):
 ## STATUS — 2-3 lines: milestone progress (from AUTHORITATIVE data), current location, immediate goal
-## PARTY — 1 line per Pokemon: name, level, type, key moves. No HP (read from RAM live)
+## PARTY — 1 line per Pokémon: name, level, type, key moves. No HP (read from RAM live)
 ## INVENTORY — 1-2 lines: badges, money, key items only
 ## MAP KNOWLEDGE — Routes discovered, verified paths, dead ends. One line per location. Drop locations no longer relevant to current goal
 ## STRATEGY — 2-5 lines: current plan, what to try next, mistakes to avoid RIGHT NOW

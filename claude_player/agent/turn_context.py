@@ -7,6 +7,7 @@ a TurnContextBuilder once in __init__ and calls build() each turn.
 
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -43,6 +44,9 @@ class TurnContextBuilder:
         self._last_bag_snapshot: Optional[tuple] = None
         self._last_bag_inject_turn: int = 0
         self._bag_refresh_interval = bag_refresh_interval
+
+        # Last NAV button sequence (e.g. "L64 U16") for fallback auto-execution
+        self.last_nav_buttons: Optional[str] = None
 
     def build(
         self,
@@ -197,6 +201,9 @@ class TurnContextBuilder:
                 npc_positions=spatial_data.get("npc_abs_positions"),
                 strategic_goal_text=strategic,
             )
+            # Extract button sequence from NAV hint for fallback auto-execution
+            nav_match = re.search(r'NAV\(map\): .+?: (.+?) —', spatial_text)
+            self.last_nav_buttons = nav_match.group(1).strip() if nav_match else None
         return spatial_text
 
     def _maybe_inject_party(

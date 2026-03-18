@@ -674,15 +674,24 @@ class WorldMap:
         _exclude = exclude_maps or set()
 
         queue: deque = deque([(src_map, [src_map])])
-        visited: Set[int] = {src_map} | _exclude
+        visited: Set[int] = {src_map}
         while queue:
             current, path = queue.popleft()
             for neighbor in self.map_graph.get(current, set()):
+                if neighbor in visited:
+                    continue
+                # Excluded maps are only blocked as the first hop
+                # (direct neighbor of src).  A* on the current map
+                # couldn't reach their warps, but they may be
+                # reachable through intermediate maps (e.g. Route 4
+                # can't A* east to Cerulean due to ledges, but
+                # Route 4 → Mt. Moon → … → Cerulean works).
+                if neighbor in _exclude and len(path) == 1:
+                    continue
                 if neighbor == dst_map:
                     return path + [neighbor]
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append((neighbor, path + [neighbor]))
+                visited.add(neighbor)
+                queue.append((neighbor, path + [neighbor]))
         return None
 
     def next_map_toward(

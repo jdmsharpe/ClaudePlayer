@@ -1215,8 +1215,21 @@ class GameAgent:
                     tools
                 )
 
-                # Get assistant response and add to chat history
-                assistant_content = message.content
+                # Get assistant response and add to chat history.
+                # Strip thinking blocks to prevent input token explosion —
+                # each 8k thinking block stays in history and gets re-billed
+                # on every subsequent turn.  Replace with empty stubs to
+                # maintain the API schema (thinking blocks must be present
+                # but can have empty content).
+                assistant_content = []
+                for block in message.content:
+                    if getattr(block, 'type', None) == 'thinking':
+                        assistant_content.append({
+                            "type": "thinking",
+                            "thinking": "",
+                        })
+                    else:
+                        assistant_content.append(block)
                 assistant_message = {"role": "assistant", "content": assistant_content}
                 self.chat_history.append(assistant_message)
                 self.game_state.add_to_complete_history(assistant_message)

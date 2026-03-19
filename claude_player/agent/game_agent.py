@@ -404,6 +404,7 @@ class GameAgent:
                         self._world_map.record_warp_transition(
                             prev_map_id, last_pos_on_old_map,
                             new_map_id, self.game_state.turn_count,
+                            arrival_pos=current_pos,
                         )
                     self._visited_positions.clear()
                     # Evict stale tactical goal and resume auto-derivation for new map

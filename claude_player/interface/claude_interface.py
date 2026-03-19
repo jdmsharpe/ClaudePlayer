@@ -77,10 +77,10 @@ FAINT FLOW: A to advance → "Use next POKEMON?" → A=YES, D/U to pick mon with
 RUN: In wild battles, use run_from_battle tool — it handles menu navigation, text dismissal, and auto-retry in one call. Against trainers, RUN always fails — you must fight.
 TYPE MATCHUPS: Water beats Fire/Rock/Ground. Electric beats Water/Flying. Fire beats Grass/Bug/Ice. Grass beats Water/Rock/Ground. Use super-effective moves when possible — they deal 2x damage. Avoid not-very-effective moves (0.5x). Normal moves don't affect Ghost types.
 HEALING: Use potions (ITEM menu: D to POTION, A, pick Pokémon, A) when HP is below 30%. Visit Pokémon Centers (enter building, walk to counter, talk to nurse) whenever HP drops below 50% and one is nearby. The HEAL line in context means healing is urgent.
-WILD ENCOUNTERS: In caves and grass, wild Pokémon appear randomly. RUN from encounters when your team is weak or you're trying to navigate. Only fight if you need XP or are trying to catch something.
+WILD ENCOUNTERS: In caves and grass, wild Pokémon appear randomly. FIGHT wild encounters when the TIP says TRAIN (your team needs XP). RUN only when HP is below 30% or your lead has no PP for damage moves. When grinding XP, use the overworld START → POKEMON menu to put an underleveled Pokémon in the lead slot — it gets full XP even if you switch to a stronger mon on turn 1 of battle.
 TRAINERS: Trainer battles are mandatory when you walk into their line of sight. You cannot run. Focus on type advantages and use your strongest moves. Switch Pokémon if the current one is at a type disadvantage.
 STAT MOVES: Moves like GROWL, LEER, TAIL WHIP lower enemy stats but deal no damage. Only use them if you plan to stay in the fight for multiple turns and need the edge. In most wild battles, just attack or run.
-LEVEL ADVANTAGE: If your Pokémon is 5+ levels above the opponent, most attacks will KO in 1-2 hits. If 5+ levels below, consider switching or running. Check the level display in battle context to judge.
+LEVEL ADVANTAGE: If your Pokémon is 5+ levels above the opponent, most attacks will KO in 1-2 hits. If 5+ levels below, switch to a stronger party member or run. Check the level display in battle context to judge.
 POKEMON CENTERS: Free full heal for your entire party. Always heal before gym battles and after dungeons. The nurse dialogue requires A to start, A to confirm, then A to dismiss — three A presses total.
 </battle_context>
 <menu_context>

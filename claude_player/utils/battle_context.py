@@ -112,6 +112,7 @@ _ADDR_ENEMY_EVA_MOD  = 0xCD33
 # its own counter at _ADDR_NUM_SAFARI_BALLS, not the bag).
 _BATTLE_BALL_IDS            = {0x01, 0x02, 0x03, 0x04}  # Master, Ultra, Great, Poke
 _PARTY_HP_OFFSET     = 1       # HP is 2-byte big-endian at offset 1
+_PARTY_LEVEL_OFFSET  = 0x21   # 1 byte — actual level
 
 # ---------------------------------------------------------------------------
 # Gen 1 type system
@@ -474,6 +475,18 @@ def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
     return alive
 
 
+def _read_party_levels(pyboy: PyBoy, party_count: int) -> List[int]:
+    """Read levels of all alive party members for leveling decisions."""
+    levels = []
+    for i in range(min(party_count, 6)):
+        base = ADDR_PARTY_BASE + i * PARTY_MON_SIZE
+        hp = (pyboy.memory[base + _PARTY_HP_OFFSET] << 8) | pyboy.memory[base + _PARTY_HP_OFFSET + 1]
+        if hp > 0:
+            level = pyboy.memory[base + _PARTY_LEVEL_OFFSET]
+            levels.append(level)
+    return levels
+
+
 def _count_pokeballs(pyboy: PyBoy) -> int:
     """Count total Poke Balls in bag (all ball types)."""
     count = pyboy.memory[ADDR_NUM_BAG_ITEMS]
@@ -655,6 +668,7 @@ def _generate_battle_tip(
     enemy_owned: bool = False,
     battle_items: Optional[Dict[str, Any]] = None,
     stat_mods: Optional[Dict[str, Dict[str, int]]] = None,
+    min_party_level: Optional[int] = None,
 ) -> Optional[str]:
     """Generate a short tactical recommendation.
 
@@ -911,7 +925,13 @@ def _generate_battle_tip(
         elif estatus == "BRN":
             estatus_note = " [enemy BRN — physical moves halved + chip damage]"
 
-        return (f"Use {best_move['name']} ({best_move['power']}pwr, {cat}{stab_tag}{eff_tag}{burn_tag})"
+        # Annotate with TRAIN tag when party has underleveled members
+        train_tag = ""
+        if (battle_type == 1 and min_party_level is not None
+                and min_party_level < enemy.get("level", 99)):
+            train_tag = f"TRAIN: Team needs XP (min Lv{min_party_level} vs enemy Lv{enemy['level']}) — FIGHT! "
+
+        return (f"{train_tag}Use {best_move['name']} ({best_move['power']}pwr, {cat}{stab_tag}{eff_tag}{burn_tag})"
                 f"{spd_note}{estatus_note} — send: {compound}")
 
     if menu_type in ("main", "fight") and not damage_moves:
@@ -1016,6 +1036,7 @@ def _format_battle_text(
     whose_turn: int = 0,
     player_move_chosen: Optional[Dict[str, Any]] = None,
     enemy_move_chosen: Optional[Dict[str, Any]] = None,
+    min_party_level: Optional[int] = None,
 ) -> str:
     """Assemble the battle context text block."""
     if safari_state:
@@ -1168,7 +1189,8 @@ def _format_battle_text(
                                     fight_cursor=fight_cursor,
                                     enemy_owned=enemy_owned,
                                     battle_items=battle_items,
-                                    stat_mods=stat_mods)
+                                    stat_mods=stat_mods,
+                                    min_party_level=min_party_level)
     if tip:
         lines.append(f"TIP: {tip}")
 
@@ -1251,6 +1273,8 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
         battle_items["best_ball"] = _find_best_ball(pyboy)  # (name, slot) or None
         party_count = min(pyboy.memory[ADDR_PARTY_COUNT], 6)
         alive_count = _count_alive_party(pyboy, party_count)
+        party_levels = _read_party_levels(pyboy, party_count)
+        min_plevel = min(party_levels) if party_levels else None
         enemy_owned = _is_dex_owned(pyboy, enemy["species_id"])
 
         # Determine best move slot
@@ -1278,7 +1302,8 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
                                    turn_count=turn_count,
                                    whose_turn=whose_turn,
                                    player_move_chosen=player_move_chosen,
-                                   enemy_move_chosen=enemy_move_chosen)
+                                   enemy_move_chosen=enemy_move_chosen,
+                                   min_party_level=min_plevel)
 
         # Log rare Pokemon encounters prominently for debugging
         if battle_type == 1 and enemy["name"] in RARE_POKEMON and not enemy_owned:

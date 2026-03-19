@@ -114,18 +114,24 @@ class WorldMap:
         player_pos: Tuple[int, int],
         to_map: int,
         turn: int,
+        arrival_pos: Optional[Tuple[int, int]] = None,
     ) -> None:
         """Record a warp/map transition and detect ping-pong cycling.
 
         Identifies the closest warp on from_map that leads to to_map,
         records the transition, and marks warps as exhausted when
-        back-and-forth cycling is detected.
+        back-and-forth cycling is detected.  Also auto-exhausts the
+        arrival warp on the new map so NAV doesn't route back to it.
 
         Args:
             from_map: Map ID the player just left.
             player_pos: Player's last known position on from_map.
             to_map: Map ID the player just arrived on.
             turn: Current turn number (for decay tracking).
+            arrival_pos: Player's position on the new map (to_map).
+                If provided, the closest warp on to_map leading back
+                to from_map is auto-exhausted to prevent immediate
+                backtracking.
         """
         # Find the warp on from_map closest to player_pos that leads to to_map
         warp_map = self.warps.get(from_map, {})
@@ -171,6 +177,33 @@ class WorldMap:
                 f"exhausted {len(a_warps)} warps on 0x{a:02X}, "
                 f"{len(b_warps)} warps on 0x{b:02X}"
             )
+            # Invalidate route cache for both maps to prevent NAV
+            # from reusing a cached path to the wrong warp
+            for mid in (a, b):
+                if mid in self.route_cache:
+                    logger.info(f"ROUTE CACHE INVALIDATED: map 0x{mid:02X} (cycling)")
+                    del self.route_cache[mid]
+
+        # Auto-exhaust the arrival warp on the new map so NAV doesn't
+        # immediately route back through the door we just entered from.
+        if arrival_pos is not None and from_map != to_map:
+            arrival_warp_map = self.warps.get(to_map, {})
+            from_map_name = self.map_names.get(from_map, "")
+            best_arrival_warp = None
+            best_arrival_dist = float("inf")
+            for warp_pos, dest_name in arrival_warp_map.items():
+                if from_map_name and from_map_name.lower() not in dest_name.lower():
+                    continue
+                dist = abs(warp_pos[0] - arrival_pos[0]) + abs(warp_pos[1] - arrival_pos[1])
+                if dist < best_arrival_dist:
+                    best_arrival_dist = dist
+                    best_arrival_warp = warp_pos
+            if best_arrival_warp is not None and best_arrival_dist <= 2:
+                self._exhausted_warps.setdefault(to_map, {})[best_arrival_warp] = turn
+                logger.info(
+                    f"ARRIVAL WARP EXHAUSTED: map 0x{to_map:02X} "
+                    f"warp={best_arrival_warp} (entry from 0x{from_map:02X})"
+                )
 
     def get_active_exhausted_warps(
         self,

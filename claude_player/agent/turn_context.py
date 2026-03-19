@@ -103,6 +103,7 @@ class TurnContextBuilder:
         elif spatial_data and spatial_data["text"]:
             spatial_text = self._build_spatial_text(
                 spatial_data, world_map, game_state, last_map_name,
+                stuck_count=stuck_count,
             )
             user_content.append({"type": "text", "text": spatial_text})
 
@@ -168,6 +169,7 @@ class TurnContextBuilder:
         world_map: WorldMap,
         game_state: Any,
         last_map_name: Optional[str],
+        stuck_count: int = 0,
     ) -> str:
         """Build spatial context text with world map, goals, and NAV hint."""
         spatial_text = spatial_data["text"]
@@ -198,6 +200,8 @@ class TurnContextBuilder:
             # Use tactical goal for NAV routing (more precise map match),
             # with strategic goal as fallback for map-graph BFS.
             nav_goal = tactical or strategic or ""
+            # Escalate pathfinding variance when stuck: 0→0, 3→1, 5→2, 7+→3
+            nav_variance = min(3, max(0, (stuck_count - 1) // 2))
             spatial_text = compute_nav(
                 world_map, map_id, player_pos,
                 goal_text=nav_goal,
@@ -205,6 +209,7 @@ class TurnContextBuilder:
                 npc_positions=spatial_data.get("npc_abs_positions"),
                 strategic_goal_text=strategic,
                 current_turn=game_state.turn_count,
+                variance=nav_variance,
             )
             # Extract button sequence from NAV hint for fallback auto-execution
             nav_match = re.search(r'NAV\(map\): .+?: (.+?) —', spatial_text)

@@ -375,6 +375,8 @@ class GameAgent:
                 self._stuck_count = 0
             elif self._previous_player_pos is not None and current_pos == self._previous_player_pos:
                 self._stuck_count += 1
+                if self._stuck_count >= 3:
+                    self._world_map.discard_pending_route()
             elif current_pos is not None:
                 self._stuck_count = 0
             self._previous_player_pos = current_pos
@@ -391,6 +393,9 @@ class GameAgent:
                         + abs(current_pos[1] - self._visited_positions[-1][1]) > 10)
                 )
                 if map_changed:
+                    # Confirm pending route cache on successful warp
+                    if prev_map_id is not None:
+                        self._world_map.confirm_route(prev_map_id)
                     # Record warp transition for ping-pong detection
                     if (prev_map_id is not None
                             and new_map_id is not None

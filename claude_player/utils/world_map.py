@@ -10,6 +10,7 @@ import heapq
 import json
 import logging
 import os
+import random
 from collections import deque
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
@@ -54,6 +55,13 @@ class WorldMap:
         self._warp_transitions: deque = deque(maxlen=20)
         # map_id → {(warp_x, warp_y): turn_exhausted} — soft-deprioritized warps
         self._exhausted_warps: Dict[int, Dict[Tuple[int, int], int]] = {}
+        # Verified route cache: map_id → {dest_name → [(x,y), ...]}
+        # Routes cached when A* path successfully leads to a warp (confirmed
+        # by map transition).  Used as a shortcut on future visits.
+        self.route_cache: Dict[int, Dict[str, List[Tuple[int, int]]]] = {}
+        # Pending route: set when NAV computes a path to a warp, cleared on
+        # map transition (success → cache) or on failed movement (discard).
+        self._pending_route: Optional[Tuple[int, str, List[Tuple[int, int]]]] = None  # (map_id, dest_name, path)
 
     def update_graph(
         self,
@@ -186,6 +194,93 @@ class WorldMap:
             if current_turn - exhaust_turn < _WARP_EXHAUST_DECAY_TURNS
         }
 
+    def set_pending_route(
+        self,
+        map_id: int,
+        dest_name: str,
+        path: List[Tuple[int, int]],
+    ) -> None:
+        """Record a NAV path as pending verification.
+
+        Called when find_nav_hint computes a path to a named warp.
+        If the player subsequently transitions to a new map, the route
+        is confirmed and cached.  Only paths ≥5 tiles are worth caching.
+        """
+        if len(path) < 5:
+            return
+        self._pending_route = (map_id, dest_name, path)
+
+    def confirm_route(self, from_map: int) -> None:
+        """Confirm and cache the pending route after a successful map transition.
+
+        Called when the player warps/transitions to a new map.  If the
+        pending route's map_id matches from_map, the route is cached
+        as verified.
+        """
+        if self._pending_route is None:
+            return
+        p_map_id, dest_name, path = self._pending_route
+        self._pending_route = None
+        if p_map_id != from_map:
+            return
+        # Cache the route (overwrite any previous route to same dest)
+        if p_map_id not in self.route_cache:
+            self.route_cache[p_map_id] = {}
+        self.route_cache[p_map_id][dest_name] = path
+        logger.info(
+            f"ROUTE CACHED: map 0x{p_map_id:02X} → {dest_name} "
+            f"({len(path)} tiles)"
+        )
+
+    def discard_pending_route(self) -> None:
+        """Discard the pending route (e.g. player got stuck, didn't reach warp)."""
+        self._pending_route = None
+
+    def get_cached_route(
+        self,
+        map_id: int,
+        dest_name: str,
+        player_pos: Tuple[int, int],
+        max_splice_dist: int = 3,
+    ) -> Optional[List[Tuple[int, int]]]:
+        """Retrieve a cached route, splicing from the nearest point to player.
+
+        Args:
+            map_id: Current map ID.
+            dest_name: Warp destination name to look up.
+            player_pos: Current player position.
+            max_splice_dist: Max Manhattan distance from player to any point
+                on the cached route for it to be usable.
+
+        Returns:
+            Sub-path from the nearest cached waypoint to the destination,
+            or None if no cache hit or player is too far from the route.
+        """
+        routes = self.route_cache.get(map_id, {})
+        if dest_name not in routes:
+            return None
+        cached_path = routes[dest_name]
+        # Find the closest point on the cached path to the player
+        best_idx = None
+        best_dist = float("inf")
+        for i, (cx, cy) in enumerate(cached_path):
+            dist = abs(cx - player_pos[0]) + abs(cy - player_pos[1])
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = i
+        if best_idx is None or best_dist > max_splice_dist:
+            return None
+        # Return from the nearest point onward
+        spliced = cached_path[best_idx:]
+        if len(spliced) < 2:
+            return None
+        logger.info(
+            f"ROUTE CACHE HIT: map 0x{map_id:02X} → {dest_name} "
+            f"spliced from idx {best_idx} ({len(spliced)} tiles remaining, "
+            f"player dist={best_dist})"
+        )
+        return spliced
+
     def update(
         self,
         map_id: int,
@@ -282,6 +377,14 @@ class WorldMap:
                 str(mid): name
                 for mid, name in self.map_names.items()
             },
+            "route_cache": {
+                str(mid): {
+                    dest: [[x, y] for x, y in path]
+                    for dest, path in routes.items()
+                }
+                for mid, routes in self.route_cache.items()
+                if routes
+            },
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -321,6 +424,12 @@ class WorldMap:
                 mid = int(mid_str)
                 if mid not in self.map_names:
                     self.map_names[mid] = name
+            for mid_str, routes in data.get("route_cache", {}).items():
+                mid = int(mid_str)
+                if mid not in self.route_cache:
+                    self.route_cache[mid] = {}
+                for dest, coords in routes.items():
+                    self.route_cache[mid][dest] = [tuple(c) for c in coords]
             logger.info(
                 f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles "
                 f"across {len(self.tiles)} maps, {len(self.map_graph)} graph nodes"
@@ -403,6 +512,7 @@ class WorldMap:
         goal: Tuple[int, int],
         max_steps: int = _MAX_PATH_STEPS,
         blocked: Optional[Set[Tuple[int, int]]] = None,
+        variance: int = 0,
     ) -> Optional[List[Tuple[int, int]]]:
         """A* pathfinding on the accumulated tile map.
 
@@ -416,6 +526,9 @@ class WorldMap:
             goal: (x, y) absolute map position of target.
             max_steps: Truncate path after this many steps (avoids huge outputs).
             blocked: Extra positions to treat as impassable (e.g. NPC tiles).
+            variance: 0 = deterministic optimal path. 1-3 = increasing random
+                cost jitter per tile, causing A* to explore alternate routes.
+                Useful when the optimal path is repeatedly failing.
 
         Returns:
             List of (x, y) positions from start to goal (or truncated), or None.
@@ -435,6 +548,16 @@ class WorldMap:
         # explored neighbours regardless.
         if goal not in tile_map and goal not in warp_map:
             return None
+
+        # Pre-compute per-tile random costs for variance mode.
+        # Using a dict seeded once per call ensures consistent costs within
+        # a single A* expansion (admissibility preserved per-call) while
+        # producing different paths across calls.
+        _tile_jitter: Dict[Tuple[int, int], int] = {}
+        if variance > 0:
+            jitter_max = variance * 2  # variance 1→2, 2→4, 3→6
+            for pos in tile_map:
+                _tile_jitter[pos] = random.randint(0, jitter_max)
 
         def _passable(x: int, y: int, dx: int, dy: int) -> bool:
             if (x, y) == goal or (x, y) == start:
@@ -492,7 +615,8 @@ class WorldMap:
                     continue
                 if not _passable(nx, ny, dx, dy):
                     continue
-                tentative_g = g_cur + 1
+                jitter = _tile_jitter.get((nx, ny), 0)
+                tentative_g = g_cur + 1 + jitter
                 if tentative_g < g_score.get((nx, ny), float("inf")):
                     g_score[(nx, ny)] = tentative_g
                     came_from[(nx, ny)] = current
@@ -624,6 +748,7 @@ class WorldMap:
         npc_positions: Optional[List[Tuple[int, int]]] = None,
         max_steps: int = _MAX_PATH_STEPS,
         current_turn: int = 0,
+        variance: int = 0,
     ) -> Optional[str]:
         """Find A* path from player to a known warp, or nearest frontier.
 
@@ -656,6 +781,25 @@ class WorldMap:
         # Exhausted warps: soft-deprioritize (try fresh warps first)
         exhausted = self.get_active_exhausted_warps(map_id, current_turn)
 
+        # ── Route cache check ──
+        # Before running A*, check if we have a verified route to the
+        # preferred destination.  Only use when not in variance mode
+        # (variance means the optimal path is failing, so don't reuse it).
+        if preferred_dest and variance == 0:
+            cached = self.get_cached_route(map_id, preferred_dest, player_pos)
+            if cached:
+                # Verify the cached path is still walkable (no new NPCs blocking)
+                path_blocked = any(pos in npc_blocked for pos in cached)
+                if not path_blocked:
+                    self.set_pending_route(map_id, preferred_dest, cached)
+                    buttons = self._path_to_buttons(cached)
+                    if buttons:
+                        total_dist = len(cached) - 1
+                        return (
+                            f"NAV(map): to {preferred_dest} ({total_dist} tiles, cached): "
+                            f"{buttons} — re-evaluate after executing"
+                        )
+
         # Try warps first
         best_path: Optional[List[Tuple[int, int]]] = None
         best_name: Optional[str] = None
@@ -686,7 +830,7 @@ class WorldMap:
                     score = (warp_pos[0] - player_pos[0]) * dvx + (warp_pos[1] - player_pos[1]) * dvy
                     if score < 0:
                         continue  # warp is behind us relative to goal direction
-                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
+                path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked, variance=variance)
                 if path and len(path) < best_len:
                     best_path = path
                     best_name = dest_name
@@ -702,7 +846,7 @@ class WorldMap:
                         score = (warp_pos[0] - player_pos[0]) * dvx + (warp_pos[1] - player_pos[1]) * dvy
                         if score < 0:
                             continue
-                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked, variance=variance)
                     if path and len(path) < best_len:
                         best_path = path
                         best_name = dest_name
@@ -726,7 +870,7 @@ class WorldMap:
                         directional_warps.append((score, warp_pos, dest_name))
                 directional_warps.sort(reverse=True)
                 for _, warp_pos, dest_name in directional_warps:
-                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked, variance=variance)
                     if path:
                         best_path = path
                         best_name = dest_name
@@ -736,7 +880,7 @@ class WorldMap:
             # Fall back to any reachable warp when no preferred_dest given.
             if not best_path and not preferred_dest:
                 for warp_pos, dest_name in other_warps:
-                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked, variance=variance)
                     if path and len(path) < best_len:
                         best_path = path
                         best_name = dest_name
@@ -759,15 +903,56 @@ class WorldMap:
         if not best_path or not best_name:
             return None
 
+        # ── Ledge-aware truncation ──
+        # A path tile is "ledge-dangerous" if the player standing there
+        # could accidentally step onto an adjacent one-way ledge.  A ledge
+        # tile with allowed direction (dx, dy) can only be entered from
+        # position (ledge_x - dx, ledge_y - dy).  We only truncate when
+        # the path tile IS that launch position AND the path doesn't
+        # intentionally cross the ledge (i.e. the next step isn't the
+        # ledge tile itself — A* already validated that crossing).
+        ledge_cutoff = None
+        if tile_map and len(best_path) > 3:
+            for i, (px, py) in enumerate(best_path):
+                if i < 2:
+                    continue  # skip first 2 steps (too close to start)
+                for ox, oy in NEIGHBORS:
+                    adj_pos = (px + ox, py + oy)
+                    adj_ch = tile_map.get(adj_pos)
+                    if adj_ch not in LEDGE_ALLOWED_DIR:
+                        continue
+                    ldx, ldy = LEDGE_ALLOWED_DIR[adj_ch]
+                    # Is the player at the launch position for this ledge?
+                    if (ox, oy) != (ldx, ldy):
+                        continue  # ledge faces away — no danger
+                    # If path intentionally crosses this ledge, skip
+                    if i + 1 < len(best_path) and best_path[i + 1] == adj_pos:
+                        continue
+                    ledge_cutoff = max(2, i - 1)
+                    break
+                if ledge_cutoff is not None:
+                    break
+
         # Truncate for output
-        truncated = len(best_path) > max_steps + 1
-        display_path = best_path[: max_steps + 1] if truncated else best_path
+        effective_max = max_steps
+        if ledge_cutoff is not None and ledge_cutoff < effective_max:
+            effective_max = ledge_cutoff
+            logger.info(
+                f"NAV ledge truncation: path to {best_name} cut from "
+                f"{len(best_path)-1} to {effective_max} steps "
+                f"(ledge adjacent at step {ledge_cutoff+1})"
+            )
+        truncated = len(best_path) > effective_max + 1
+        display_path = best_path[: effective_max + 1] if truncated else best_path
         buttons = self._path_to_buttons(display_path)
         if not buttons:
             return None
 
         total_dist = best_len - 1  # steps, not nodes
-        suffix = f" (+{total_dist - max_steps} more)" if truncated else ""
+        suffix = f" (+{total_dist - effective_max} more)" if truncated else ""
+        # Record as pending route for verification on map transition
+        if best_name != "unexplored frontier":
+            self.set_pending_route(map_id, best_name, best_path)
         return (
             f"NAV(map): to {best_name} ({total_dist} tiles): "
             f"{buttons}{suffix} — re-evaluate after executing"

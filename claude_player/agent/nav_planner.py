@@ -114,6 +114,7 @@ def compute_nav(
     npc_positions: Optional[List] = None,
     strategic_goal_text: Optional[str] = None,
     current_turn: int = 0,
+    variance: int = 0,
 ) -> str:
     """Run the full NAV pipeline and return updated spatial_text.
 
@@ -183,6 +184,7 @@ def compute_nav(
                 dead_end_zones=dead_end_zones,
                 npc_positions=npc_positions,
                 current_turn=current_turn,
+                variance=variance,
             )
             if wm_nav:
                 logging.info(f"NAV result: {wm_nav}")
@@ -238,6 +240,7 @@ def compute_nav(
             dead_end_zones=dead_end_zones,
             npc_positions=npc_positions,
             current_turn=current_turn,
+            variance=variance,
         )
         if wm_nav:
             logging.info(f"NAV result: {wm_nav}")

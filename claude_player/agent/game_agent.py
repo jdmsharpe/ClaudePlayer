@@ -71,12 +71,18 @@ class GameAgent:
         # Initialize game components
         pyboy_kwargs = {}
 
-        # Apply GBC color palette if configured (requires CGB mode for DMG games)
+        # Apply GBC color palette (requires CGB mode for DMG games)
+        # "game" = enable CGB so the ROM's own per-map palettes take effect
+        # preset name = static palette override  |  None = DMG grayscale
         from claude_player.config.gbc_palettes import resolve_palette
-        palette = resolve_palette(getattr(self.config, 'GBC_COLOR_PALETTE', None))
-        if palette is not None:
+        palette_cfg = getattr(self.config, 'GBC_COLOR_PALETTE', None)
+        if palette_cfg and str(palette_cfg).lower() == 'game':
             pyboy_kwargs['cgb'] = True
-            pyboy_kwargs['cgb_color_palette'] = palette
+        else:
+            palette = resolve_palette(palette_cfg)
+            if palette is not None:
+                pyboy_kwargs['cgb'] = True
+                pyboy_kwargs['cgb_color_palette'] = palette
 
         self.pyboy = PyBoy(self.config.ROM_PATH, **pyboy_kwargs)
         self.pyboy.set_emulation_speed(target_speed=self.config.EMULATION_SPEED)

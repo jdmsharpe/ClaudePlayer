@@ -79,7 +79,8 @@ class TurnContextBuilder:
         user_content: List[Dict[str, Any]] = [screenshot]
 
         # ── Movement feedback from last turn ──
-        if last_action_feedback:
+        # Suppress during battle — position can't change, so "UNCHANGED" is noise
+        if last_action_feedback and not in_battle:
             user_content.append({"type": "text", "text": last_action_feedback})
 
         # Memory is now injected as a cached system prompt block (see game_agent.py)
@@ -200,6 +201,7 @@ class TurnContextBuilder:
                 spatial_text=spatial_text,
                 npc_positions=spatial_data.get("npc_abs_positions"),
                 strategic_goal_text=strategic,
+                current_turn=game_state.turn_count,
             )
             # Extract button sequence from NAV hint for fallback auto-execution
             nav_match = re.search(r'NAV\(map\): .+?: (.+?) —', spatial_text)

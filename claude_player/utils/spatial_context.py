@@ -340,9 +340,9 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
                 elif need_vram and tid == _WATER_TILE_VRAM:
                     row_out.append('=')
                 elif all(st in walkable_raw for st in wmap_subtiles[my][mx]):
-                    # All 4 sub-tiles must be walkable — prevents cave wall
-                    # metatiles with one coincidentally-walkable sub-tile from
-                    # being classified as floor.
+                    # All 4 sub-tiles must be walkable in the raw collision table.
+                    # Tiles missed here (like cave stairs) are caught by the
+                    # PyBoy collision cross-reference in _format_spatial_text.
                     row_out.append('.')
                 else:
                     row_out.append('#')
@@ -1140,11 +1140,22 @@ def _format_spatial_text(
 
     grid = []
     if terrain is not None:
-        # Terrain is walkability ground truth: _extract_terrain_data now uses
-        # the correct $8800 VRAM ID conversion, so it matches the game engine.
         grid = [row[:] for row in terrain]
         grid_height = len(grid)
         grid_width = len(grid[0]) if grid else 0
+        # Cross-reference with PyBoy collision: if terrain says '#' but
+        # PyBoy says any sub-tile is walkable, trust PyBoy — it emulates
+        # the game's actual collision logic and handles tiles (like cave
+        # stairs) whose sub-tile IDs aren't in the raw collision table.
+        if has_collision:
+            for y in range(min(grid_height, len(collision) // 2)):
+                row_w = min(grid_width, len(collision[0]) // 2) if collision else 0
+                for x in range(row_w):
+                    if grid[y][x] == '#' and any(
+                        collision[y * 2 + dy][x * 2 + dx] != 0
+                        for dy in range(2) for dx in range(2)
+                    ):
+                        grid[y][x] = '.'
     elif has_collision:
         for y in range(grid_height):
             row = []

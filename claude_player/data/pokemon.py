@@ -380,6 +380,59 @@ STATUS_CURE_ITEMS: Dict[int, Tuple[str, frozenset]] = {
     0x1A: ("Full Restore",frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
 }
 
+# ---------------------------------------------------------------------------
+# Rare / priority-catch Pokemon
+# ---------------------------------------------------------------------------
+# Species that the agent should always attempt to catch in wild encounters.
+# Based on low encounter rates, limited availability, or strong game utility.
+# Names must match POKEMON_NAMES values exactly (UPPER CASE).
+
+RARE_POKEMON: frozenset = frozenset({
+    # Low encounter rate in their areas
+    "CLEFAIRY",     # Mt. Moon ~6%
+    "JIGGLYPUFF",   # Route 3 ~10%
+    "PIKACHU",      # Viridian Forest ~5%
+    "ABRA",         # Teleports turn 1 — hard to catch
+    "CHANSEY",      # Safari Zone, extremely rare
+    "DRATINI",      # Safari Zone, rare
+    "DRAGONAIR",    # Safari Zone, very rare
+    "SCYTHER",      # Safari Zone (Red), rare
+    "PINSIR",       # Safari Zone (Blue), rare
+    "KANGASKHAN",   # Safari Zone, rare
+    "TAUROS",       # Safari Zone, rare
+    "LAPRAS",       # Gift only (Silph Co.), but flagged in case of edge cases
+    "SNORLAX",      # Only 2 in the game
+    "EEVEE",        # Gift only (Celadon Mansion)
+    "PORYGON",      # Game Corner prize only
+    "HITMONLEE",    # Gift only (Fighting Dojo)
+    "HITMONCHAN",   # Gift only (Fighting Dojo)
+    "MR.MIME",      # In-game trade only
+    "FARFETCH'D",   # In-game trade only
+    "LICKITUNG",    # Route 18 trade only (Red)
+    # Legendaries
+    "ARTICUNO",
+    "ZAPDOS",
+    "MOLTRES",
+    "MEWTWO",
+    "MEW",
+})
+
+# Move IDs that inflict sleep or paralysis — useful for catch strategies.
+# Sleep gives 2x catch rate bonus (best), paralysis gives 1.5x.
+SLEEP_MOVE_IDS: frozenset = frozenset({
+    0x2F,  # SING
+    0x4F,  # SLEEP POWDER
+    0x5F,  # HYPNOSIS
+    0x8E,  # LOVELY KISS
+    0x93,  # SPORE
+})
+
+PARALYZE_MOVE_IDS: frozenset = frozenset({
+    0x4E,  # STUN SPORE
+    0x56,  # THUNDER WAVE
+    0x89,  # GLARE
+})
+
 # Gen 1 character encoding (charmap.asm) — full charset for names and nicknames.
 # Covers A-Z, a-z, 0-9, plus special characters needed for Pokemon names
 # (e.g. FARFETCH'D apostrophe, PK/MN ligatures).

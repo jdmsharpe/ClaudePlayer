@@ -22,7 +22,8 @@ claude_player/
                   #   NAV planner (nav_planner.py), turn context builder (turn_context.py),
                   #   goal deriver (goal_deriver.py)
   config/         # TypedDict config schema, JSON loader with deep merge, GBC palettes
-  data/           # Static game data tables: pokemon.py (species, moves, types),
+  data/           # Static game data tables: pokemon.py (species, moves, types,
+                  #   RARE_POKEMON, SLEEP/PARALYZE_MOVE_IDS),
                   #   items.py (inventory, badges, HMs), maps.py (map ID → name)
   interface/      # Claude API: system prompt construction, streaming, prompt caching
   state/          # Mutable game state: two-tier goals (strategic + tactical), turn count, story progress
@@ -104,7 +105,8 @@ All RAM addresses reference the pret/pokered disassembly. Shared addresses (play
 - Coordinates (`ADDR_PLAYER_Y`/`ADDR_PLAYER_X`) are in **block units** (1 block = 2×2 tiles = 16px step); warp entries and NPC sprite positions share this space (sprite state adds a constant +4 border offset)
 - `hTileAnimations` at `0xFFD7`: 0=indoor/building (no animations), 1=cave (water animated), 2=outdoor (water+flower animated) — sourced from annotated hram.asm
 - HRAM constants: `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_DISABLE_JOYPAD` (FFF9)
-- Battle context reads Pokemon stats, moves, HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD). TIP generation filters out moves with 0x type effectiveness (immunity) before recommending — if all damage moves are immune, falls through to RUN/switch advice.
+- Battle context reads Pokemon stats, moves (with `id` field for move ID matching), HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD). TIP generation filters out moves with 0x type effectiveness (immunity) before recommending — if all damage moves are immune, falls through to RUN/switch advice.
+- **Rare Pokemon catch system**: `RARE_POKEMON` set in `data/pokemon.py` defines ~25 species (low encounter rate, one-per-game, legendaries) that trigger aggressive catch TIPs. Multi-phase strategy in `_generate_battle_tip()`: (A) inflict sleep/paralysis for catch bonus using `SLEEP_MOVE_IDS`/`PARALYZE_MOVE_IDS`, (B) weaken with gentlest move via `_pick_catch_move()` + `_estimate_damage()` (Gen 1 formula, picks lowest max-damage move that won't KO), (C) switch to weaker party member if all moves would KO, (D) throw best ball via `_find_best_ball()` (prefers Ultra > Great > Poke, skips Master Ball). Standard (non-rare) catch logic unchanged: triggers at ≤40% HP with open party slot, or ≤20% HP, or enemy asleep/frozen. Rare encounters logged at WARNING level (`RARE ENCOUNTER:` prefix).
 - **Battle start settle**: `_BATTLE_START_SETTLE = 6.0s` in `game_agent.py` — analysis is gated until 6s after battle interrupt to let intro animations finish. `run_from_battle` preamble (A W64 × 3 + W64) provides additional safety for the "unknown" submenu case.
 - `0xCC2F` is dual-purpose: party index of sent-out Pokemon outside the fight submenu, last A-confirmed fight slot (0–3) inside it
 - Event flags at `ADDR_EVENT_FLAGS` track story progression milestones

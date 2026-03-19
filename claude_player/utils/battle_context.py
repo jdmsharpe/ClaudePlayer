@@ -17,6 +17,7 @@ from claude_player.data.pokemon import (
     POKEMON_NAMES, MOVE_DATA, TYPE_CHART, TYPE_NAMES,
     SPECIAL_TYPES, HM_MOVE_IDS, INTERNAL_TO_DEX,
     STAGE_MULTS, HP_ITEMS, STATUS_CURE_ITEMS,
+    RARE_POKEMON, SLEEP_MOVE_IDS, PARALYZE_MOVE_IDS,
 )
 from claude_player.utils.ram_constants import (
     ADDR_BAG_ITEMS,
@@ -73,8 +74,8 @@ _ADDR_ENEMY_PP       = 0xCFFE  # 4 bytes (PP per move slot)
 
 # CC2F is dual-purpose in battle: it stores the party index of the currently-sent-out
 # Pokémon (0-5) for the send-out flow, AND the last A-confirmed fight-menu slot (0-3).
-# We clamp to num_moves-1 and use it as a ground-truth check only — don't rely on it
-# for navigation (see _fight_nav_presses which resets cursor position explicitly).
+# We clamp to num_moves-1 and pass it to _fight_nav_presses as `current`
+# for relative navigation (the fight menu wraps, so absolute reset doesn't work).
 _ADDR_PLAYER_MOVE_LIST_IDX = 0xCC2F
 
 # Safari Zone
@@ -188,6 +189,130 @@ def _apply_stage(base: int, stage: int) -> int:
     return base * STAGE_MULTS[max(0, min(12, stage + 6))] // 100
 
 
+def _estimate_damage(
+    move: Dict[str, Any],
+    attacker_level: int,
+    attacker_stats: Dict[str, int],
+    defender_stats: Dict[str, int],
+    attacker_types: List[str],
+    defender_types: List[str],
+    attacker_status: str = "OK",
+    stat_mods: Optional[Dict[str, Dict[str, int]]] = None,
+) -> Tuple[int, int]:
+    """Estimate min/max damage a move would deal using the Gen 1 formula.
+
+    Returns (min_damage, max_damage).  Status moves return (0, 0).
+    OHKO/fixed-damage moves (power <= 1) return a rough fixed estimate.
+    """
+    power = move.get("power", 0)
+    if power == 0:
+        return (0, 0)
+    if power == 1:
+        # Fixed/OHKO moves — rough estimates
+        name = move.get("name", "")
+        if "SEISMIC" in name or "NIGHT SHADE" in name:
+            return (attacker_level, attacker_level)
+        if "DRAGON RAGE" in name:
+            return (40, 40)
+        if "SONICBOOM" in name:
+            return (20, 20)
+        if "SUPER FANG" in name:
+            # Halves current HP — we don't know enemy current HP here,
+            # but it's safe for catching (never KOs).
+            return (1, 1)
+        if "PSYWAVE" in name:
+            return (1, int(attacker_level * 1.5))
+        # OHKO moves (Fissure, Guillotine, Horn Drill) — would KO
+        return (9999, 9999)
+
+    is_special = move["type"] in SPECIAL_TYPES
+    pmods = (stat_mods or {}).get("player", {})
+    if is_special:
+        offense = _apply_stage(attacker_stats.get("spc", 50), pmods.get("spc", 0))
+        defense = defender_stats.get("spc", 50)
+    else:
+        offense = _apply_stage(attacker_stats.get("atk", 50), pmods.get("atk", 0))
+        defense = defender_stats.get("def", 50)
+    if not is_special and attacker_status == "BRN":
+        offense = offense // 2
+
+    eff = _type_effectiveness(move["type"], defender_types) if defender_types else 1.0
+    stab = 1.5 if move["type"] in attacker_types else 1.0
+    if eff == 0.0:
+        return (0, 0)
+
+    # Gen 1 formula: ((2*Level/5+2) * Power * Atk/Def) / 50 + 2
+    base_dmg = ((2 * attacker_level // 5 + 2) * power * offense // max(defense, 1)) // 50 + 2
+    modified = base_dmg * eff * stab
+    # Random roll: 217/255 to 255/255
+    return (int(modified * 217 / 255), int(modified))
+
+
+def _pick_catch_move(
+    player: Dict[str, Any],
+    enemy: Dict[str, Any],
+    enemy_types: List[str],
+    stat_mods: Optional[Dict[str, Dict[str, int]]] = None,
+) -> Optional[Tuple[Dict[str, Any], str]]:
+    """Pick the best move for catching: status move > gentle damage move.
+
+    Returns (move_dict, strategy) where strategy is one of:
+      "sleep"    — puts enemy to sleep (best catch bonus)
+      "paralyze" — paralyzes enemy (good catch bonus, no wakeup risk)
+      "weaken"   — weakest damage move that won't KO from current HP
+      None       — no safe move available (everything would KO)
+
+    Returns None if no suitable move exists.
+    """
+    enemy_hp = enemy.get("hp", 0)
+    enemy_status = enemy.get("status", "OK")
+    p_level = player.get("level", 50)
+    ps = player.get("stats") or {}
+    es = enemy.get("stats") or {}
+    ptypes = player.get("types") or []
+    pstatus = player.get("status", "OK")
+
+    # Phase 1: If enemy has no status, prefer sleep > paralyze
+    if enemy_status == "OK":
+        # Look for sleep moves first (2x catch bonus)
+        for m in player.get("moves", []):
+            if m.get("id") in SLEEP_MOVE_IDS and m["pp"] > 0:
+                # Check type immunity (e.g. Grass-type immune to powder moves
+                # isn't a thing in Gen 1, but Ghost immune to Normal is)
+                eff = _type_effectiveness(m["type"], enemy_types) if enemy_types else 1.0
+                if eff > 0.0:
+                    return (m, "sleep")
+        # Then paralyze moves (1.5x catch bonus)
+        for m in player.get("moves", []):
+            if m.get("id") in PARALYZE_MOVE_IDS and m["pp"] > 0:
+                eff = _type_effectiveness(m["type"], enemy_types) if enemy_types else 1.0
+                if eff > 0.0:
+                    return (m, "paralyze")
+
+    # Phase 2: Pick the weakest damage move that won't KO
+    damage_candidates = []
+    for m in player.get("moves", []):
+        if m["power"] > 0 and m["pp"] > 0:
+            min_dmg, max_dmg = _estimate_damage(
+                m, p_level, ps, es, ptypes, enemy_types, pstatus, stat_mods,
+            )
+            if max_dmg == 0:
+                continue  # immune
+            # Safe if max damage < enemy current HP (won't KO even on high roll)
+            if max_dmg < enemy_hp:
+                damage_candidates.append((m, max_dmg))
+
+    if damage_candidates:
+        # Pick the weakest safe move (lowest max damage)
+        best = min(damage_candidates, key=lambda x: x[1])
+        return (best[0], "weaken")
+
+    # Phase 3: No safe damage move — everything might KO.
+    # If enemy HP is low enough to attempt a catch, return None (caller throws ball).
+    # Otherwise, caller should still try the gentlest option with a warning.
+    return None
+
+
 def _read_pokemon(
     pyboy: PyBoy,
     species_addr: int,
@@ -239,6 +364,7 @@ def _read_pokemon(
         if is_hm:
             hm_moves.append(HM_MOVE_IDS[move_id])
         moves.append({
+            "id": move_id,
             "name": move_name,
             "type": move_type,
             "power": move_power,
@@ -320,17 +446,16 @@ def _detect_battle_submenu(pyboy: PyBoy, player_hp: int = -1) -> str:
     return "unknown"
 
 
-def _fight_nav_presses(target: int, num_moves: int = 4) -> str:
-    """Navigate fight submenu reliably to target slot from any cursor position.
+def _fight_nav_presses(target: int, num_moves: int = 4, current: int = 0) -> str:
+    """Navigate fight submenu reliably from known cursor position to target slot.
 
-    Presses U×num_moves to reset to slot 0 (no-op at top, cursor can't wrap),
-    then D×target to reach the desired slot.  Does NOT rely on wPlayerMoveListIndex
-    being accurate — the fight submenu appears to retain its previous cursor position
-    on re-entry rather than always restoring from wPlayerMoveListIndex.
+    Gen 1 fight menu is a vertical list that WRAPS (U at slot 0 → last slot).
+    U×num_moves is a full cycle = no-op, so we use relative navigation:
+      U×current  → slot 0  (works with wrapping: current steps up from current = 0)
+      D×target   → target  (then go down to desired slot)
     """
-    reset = " ".join(["U"] * max(1, num_moves))
-    nav = " ".join(["D"] * target) if target > 0 else ""
-    return f"{reset} {nav}".strip() if nav else reset
+    parts = ["U"] * current + ["D"] * target
+    return " ".join(parts) if parts else ""
 
 
 def _count_alive_party(pyboy: PyBoy, party_count: int) -> int:
@@ -363,6 +488,34 @@ def _count_pokeballs(pyboy: PyBoy) -> int:
         if item_id in _BATTLE_BALL_IDS:
             total += pyboy.memory[addr + 1]
     return total
+
+
+# Ball quality ranking: higher = better catch rate modifier.
+_BALL_RANK = {0x01: 4, 0x02: 3, 0x03: 2, 0x04: 1}  # Master, Ultra, Great, Poke
+_BALL_NAMES = {0x01: "MASTER BALL", 0x02: "ULTRA BALL", 0x03: "GREAT BALL", 0x04: "POKE BALL"}
+
+
+def _find_best_ball(pyboy: PyBoy) -> Optional[Tuple[str, int]]:
+    """Find the best Poke Ball in the bag, preferring Ultra > Great > Poke.
+
+    Master Ball is excluded from auto-use (too precious for non-legendaries).
+    Returns (ball_name, bag_slot_1indexed) or None if no balls found.
+    """
+    count = pyboy.memory[ADDR_NUM_BAG_ITEMS]
+    if count == 0 or count > 20:
+        return None
+    best: Optional[Tuple[int, str, int]] = None  # (rank, name, slot)
+    for i in range(count):
+        addr = ADDR_BAG_ITEMS + (i * 2)
+        item_id = pyboy.memory[addr]
+        if item_id == 0xFF:
+            break
+        qty = pyboy.memory[addr + 1]
+        if item_id in _BATTLE_BALL_IDS and qty > 0 and item_id != 0x01:  # skip Master Ball
+            rank = _BALL_RANK[item_id]
+            if best is None or rank > best[0]:
+                best = (rank, _BALL_NAMES[item_id], i + 1)
+    return (best[1], best[2]) if best else None
 
 
 def _read_battle_items(pyboy: PyBoy) -> Dict[str, Any]:
@@ -455,6 +608,23 @@ def _read_stat_modifiers(pyboy: PyBoy) -> Dict[str, Dict[str, int]]:
 # ---------------------------------------------------------------------------
 # Battle tip
 # ---------------------------------------------------------------------------
+
+def _throw_ball_compound(battle_items: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+    """Build compound input to throw the best available Poke Ball.
+
+    Returns (ball_name, compound_input_string).
+    Uses _item_use_compound with the best ball's bag slot if known,
+    otherwise falls back to selecting the first bag item.
+    """
+    items = battle_items or {}
+    best_ball = items.get("best_ball")  # (name, slot) or None
+    n_items = items.get("item_count", 20)
+    if best_ball:
+        bname, bslot = best_ball
+        return (bname, _item_use_compound(bslot, n_items))
+    # Fallback: open bag, select first item (hope it's a ball)
+    return ("POKE BALL", f"B {_ABS_NAV_ITEM} A W A")
+
 
 def _item_use_compound(bag_slot: int, total_items: int = 20) -> str:
     """Compound input to open the bag and navigate to a specific slot.
@@ -587,31 +757,78 @@ def _generate_battle_tip(
             return (f"HP LOW ({hp_pct}%, trainer battle) — use {hname} ({heals_str}, bag slot {hslot}) "
                     f"— send: {_item_use_compound(hslot, n_items)}")
 
-    # Catch suggestion: wild battle + have balls + favorable conditions
+    # Catch logic: wild battle + have balls.
+    # Rare Pokemon get aggressive catch strategy (status → weaken → throw).
+    # Common Pokemon use the original conservative thresholds.
     if battle_type == 1 and pokeball_count > 0 and enemy["max_hp"] > 0:
         enemy_hp_pct = 100 * enemy["hp"] // enemy["max_hp"]
         enemy_status = enemy.get("status", "OK")
         enemy_asleep = enemy_status.startswith("SLP") or enemy_status == "FRZ"
+        is_rare = enemy["name"] in RARE_POKEMON
+
+        # --- Rare Pokemon: multi-phase catch strategy ---
+        if is_rare and not enemy_owned and menu_type in ("main", "fight"):
+            catch_move = _pick_catch_move(
+                player, enemy, enemy_types or [],
+                stat_mods=stat_mods,
+            )
+            num_moves = len(player.get("moves", [])) or 4
+
+            # Phase A: Enemy at full/high HP with no status → inflict status first
+            if catch_move and catch_move[1] in ("sleep", "paralyze"):
+                m, strategy = catch_move
+                nav = _fight_nav_presses(m["slot"], num_moves, current=fight_cursor)
+                compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
+                label = "Put it to SLEEP" if strategy == "sleep" else "PARALYZE it"
+                return (f"RARE: {enemy['name']}! {label} first for catch bonus! "
+                        f"Use {m['name']} — send: {compound}")
+
+            # Phase B: Enemy has status or no status moves available.
+            # If HP is high, weaken with gentlest move.
+            if enemy_hp_pct > 30 and catch_move and catch_move[1] == "weaken":
+                m, _ = catch_move
+                nav = _fight_nav_presses(m["slot"], num_moves, current=fight_cursor)
+                compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
+                status_tag = f" [{enemy_status}]" if enemy_status != "OK" else ""
+                return (f"RARE: {enemy['name']}! Weaken gently{status_tag} — "
+                        f"use {m['name']} ({m['power']}pwr, won't KO) "
+                        f"— send: {compound}")
+
+            # Phase C: No safe weakening move — all attacks would KO.
+            # If HP is still high, suggest switching to a weaker party member.
+            if catch_move is None and enemy_hp_pct > 30 and alive_count > 1:
+                return (f"RARE: {enemy['name']}! Your moves are too strong — "
+                        f"SWITCH to a weaker Pokémon to weaken it safely! "
+                        f"Send: B {_ABS_NAV_PKMN} A W, then D/U to pick a lower-level mon, then A.")
+
+            # Phase D: HP ≤30% or no safe move and can't switch → throw ball!
+            status_tag = ""
+            if enemy_asleep:
+                status_tag = " SLP/FRZ bonus!"
+            elif enemy_status in ("PAR", "BRN", "PSN"):
+                status_tag = f" {enemy_status} bonus!"
+            bname, bcmd = _throw_ball_compound(battle_items)
+            return (f"RARE: Catch {enemy['name']} NOW! "
+                    f"(HP {enemy_hp_pct}%{status_tag}, {pokeball_count} {bname}s) "
+                    f"— send: {bcmd}")
+
+        # --- Standard catch logic (non-rare or already owned) ---
         should_catch = False
         reason = ""
-        # Sleeping/frozen enemies: always worth catching (highest catch rate bonus)
         if enemy_asleep and not enemy_owned:
             should_catch = True
-            reason = f"SLP/FRZ = max catch rate bonus!"
-        elif party_count < 6 and enemy_hp_pct <= 40:
+            reason = "SLP/FRZ = max catch rate bonus!"
+        elif party_count < 6 and enemy_hp_pct <= 40 and not enemy_owned:
             should_catch = True
-            reason = f"party {party_count}/6"
-        elif enemy_hp_pct <= 20:
+            reason = f"party {party_count}/6, new dex entry"
+        elif enemy_hp_pct <= 20 and not enemy_owned:
             should_catch = True
-            reason = "HP very low"
+            reason = "HP very low, new dex entry"
 
         if should_catch and menu_type in ("main", "fight"):
-            if enemy_owned and not enemy_asleep:
-                # Already in Pokédex — discourage catching, suggest fighting instead
-                return (f"{enemy['name']} already in Pokédex — fight for XP instead. "
-                        f"(Can still catch if you want a spare, but it won't help dex progress.)")
-            return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} balls) "
-                    f"— send: B {_ABS_NAV_ITEM} A W A")
+            bname, bcmd = _throw_ball_compound(battle_items)
+            return (f"Catch {enemy['name']}! ({reason}, {pokeball_count} {bname}s) "
+                    f"— send: {bcmd}")
 
     # Wild battle + critically low HP → running is safer than fighting.
     # Gen 1 run can fail — send the sequence twice so a single failure doesn't
@@ -652,7 +869,7 @@ def _generate_battle_tip(
         # navigates to the target.  Ignores wPlayerMoveListIndex — the fight
         # submenu retains its previous cursor position on re-entry.
         num_moves = len(player.get("moves", [])) or 4
-        nav = _fight_nav_presses(best_slot, num_moves)
+        nav = _fight_nav_presses(best_slot, num_moves, current=fight_cursor)
         compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
@@ -709,7 +926,7 @@ def _generate_battle_tip(
         # Unwinnable: only status moves, no switchable mons. Use first move to advance.
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
         num_moves = len(player.get("moves", [])) or 4
-        nav = _fight_nav_presses(0, num_moves)
+        nav = _fight_nav_presses(0, num_moves, current=fight_cursor)
         compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokémon Center. Send: {compound}")
@@ -797,6 +1014,8 @@ def _format_battle_text(
     stat_mods: Optional[Dict[str, Dict[str, int]]] = None,
     turn_count: int = 0,
     whose_turn: int = 0,
+    player_move_chosen: Optional[Dict[str, Any]] = None,
+    enemy_move_chosen: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Assemble the battle context text block."""
     if safari_state:
@@ -866,6 +1085,14 @@ def _format_battle_text(
             hm_tag = " [HM]" if m.get("is_hm") else ""
             move_parts.append(f"{m['name']} ({m['type']},{pwr},{m['pp']}/{m['base_pp']}pp){hm_tag}")
         lines.append(f"  Moves: {' | '.join(move_parts)}")
+
+        if turn_count > 0 and (player_move_chosen or enemy_move_chosen):
+            last_parts = []
+            if player_move_chosen:
+                last_parts.append(f"You used {player_move_chosen['name']}")
+            if enemy_move_chosen:
+                last_parts.append(f"Enemy used {enemy_move_chosen['name']}")
+            lines.append(f"  Last turn: {' | '.join(last_parts)}")
 
         # HM summary
         if player.get("hm_moves"):
@@ -1012,11 +1239,16 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
         stat_mods = _read_stat_modifiers(pyboy)
         turn_count = pyboy.memory[_ADDR_BATTLE_TURN_COUNT]
         whose_turn = pyboy.memory[_ADDR_BATTLE_WHOSE_TURN]
-        player_move_chosen = pyboy.memory[_ADDR_PLAYER_MOVE_CHOSEN]
-        enemy_move_chosen = pyboy.memory[_ADDR_ENEMY_MOVE_CHOSEN]
+        raw_player_move_idx = pyboy.memory[_ADDR_PLAYER_MOVE_CHOSEN]
+        raw_enemy_move_idx = pyboy.memory[_ADDR_ENEMY_MOVE_CHOSEN]
+        player_moves = player.get("moves", [])
+        enemy_moves = enemy.get("moves", [])
+        player_move_chosen = player_moves[raw_player_move_idx] if raw_player_move_idx < len(player_moves) else None
+        enemy_move_chosen = enemy_moves[raw_enemy_move_idx] if raw_enemy_move_idx < len(enemy_moves) else None
 
         pokeball_count = _count_pokeballs(pyboy)
         battle_items = _read_battle_items(pyboy)
+        battle_items["best_ball"] = _find_best_ball(pyboy)  # (name, slot) or None
         party_count = min(pyboy.memory[ADDR_PARTY_COUNT], 6)
         alive_count = _count_alive_party(pyboy, party_count)
         enemy_owned = _is_dex_owned(pyboy, enemy["species_id"])
@@ -1044,7 +1276,15 @@ def extract_battle_context(pyboy: PyBoy, just_entered_battle: bool = False) -> O
                                    safari_state=safari_state,
                                    stat_mods=stat_mods,
                                    turn_count=turn_count,
-                                   whose_turn=whose_turn)
+                                   whose_turn=whose_turn,
+                                   player_move_chosen=player_move_chosen,
+                                   enemy_move_chosen=enemy_move_chosen)
+
+        # Log rare Pokemon encounters prominently for debugging
+        if battle_type == 1 and enemy["name"] in RARE_POKEMON and not enemy_owned:
+            logger.warning(f"RARE ENCOUNTER: {enemy['name']} Lv{enemy['level']} "
+                           f"HP:{enemy['hp']}/{enemy['max_hp']} — "
+                           f"balls={pokeball_count}, party={party_count}/6")
 
         logger.info(f"Battle context: {player['name']} Lv{player['level']} "
                      f"HP:{player['hp']}/{player['max_hp']} vs "

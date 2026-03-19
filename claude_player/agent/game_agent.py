@@ -374,6 +374,15 @@ class GameAgent:
                         + abs(current_pos[1] - self._visited_positions[-1][1]) > 10)
                 )
                 if map_changed:
+                    # Record warp transition for ping-pong detection
+                    if (prev_map_id is not None
+                            and new_map_id is not None
+                            and self._visited_positions):
+                        last_pos_on_old_map = self._visited_positions[-1]
+                        self._world_map.record_warp_transition(
+                            prev_map_id, last_pos_on_old_map,
+                            new_map_id, self.game_state.turn_count,
+                        )
                     self._visited_positions.clear()
                     # Evict stale tactical goal and resume auto-derivation for new map
                     self.game_state._tactical_goal_override = False

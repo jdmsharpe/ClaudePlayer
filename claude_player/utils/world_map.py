@@ -32,6 +32,9 @@ _MAX_DISPLAY_SIZE = 20     # Web/terminal display — large enough to show full 
 # Max steps in a world-map A* path before we truncate
 _MAX_PATH_STEPS = 30
 
+# Warp exhaustion: how many turns before an exhausted warp becomes eligible again
+_WARP_EXHAUST_DECAY_TURNS = 30
+
 
 class WorldMap:
     """Accumulates explored tiles across turns, keyed by map ID."""
@@ -47,6 +50,10 @@ class WorldMap:
         self.map_graph: Dict[int, Set[int]] = {}
         # Map ID → human name (populated from warp_data as maps are visited)
         self.map_names: Dict[int, str] = {}
+        # Warp cycling detection: recent warp transitions
+        self._warp_transitions: deque = deque(maxlen=20)
+        # map_id → {(warp_x, warp_y): turn_exhausted} — soft-deprioritized warps
+        self._exhausted_warps: Dict[int, Dict[Tuple[int, int], int]] = {}
 
     def update_graph(
         self,
@@ -92,6 +99,92 @@ class WorldMap:
                 self.map_graph[dest_mid].add(map_id)
                 if dest_mid not in self.map_names:
                     self.map_names[dest_mid] = conn.get("dest_name", "?")
+
+    def record_warp_transition(
+        self,
+        from_map: int,
+        player_pos: Tuple[int, int],
+        to_map: int,
+        turn: int,
+    ) -> None:
+        """Record a warp/map transition and detect ping-pong cycling.
+
+        Identifies the closest warp on from_map that leads to to_map,
+        records the transition, and marks warps as exhausted when
+        back-and-forth cycling is detected.
+
+        Args:
+            from_map: Map ID the player just left.
+            player_pos: Player's last known position on from_map.
+            to_map: Map ID the player just arrived on.
+            turn: Current turn number (for decay tracking).
+        """
+        # Find the warp on from_map closest to player_pos that leads to to_map
+        warp_map = self.warps.get(from_map, {})
+        to_map_name = self.map_names.get(to_map, "")
+        best_warp_pos = None
+        best_dist = float("inf")
+        for warp_pos, dest_name in warp_map.items():
+            if to_map_name and to_map_name.lower() not in dest_name.lower():
+                continue
+            dist = abs(warp_pos[0] - player_pos[0]) + abs(warp_pos[1] - player_pos[1])
+            if dist < best_dist:
+                best_dist = dist
+                best_warp_pos = warp_pos
+        if best_warp_pos is None:
+            # Couldn't identify which warp — use player position as proxy
+            best_warp_pos = player_pos
+
+        self._warp_transitions.append((from_map, best_warp_pos, to_map))
+        logger.info(
+            f"WARP TRANSITION: map 0x{from_map:02X} warp={best_warp_pos} "
+            f"→ map 0x{to_map:02X} (history={len(self._warp_transitions)})"
+        )
+
+        # Detect ping-pong: count (A→B) and (B→A) pairs in recent history
+        pair_warps: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+        for fm, wp, tm in self._warp_transitions:
+            pair_warps.setdefault((fm, tm), []).append(wp)
+
+        for (a, b), a_warps in pair_warps.items():
+            if (b, a) not in pair_warps:
+                continue
+            b_warps = pair_warps[(b, a)]
+            # Need at least 2 total transitions in each direction to confirm cycling
+            if len(a_warps) < 2 or len(b_warps) < 1:
+                continue
+            # Mark the specific warps used as exhausted
+            for wp in a_warps:
+                self._exhausted_warps.setdefault(a, {})[wp] = turn
+            for wp in b_warps:
+                self._exhausted_warps.setdefault(b, {})[wp] = turn
+            logger.info(
+                f"WARP CYCLING detected: 0x{a:02X}↔0x{b:02X} — "
+                f"exhausted {len(a_warps)} warps on 0x{a:02X}, "
+                f"{len(b_warps)} warps on 0x{b:02X}"
+            )
+
+    def get_active_exhausted_warps(
+        self,
+        map_id: int,
+        current_turn: int,
+    ) -> Set[Tuple[int, int]]:
+        """Return exhausted warp positions for map_id that haven't decayed.
+
+        Args:
+            map_id: Map to check.
+            current_turn: Current turn number for decay calculation.
+
+        Returns:
+            Set of (x, y) warp positions still within the exhaustion window.
+        """
+        exhausted = self._exhausted_warps.get(map_id, {})
+        if not exhausted:
+            return set()
+        return {
+            pos for pos, exhaust_turn in exhausted.items()
+            if current_turn - exhaust_turn < _WARP_EXHAUST_DECAY_TURNS
+        }
 
     def update(
         self,
@@ -530,12 +623,16 @@ class WorldMap:
         dead_end_zones: Optional[List[Tuple[int, int]]] = None,
         npc_positions: Optional[List[Tuple[int, int]]] = None,
         max_steps: int = _MAX_PATH_STEPS,
+        current_turn: int = 0,
     ) -> Optional[str]:
         """Find A* path from player to a known warp, or nearest frontier.
 
         If *preferred_dest* is given (substring match on warp name), only
-        warps matching it are tried.  If no warp is reachable, falls back
-        to the nearest unexplored frontier in *preferred_direction*, avoiding
+        warps matching it are tried.  Exhausted warps (from ping-pong
+        cycling detection) are deprioritized: non-exhausted warps are tried
+        first, and exhausted warps are used only as a fallback to prevent
+        getting stuck.  If no warp is reachable, falls back to the nearest
+        unexplored frontier in *preferred_direction*, avoiding
         *dead_end_zones*.  *npc_positions* are treated as temporary obstacles.
 
         Returns a NAV hint string with button commands, or None.
@@ -556,6 +653,9 @@ class WorldMap:
         # NPC positions as temporary obstacles
         npc_blocked: Set[Tuple[int, int]] = set(npc_positions) if npc_positions else set()
 
+        # Exhausted warps: soft-deprioritize (try fresh warps first)
+        exhausted = self.get_active_exhausted_warps(map_id, current_turn)
+
         # Try warps first
         best_path: Optional[List[Tuple[int, int]]] = None
         best_name: Optional[str] = None
@@ -574,10 +674,13 @@ class WorldMap:
                 else:
                     other_warps.append((warp_pos, dest_name))
 
-            # Try preferred warps, but skip any that lie in the opposite
-            # direction from preferred_direction (prevents e.g. pathing to
-            # Pewter City WEST when the goal says EAST).
-            for warp_pos, dest_name in preferred_warps:
+            # Further split preferred warps into fresh and exhausted
+            fresh_preferred = [(p, n) for p, n in preferred_warps if p not in exhausted]
+            exhausted_preferred = [(p, n) for p, n in preferred_warps if p in exhausted]
+
+            # Try fresh preferred warps first, but skip any that lie in the
+            # opposite direction from preferred_direction.
+            for warp_pos, dest_name in fresh_preferred:
                 if preferred_direction:
                     dvx, dvy = _DIR_VEC.get(preferred_direction, (0, 0))
                     score = (warp_pos[0] - player_pos[0]) * dvx + (warp_pos[1] - player_pos[1]) * dvy
@@ -588,6 +691,27 @@ class WorldMap:
                     best_path = path
                     best_name = dest_name
                     best_len = len(path)
+
+            # If no fresh preferred warp worked, try exhausted ones as fallback
+            # (soft deprioritization — prevents getting stuck when the only
+            # exit is through an exhausted warp)
+            if not best_path and exhausted_preferred:
+                for warp_pos, dest_name in exhausted_preferred:
+                    if preferred_direction:
+                        dvx, dvy = _DIR_VEC.get(preferred_direction, (0, 0))
+                        score = (warp_pos[0] - player_pos[0]) * dvx + (warp_pos[1] - player_pos[1]) * dvy
+                        if score < 0:
+                            continue
+                    path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked)
+                    if path and len(path) < best_len:
+                        best_path = path
+                        best_name = dest_name
+                        best_len = len(path)
+                if best_path:
+                    logger.info(
+                        f"NAV: using exhausted warp to {best_name} as fallback "
+                        f"(no fresh alternative on map 0x{map_id:02X})"
+                    )
 
             # If preferred_dest matched no warps, try warps that lie in the
             # preferred_direction from the player (furthest first so the

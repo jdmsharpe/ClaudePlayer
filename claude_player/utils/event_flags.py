@@ -223,9 +223,9 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
     (  -2,  0x44): "Pokémon Center rest stop.",
     (  -2,  0x3B): "Navigate Mt. Moon 1F — head NORTH toward the cave interior to find stairs down to Mt. Moon B1F. Do NOT use W0/W1 warps (wrong exit, ledges block east).",
-    (  -2,  0x3C): "Head SOUTH then WEST to find stairs down to Mt. Moon B2F. Do NOT go back up to Mt. Moon 1F.",
-    (  -2,  0x3D): "Navigate Mt. Moon B2F to the exit stairs. Rocket Grunts guard the fossils — fight through or go around. Exit leads up to Mt. Moon 1F east section → Route 4 exit → Cerulean City.",
-    (  -2,  0x0F): "Route 4. If ledges (<) block eastward travel, you exited Mt. Moon from the WRONG side. Go back INTO Mt. Moon and progress through 1F→B1F→B2F to reach the Route 4 exit (east side, Cerulean). If path east is clear, head EAST to Cerulean City.",
+    (  -2,  0x3C): "B1F is split into sections by internal walls — you MUST go through Mt. Moon B2F to reach the Route 4 exit. Find stairs DOWN to B2F. After navigating B2F (fossil area), you'll return to a different section of B1F near the Route 4 exit in the SOUTHWEST.",
+    (  -2,  0x3D): "Navigate Mt. Moon B2F — fight Rocket Grunts, grab a fossil from the Super Nerd in the NORTHWEST. Then take the stairs in the SOUTHWEST to return UP to Mt. Moon B1F near the Route 4 exit.",
+    (  -2,  0x0F): "Route 4. If ledges (<) block eastward travel, you exited Mt. Moon from the WRONG side. Go back INTO Mt. Moon and progress through B1F→B2F→B1F to reach the correct Route 4 exit. If path east is clear, head EAST to Cerulean City.",
     # Beat Misty (0x0BF)
     (0x0BF, 0x03): "Enter Cerulean Gym (northeast area of Cerulean City) and defeat Misty.",
     (0x0BF, 0x41): "Battle the trainers and defeat Misty at the back of the gym.",

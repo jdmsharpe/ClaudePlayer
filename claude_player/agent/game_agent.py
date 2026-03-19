@@ -193,13 +193,24 @@ class GameAgent:
         # Initialize Claude interface
         self.claude = ClaudeInterface(self.config)
 
-        # Initialize memory manager (background subagent for persistent memory)
-        self.memory_manager = MemoryManager(self.claude, self.game_state, self.config)
+        # Initialize Knowledge Base (categorized persistent memory)
+        from claude_player.agent.knowledge_base import KnowledgeBase
+        self._knowledge_base = KnowledgeBase(self._save_dir)
+
+        # Migrate old MEMORY.md to KB if it exists
+        old_memory_path = os.path.join(self._save_dir, "MEMORY.md")
+        if os.path.exists(old_memory_path):
+            self._knowledge_base.migrate_from_memory_md(old_memory_path)
+
+        # Initialize memory manager (background subagent for KB updates)
+        self.memory_manager = MemoryManager(
+            self.claude, self.game_state, self.config, self._knowledge_base,
+        )
         self._memory_thread = None  # Background thread for async memory updates
 
         # Turn context builder: assembles user_content for Claude each turn
         self._context_builder = TurnContextBuilder(
-            memory_path=self.memory_manager.memory_path,
+            knowledge_base=self._knowledge_base,
             party_refresh_interval=10,
             bag_refresh_interval=15,
         )
@@ -916,20 +927,24 @@ class GameAgent:
         # Apply the screenshot limit
         self._limit_screenshots_in_history()
 
-        # Background memory update (subagent): every MEMORY_INTERVAL turns
+        # Background KB update (subagent): every MEMORY_INTERVAL turns
         memory_interval = self.config.MEMORY.get("MEMORY_INTERVAL", 20)
         if (self.game_state.turn_count % memory_interval == 0
                 and self.game_state.turn_count > 0):
-            # Run memory update on a background thread so it doesn't block the AI turn
+            # Run KB update on a background thread so it doesn't block the AI turn
             if self._memory_thread is not None and self._memory_thread.is_alive():
-                logging.info("Memory update still running from previous trigger — skipping")
+                logging.info("KB update still running from previous trigger — skipping")
             else:
-                logging.info(f"Triggering async memory update at turn {self.game_state.turn_count}")
+                logging.info(f"Triggering async KB update at turn {self.game_state.turn_count}")
                 # Snapshot the history so the background thread has its own copy
                 history_snapshot = list(self.game_state.complete_message_history)
                 self._memory_thread = threading.Thread(
                     target=self.memory_manager.update_memory,
                     args=(history_snapshot,),
+                    kwargs={
+                        "current_map_id": self._current_map_id,
+                        "current_map_name": self._current_map_name,
+                    },
                     daemon=True,
                 )
                 self._memory_thread.start()
@@ -946,7 +961,7 @@ class GameAgent:
 
         for attempt in range(max_retries + 1):
             try:
-                memory_text = self._context_builder.build_memory_block(
+                memory_text = self._context_builder.build_cached_kb_block(
                     self.game_state.turn_count, self.game_state.memory_turn,
                 )
                 system_prompt = self.claude.get_system_prompt(memory_text)

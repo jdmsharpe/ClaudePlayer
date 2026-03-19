@@ -77,12 +77,14 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         logging.info(f"TACTICAL GOAL SET TO: {self.game_state.tactical_goal}")
         return [{"type": "text", "text": f"Tactical goal set to: {self.game_state.tactical_goal} (auto-clears on map change)"}]
 
-    # --- Memory tools (read_from_memory removed — now auto-injected into user message) ---
-    memory_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "saves", "MEMORY.md")
+    # --- Knowledge Base tools ---
+    from claude_player.agent.knowledge_base import KnowledgeBase
+    saves_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "saves")
+    _kb = KnowledgeBase(saves_dir)
 
     @registry.register(
-        name="delete_memory",
-        description="⚠ DELETE the entire memory file permanently. This cannot be undone. Only use if memory has become corrupted or counterproductive.",
+        name="delete_knowledge",
+        description="⚠ DELETE the entire Knowledge Base permanently. This cannot be undone. Only use if KB has become corrupted or counterproductive.",
         input_schema={
             "type": "object",
             "properties": {
@@ -94,14 +96,11 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             "required": ["confirm"]
         }
     )
-    def handle_delete_memory(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def handle_delete_knowledge(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not tool_input.get("confirm"):
             return [{"type": "text", "text": "Deletion not confirmed. Pass confirm=true to delete."}]
-        if os.path.exists(memory_path):
-            os.remove(memory_path)
-            logging.warning("Memory file DELETED")
-            return [{"type": "text", "text": "Memory file deleted."}]
-        return [{"type": "text", "text": "No memory file to delete."}]
+        _kb.delete_all()
+        return [{"type": "text", "text": "Knowledge Base deleted."}]
 
     # Register check_tiles tool — read-only, executes immediately (no emulator ticking)
     @registry.register(

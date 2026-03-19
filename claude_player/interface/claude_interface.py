@@ -89,14 +89,17 @@ POKEMON MENU: Use to check stats, reorder party (put strongest first), or teach 
 SAVE: START → SAVE → A to save progress. The game auto-saves state separately via the emulator.
 </menu_context>""")
 
-            static_parts.append("""
+            memory_interval = self.config.MEMORY.get('MEMORY_INTERVAL', 20) if self.config else 20
+            static_parts.append(f"""
 <authority>
 PARTY STATUS, SPATIAL/BATTLE CONTEXT are AUTHORITATIVE (real-time RAM). Trust over memory.
 HEAL line = prioritize Pokémon Center. WARNING = address before main goal.
 </authority>
 <memory>
-Your persistent memory is injected in the system prompt as <memory>.
-It may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM) over memory when they conflict.
+Your persistent Knowledge Base is split into two injection points:
+- System prompt <memory>: PARTY (team strategy), STRATEGY (current plan), LESSONS (hard-won rules). Updated every {memory_interval} turns.
+- User message <location_notes>: per-map notes (paths, dead ends, warps) for the current map only. Changes on map transition.
+Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM) over KB when they conflict.
 </memory>""")
 
         # Custom instructions from config

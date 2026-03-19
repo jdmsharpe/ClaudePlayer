@@ -6,11 +6,11 @@ a TurnContextBuilder once in __init__ and calls build() each turn.
 """
 
 import logging
-import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from claude_player.agent.knowledge_base import KnowledgeBase
 from claude_player.agent.nav_planner import compute_nav
 from claude_player.utils.world_map import WorldMap
 
@@ -21,19 +21,23 @@ class TurnContextBuilder:
     Encapsulates injection-policy state (party/bag snapshots and refresh
     intervals) so GameAgent doesn't need to manage those fields directly.
 
+    The Knowledge Base is injected in two layers:
+    - System prompt (cached): party + strategy + lessons via KnowledgeBase.build_cached_block()
+    - User message (per-turn): current map's location notes via KnowledgeBase.build_location_block()
+
     Args:
-        memory_path: Path to saves/MEMORY.md.
+        knowledge_base: Categorized KB instance for persistent agent memory.
         party_refresh_interval: Inject party context every N turns even if unchanged.
         bag_refresh_interval: Inject bag context every N turns even if unchanged.
     """
 
     def __init__(
         self,
-        memory_path: str,
+        knowledge_base: KnowledgeBase,
         party_refresh_interval: int = 10,
         bag_refresh_interval: int = 15,
     ):
-        self.memory_path = memory_path
+        self.kb = knowledge_base
 
         # Party injection policy
         self._last_party_snapshot: Optional[tuple] = None
@@ -83,8 +87,15 @@ class TurnContextBuilder:
         if last_action_feedback and not in_battle:
             user_content.append({"type": "text", "text": last_action_feedback})
 
-        # Memory is now injected as a cached system prompt block (see game_agent.py)
-        # instead of a user message — saves tokens via cache-read pricing.
+        # ── Per-turn location notes from Knowledge Base ──
+        # Injected as user message (not cached) since it changes on map transition.
+        # Core KB sections (party/strategy/lessons) are in the cached system prompt.
+        if spatial_data:
+            map_id = spatial_data.get("map_number")
+            if map_id is not None:
+                location_block = self.kb.build_location_block(map_id)
+                if location_block:
+                    user_content.append({"type": "text", "text": location_block})
 
         # ── Main context: battle OR spatial ──
         if battle_data and battle_data.get("text"):
@@ -139,25 +150,17 @@ class TurnContextBuilder:
 
         return user_content
 
-    # ── Private helpers ──────────────────────────────────────────────
+    # ── Public helpers ───────────────────────────────────────────────
 
-    def build_memory_block(self, turn_count: int, memory_turn: int) -> str:
-        """Read MEMORY.md and wrap it in XML tags with staleness info.
+    def build_cached_kb_block(self, turn_count: int, memory_turn: int) -> str:
+        """Build the cached system prompt block from Knowledge Base.
 
-        Called by game_agent to inject memory into the system prompt as a
-        cached content block (cache-read pricing on unchanged turns).
+        Includes party + strategy + lessons (changes rarely → cache-friendly).
+        Called by game_agent to inject into get_system_prompt().
         """
-        if not os.path.exists(self.memory_path):
-            return ""
-        try:
-            with open(self.memory_path, "r") as f:
-                memory_text = f.read().strip()
-        except OSError:
-            return ""
-        if not memory_text:
-            return ""
-        staleness = f" updated_at_turn={memory_turn}" if memory_turn > 0 else ""
-        return f"<memory{staleness}>\n{memory_text}\n</memory>"
+        return self.kb.build_cached_block(turn_count, memory_turn)
+
+    # ── Private helpers ──────────────────────────────────────────────
 
     def _build_spatial_text(
         self,

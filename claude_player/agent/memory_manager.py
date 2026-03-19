@@ -1,96 +1,109 @@
+"""Background subagent that maintains the categorized Knowledge Base.
+
+Replaces the old flat MEMORY.md system. The subagent is called on a
+background thread every MEMORY_INTERVAL turns and updates specific KB
+sections based on what happened in recent gameplay.
+
+Update triggers (section → when):
+- party: after battle (team assessment changes)
+- strategy: every update (plan evolves constantly)
+- lessons: on failure/recovery (new insights)
+- location: on map change (record discoveries about the map just left)
+"""
+
 import logging
-import os
-from typing import List, Dict, Any
+import re
+from typing import List, Dict, Any, Optional
 
 from claude_player.config.config_class import ConfigClass
 from claude_player.interface.claude_interface import ClaudeInterface
 from claude_player.state.game_state import GameState
 from claude_player.utils.message_utils import MessageUtils
+from claude_player.agent.knowledge_base import KnowledgeBase
 
-MEMORY_MAX_LINES = 80
-MEMORY_WARN_LINES = 60
+# System prompt for the KB update subagent
+KB_SYSTEM_PROMPT = """\
+You maintain a categorized Knowledge Base for a Pokémon Red AI agent.
 
-MEMORY_SYSTEM_PROMPT = """\
-You maintain a concise MEMORY file for a Pokémon Red AI agent. The agent reads this \
-file via a tool call, so every line costs a turn — keep it SHORT.
+Your job: read the current KB sections and recent gameplay, then produce UPDATED sections.
 
-Your job: read the current memory and recent gameplay, then produce an UPDATED file.
+You will be told which sections to update. Output ONLY the requested sections using these exact XML tags:
 
-HARD LIMIT: 80 lines max. Aim for 40-60 lines.
+<party>
+1 line per Pokémon: name, type, key strengths/weaknesses, matchup notes.
+Do NOT include HP, level, or PP — those come from RAM in real-time.
+Focus on SUBJECTIVE knowledge: who to lead with, type matchup lessons, team composition strategy.
+Max 15 lines.
+</party>
 
-Sections (use exactly these):
-## STATUS — 2-3 lines: milestone progress (from AUTHORITATIVE data), current location, immediate goal
-## PARTY — 1 line per Pokémon: name, level, type, key moves. No HP (read from RAM live)
-## INVENTORY — 1-2 lines: badges, money, key items only
-## MAP KNOWLEDGE — Routes discovered, verified paths, dead ends. One line per location. Drop locations no longer relevant to current goal
-## STRATEGY — 2-5 lines: current plan, what to try next, mistakes to avoid RIGHT NOW
-## LESSONS — 3-5 bullet points: hard-won insights that prevent repeating past failures
+<strategy>
+Current plan, priorities, what to try next, mistakes to avoid RIGHT NOW.
+Include milestone progress context and immediate navigation goals.
+Max 20 lines.
+</strategy>
+
+<lessons>
+Hard-won rules that prevent repeating past failures.
+Each lesson should be a concrete, actionable rule — not vague advice.
+Mark hallucination-prone beliefs with [VERIFY].
+Max 20 lines.
+</lessons>
+
+<location name="Map Name">
+Per-map notes: verified paths, dead ends, warp destinations, key NPCs, items found.
+Positions use (x,y) block coordinates from RAM.
+Max 30 lines per map.
+</location>
 
 Rules:
 - AUTHORITATIVE STORY PROGRESS and PARTY STATUS come from RAM — use exact values
 - Consolidate aggressively. Remove stale info. No turn-by-turn logs
 - No filler, no speculation, no battle play-by-play
-- Output ONLY the file content. No preamble
+- Output ONLY the XML-tagged sections requested. No preamble or explanation
+- You may output multiple <location> tags if the agent visited multiple maps
 """
 
-INITIAL_MEMORY_PROMPT = """\
-The agent just started playing. Create a concise initial memory file (under 40 lines).
-Output ONLY the memory file content.
+INITIAL_KB_PROMPT = """\
+The agent just started playing. Create initial KB sections from the gameplay so far.
+Output party, strategy, and lessons sections. Keep each section concise.
 """
 
 
 class MemoryManager:
-    """Background subagent that maintains persistent memory (saves/MEMORY.md)."""
+    """Background subagent that maintains the categorized Knowledge Base."""
 
-    def __init__(self, client: ClaudeInterface, game_state: GameState, config: ConfigClass):
+    def __init__(self, client: ClaudeInterface, game_state: GameState,
+                 config: ConfigClass, knowledge_base: KnowledgeBase):
         self.client = client
         self.game_state = game_state
         self.config = config
+        self.kb = knowledge_base
         self.update_count = 0
+        self._last_update_map_id: Optional[int] = None
 
-        # Memory file path: saves/MEMORY.md alongside autosave.state
-        self.memory_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "saves", "MEMORY.md",
-        )
-
-    def _read_memory(self) -> str:
-        """Read current memory file, or empty string if missing."""
-        if os.path.exists(self.memory_path):
-            with open(self.memory_path, "r") as f:
-                return f.read()
-        return ""
-
-    def _write_memory(self, content: str) -> int:
-        """Write memory file, enforcing line cap. Returns line count."""
-        lines = content.split("\n")
-        if len(lines) > MEMORY_MAX_LINES:
-            lines = lines[:MEMORY_MAX_LINES]
-            content = "\n".join(lines)
-            logging.warning(f"Memory truncated to {MEMORY_MAX_LINES} lines")
-
-        os.makedirs(os.path.dirname(self.memory_path), exist_ok=True)
-        with open(self.memory_path, "w") as f:
-            f.write(content)
-
-        line_count = len(lines)
-        if line_count >= MEMORY_WARN_LINES:
-            logging.warning(f"Memory at {line_count}/{MEMORY_MAX_LINES} lines — consolidation needed")
-        return line_count
-
-    def update_memory(self, chat_history: List[Dict[str, Any]]) -> str:
-        """Generate an updated memory file from recent gameplay.
+    def update_memory(self, chat_history: List[Dict[str, Any]],
+                      current_map_id: Optional[int] = None,
+                      current_map_name: Optional[str] = None) -> str:
+        """Generate updated KB sections from recent gameplay.
 
         Called on a background thread every MEMORY_INTERVAL turns.
-        Uses a cheap model (Haiku) to process chat history + current memory.
 
-        Returns the updated memory text, or an error marker string.
+        Args:
+            chat_history: Snapshot of complete message history.
+            current_map_id: Current map ID for location updates.
+            current_map_name: Human-readable name of current map.
+
+        Returns:
+            Summary of what was updated, or error marker string.
         """
         self.update_count += 1
-        logging.info(f"Memory update #{self.update_count} starting")
+        logging.info(f"KB update #{self.update_count} starting")
 
-        current_memory = self._read_memory()
-        old_lines = len(current_memory.split("\n")) if current_memory else 0
+        # Determine which sections to update
+        sections_to_update = self._decide_sections(current_map_id)
+
+        # Read current KB state for the sections we're updating
+        current_kb = self._read_current_state(sections_to_update, current_map_id)
 
         # Trim chat history: last 60 messages, clean orphaned leading messages
         recent = chat_history[-60:] if len(chat_history) > 60 else chat_history[:]
@@ -109,28 +122,30 @@ class MemoryManager:
         # Build the request
         messages = list(recent)
         user_block = [
-            {"type": "text", "text": "Analyze the recent gameplay and produce an updated memory file."},
+            {"type": "text", "text": (
+                f"Update these KB sections: {', '.join(sections_to_update)}.\n"
+                f"Current turn: T{self.game_state.turn_count}."
+            )},
         ]
 
-        if current_memory:
+        if current_kb:
             user_block.append({
                 "type": "text",
-                "text": f"Current MEMORY.md ({old_lines} lines):\n\n{current_memory}",
+                "text": f"Current KB state:\n\n{current_kb}",
             })
         else:
             user_block.append({
                 "type": "text",
-                "text": "No existing memory file — create the initial one.",
+                "text": "No existing KB — create initial sections.",
             })
 
-        # Inject current turn for context
-        cur_turn = self.game_state.turn_count
-        user_block.append({
-            "type": "text",
-            "text": f"Current turn: T{cur_turn}. Keep the file under {MEMORY_MAX_LINES} lines.",
-        })
+        if current_map_name and "location" in sections_to_update:
+            user_block.append({
+                "type": "text",
+                "text": f"Current map: {current_map_name} (ID: 0x{current_map_id:02X})",
+            })
 
-        # Inject authoritative data so the model doesn't hallucinate
+        # Inject authoritative data
         if self.game_state.story_progress and self.game_state.story_progress.get("progress_summary"):
             user_block.append({
                 "type": "text",
@@ -144,12 +159,11 @@ class MemoryManager:
 
         messages.append({"role": "user", "content": user_block})
 
-        system = INITIAL_MEMORY_PROMPT if self.update_count == 1 and not current_memory else MEMORY_SYSTEM_PROMPT
+        is_initial = self.update_count == 1 and not current_kb
+        system = INITIAL_KB_PROMPT if is_initial else KB_SYSTEM_PROMPT
 
         try:
-            # Use MEMORY config (falls back to Haiku defaults)
             memory_config = self.config.MEMORY.copy() if hasattr(self.config, 'MEMORY') else {}
-            # Ensure model config fields exist for the API call
             if "MODEL" not in memory_config:
                 memory_config["MODEL"] = "claude-sonnet-4-6"
             if "MAX_TOKENS" not in memory_config:
@@ -162,7 +176,7 @@ class MemoryManager:
             response = self.client.send_request(memory_config, system, messages, [])
             content = MessageUtils.print_and_extract_message_content(response)
 
-            # Log memory subagent token usage
+            # Log token usage
             usage = getattr(response, 'usage', None)
             if usage:
                 from claude_player.utils.cost_tracker import estimate_cost
@@ -172,21 +186,102 @@ class MemoryManager:
                 m_cw = getattr(usage, 'cache_creation_input_tokens', 0) or 0
                 m_cost = estimate_cost(memory_config.get("MODEL", ""), m_in, m_out, m_cr, m_cw)
                 logging.info(
-                    f"MEMORY TOKENS: in={m_in} out={m_out} "
+                    f"KB TOKENS: in={m_in} out={m_out} "
                     f"cache_read={m_cr} cache_create={m_cw} "
                     f"| cost=${m_cost:.4f}"
                 )
 
-            new_memory = ""
+            raw_output = ""
             for block in content["text_blocks"]:
-                new_memory += block.text
+                raw_output += block.text
 
-            new_lines = self._write_memory(new_memory)
+            # Parse XML-tagged sections from subagent output
+            updated = self._parse_and_write(raw_output, current_map_id)
             self.game_state.memory_turn = self.game_state.turn_count
+            self._last_update_map_id = current_map_id
 
-            logging.info(f"Memory updated ({old_lines} → {new_lines} lines)")
-            return new_memory
+            logging.info(f"KB updated: {', '.join(updated) if updated else 'no sections parsed'}")
+            return f"Updated: {', '.join(updated)}" if updated else "No sections parsed"
 
         except Exception as e:
-            logging.error(f"Memory update failed: {e}")
-            return f"[MEMORY_ERROR] {e}"
+            logging.error(f"KB update failed: {e}")
+            return f"[KB_ERROR] {e}"
+
+    def _decide_sections(self, current_map_id: Optional[int]) -> List[str]:
+        """Decide which KB sections to update this cycle."""
+        sections = ["strategy"]  # Always update strategy
+
+        # Update party every time (cheap, important for matchup learning)
+        sections.append("party")
+
+        # Update lessons every 3rd update (they accumulate slowly)
+        if self.update_count % 3 == 0 or self.update_count <= 2:
+            sections.append("lessons")
+
+        # Update location if we have a map
+        if current_map_id is not None:
+            sections.append("location")
+
+        return sections
+
+    def _read_current_state(self, sections: List[str],
+                            current_map_id: Optional[int]) -> str:
+        """Read current KB state for the sections being updated."""
+        parts = []
+
+        for section in sections:
+            if section == "location":
+                if current_map_id is not None:
+                    text = self.kb.read_location(current_map_id)
+                    if text:
+                        from claude_player.data.maps import MAP_NAMES
+                        map_name = MAP_NAMES.get(current_map_id, f"Map 0x{current_map_id:02X}")
+                        parts.append(f"<location name=\"{map_name}\">\n{text}\n</location>")
+            else:
+                text = self.kb.read_section(section)
+                if text:
+                    parts.append(f"<{section}>\n{text}\n</{section}>")
+
+        return "\n\n".join(parts)
+
+    def _parse_and_write(self, output: str, current_map_id: Optional[int]) -> List[str]:
+        """Parse XML-tagged sections from subagent output and write to KB."""
+        updated = []
+
+        # Parse core sections
+        for section in ("party", "strategy", "lessons"):
+            match = re.search(
+                rf'<{section}>\s*(.*?)\s*</{section}>',
+                output, re.DOTALL,
+            )
+            if match:
+                content = match.group(1).strip()
+                if content:
+                    self.kb.write_section(section, content)
+                    updated.append(section)
+
+        # Parse location sections (may have multiple)
+        for match in re.finditer(
+            r'<location\s+name="([^"]+)">\s*(.*?)\s*</location>',
+            output, re.DOTALL,
+        ):
+            map_name = match.group(1).strip()
+            content = match.group(2).strip()
+            if content:
+                self.kb.write_location_by_name(map_name, content)
+                updated.append(f"location:{map_name}")
+
+        # If subagent wrote a location without a name attribute, use current map
+        nameless = re.search(
+            r'<location>\s*(.*?)\s*</location>',
+            output, re.DOTALL,
+        )
+        if nameless and current_map_id is not None:
+            content = nameless.group(1).strip()
+            if content:
+                self.kb.write_location(current_map_id, content)
+                from claude_player.data.maps import MAP_NAMES
+                name = MAP_NAMES.get(current_map_id, f"0x{current_map_id:02X}")
+                updated.append(f"location:{name}")
+
+        return updated

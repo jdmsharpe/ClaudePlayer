@@ -1144,14 +1144,17 @@ def _format_spatial_text(
         grid_height = len(grid)
         grid_width = len(grid[0]) if grid else 0
         # Cross-reference with PyBoy collision: if terrain says '#' but
-        # PyBoy says any sub-tile is walkable, trust PyBoy — it emulates
+        # PyBoy says ALL sub-tiles are walkable, trust PyBoy — it emulates
         # the game's actual collision logic and handles tiles (like cave
         # stairs) whose sub-tile IDs aren't in the raw collision table.
+        # Must use all() not any(): cave wall metatiles have heterogeneous
+        # sub-tile IDs where one sub-tile may coincidentally appear walkable,
+        # but the block is still impassable (player moves in whole-block steps).
         if has_collision:
             for y in range(min(grid_height, len(collision) // 2)):
                 row_w = min(grid_width, len(collision[0]) // 2) if collision else 0
                 for x in range(row_w):
-                    if grid[y][x] == '#' and any(
+                    if grid[y][x] == '#' and all(
                         collision[y * 2 + dy][x * 2 + dx] != 0
                         for dy in range(2) for dx in range(2)
                     ):

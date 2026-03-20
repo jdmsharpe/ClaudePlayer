@@ -35,6 +35,11 @@ DIR_BUTTONS: Dict[Tuple[int, int], str] = {
 # 4-connected neighbors (no diagonal movement in Pokemon)
 NEIGHBORS = ((0, -1), (0, 1), (-1, 0), (1, 0))
 
+# Type alias for tile pair collision blocked edges:
+# set of ((from_x, from_y), (to_x, to_y)) — transitions blocked by
+# the game's TilePairCollisions table (e.g. cave elevation boundaries).
+PairBlockedEdges = Set[Tuple[Tuple[int, int], Tuple[int, int]]]
+
 
 def find_path(
     grid: List[List[str]],
@@ -42,6 +47,7 @@ def find_path(
     goal: Tuple[int, int],
     blocked_chars: FrozenSet[str] = DEFAULT_BLOCKED,
     extra_passable: Optional[Set[Tuple[int, int]]] = None,
+    pair_blocked: Optional[PairBlockedEdges] = None,
 ) -> Optional[List[Tuple[int, int]]]:
     """A* pathfinding from start to goal on a character grid.
 
@@ -52,6 +58,8 @@ def find_path(
         blocked_chars: Characters that are impassable (except at goal).
         extra_passable: Positions treated as passable regardless of tile
             (e.g. a warp tile we need to walk through to reach an overshoot).
+        pair_blocked: Set of ((x1,y1),(x2,y2)) edges where tile pair
+            collisions block movement (e.g. cave elevation boundaries).
 
     Returns:
         List of (x, y) from start to goal inclusive, or None.
@@ -61,6 +69,7 @@ def find_path(
     sx, sy = start
     gx, gy = goal
     _extra = extra_passable or set()
+    _pair_bl = pair_blocked or set()
 
     if not (0 <= sx < width and 0 <= sy < height):
         return None
@@ -112,6 +121,8 @@ def find_path(
                 continue
             if (nx, ny) in closed:
                 continue
+            if ((cx, cy), (nx, ny)) in _pair_bl:
+                continue  # tile pair collision (elevation boundary)
             if not _passable(nx, ny, dx, dy):
                 continue
             tentative_g = g_cur + 1
@@ -129,6 +140,7 @@ def find_path_to_edge(
     start: Tuple[int, int],
     edge: str,
     blocked_chars: FrozenSet[str] = DEFAULT_BLOCKED,
+    pair_blocked: Optional[PairBlockedEdges] = None,
 ) -> Optional[List[Tuple[int, int]]]:
     """Find shortest A* path to any reachable cell on a grid edge.
 
@@ -140,6 +152,7 @@ def find_path_to_edge(
         start: (x, y) player position.
         edge: "NORTH", "SOUTH", "EAST", or "WEST".
         blocked_chars: Characters that are impassable (except at goal).
+        pair_blocked: Set of blocked tile-pair transition edges.
 
     Returns:
         Path to the nearest reachable edge cell, or None.
@@ -147,6 +160,7 @@ def find_path_to_edge(
     height = len(grid)
     width = len(grid[0]) if grid else 0
     sx, sy = start
+    _pair_bl = pair_blocked or set()
 
     if not (0 <= sx < width and 0 <= sy < height):
         return None
@@ -220,6 +234,8 @@ def find_path_to_edge(
                 continue
             if (nx, ny) in closed:
                 continue
+            if ((cx, cy), (nx, ny)) in _pair_bl:
+                continue  # tile pair collision
             if not _passable(nx, ny, dx, dy):
                 continue
             tentative_g = g_cur + 1

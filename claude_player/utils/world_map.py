@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Tile types worth stamping (static terrain only — NPCs/ghosts excluded)
 # Items (i) and objects (o) are included: items self-heal when collected
 # (next visit overwrites 'i' with '.'), objects are stationary.
-_STATIC_TILES = frozenset(".#,=v><TBio")  # W excluded: warp positions tracked in warp_map, rebuilt each turn
+_STATIC_TILES = frozenset(".:#,=v><TBio")  # W excluded: warp positions tracked in warp_map, rebuilt each turn
 
 # Impassable tiles for world-map A*
 _BLOCKED_TILES: FrozenSet[str] = frozenset("#=TBWio")
@@ -62,6 +62,9 @@ class WorldMap:
         # Pending route: set when NAV computes a path to a warp, cleared on
         # map transition (success → cache) or on failed movement (discard).
         self._pending_route: Optional[Tuple[int, str, List[Tuple[int, int]]]] = None  # (map_id, dest_name, path)
+        # map_id → set of ((x1,y1),(x2,y2)) edges blocked by tile pair collisions
+        # (e.g. cave elevation boundaries).  Accumulated from viewport data.
+        self.pair_blocked_edges: Dict[int, Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = {}
 
     def update_graph(
         self,
@@ -322,6 +325,7 @@ class WorldMap:
         grid: List[List[str]],
         warp_data: Optional[Dict[str, Any]] = None,
         last_map_id: Optional[int] = None,
+        pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
     ) -> None:
         """Stamp the current viewport grid into the accumulated map."""
         if map_id not in self.tiles:
@@ -344,6 +348,12 @@ class WorldMap:
         # consistent with the world map display.
         if (px_map, py_map) not in tile_map:
             tile_map[(px_map, py_map)] = "."
+
+        # Stamp tile pair collision edges (absolute coords)
+        if pair_blocked:
+            if map_id not in self.pair_blocked_edges:
+                self.pair_blocked_edges[map_id] = set()
+            self.pair_blocked_edges[map_id].update(pair_blocked)
 
         # Record warps with destination names.
         # Rebuild from scratch each update to avoid stale duplicates.
@@ -370,20 +380,20 @@ class WorldMap:
                 if d == "SOUTH":
                     edge_y = mh * 2 - 1
                     for ex in range(mw * 2):
-                        if tile_map.get((ex, edge_y)) in (".", ","):
+                        if tile_map.get((ex, edge_y)) in (".", ",", ":"):
                             warp_map.setdefault((ex, edge_y), dest)
                 elif d == "NORTH":
                     for ex in range(mw * 2):
-                        if tile_map.get((ex, 0)) in (".", ","):
+                        if tile_map.get((ex, 0)) in (".", ",", ":"):
                             warp_map.setdefault((ex, 0), dest)
                 elif d == "WEST":
                     for ey in range(mh * 2):
-                        if tile_map.get((0, ey)) in (".", ","):
+                        if tile_map.get((0, ey)) in (".", ",", ":"):
                             warp_map.setdefault((0, ey), dest)
                 elif d == "EAST":
                     edge_x = mw * 2 - 1
                     for ey in range(mh * 2):
-                        if tile_map.get((edge_x, ey)) in (".", ","):
+                        if tile_map.get((edge_x, ey)) in (".", ",", ":"):
                             warp_map.setdefault((edge_x, ey), dest)
 
     def save(self, path: str) -> None:
@@ -417,6 +427,11 @@ class WorldMap:
                 }
                 for mid, routes in self.route_cache.items()
                 if routes
+            },
+            "pair_blocked_edges": {
+                str(mid): [[list(e[0]), list(e[1])] for e in edges]
+                for mid, edges in self.pair_blocked_edges.items()
+                if edges
             },
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -463,6 +478,12 @@ class WorldMap:
                     self.route_cache[mid] = {}
                 for dest, coords in routes.items():
                     self.route_cache[mid][dest] = [tuple(c) for c in coords]
+            for mid_str, edges in data.get("pair_blocked_edges", {}).items():
+                mid = int(mid_str)
+                if mid not in self.pair_blocked_edges:
+                    self.pair_blocked_edges[mid] = set()
+                for e in edges:
+                    self.pair_blocked_edges[mid].add((tuple(e[0]), tuple(e[1])))
             logger.info(
                 f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles "
                 f"across {len(self.tiles)} maps, {len(self.map_graph)} graph nodes"
@@ -528,7 +549,7 @@ class WorldMap:
                 elif (x, y) in tile_map:
                     ch = tile_map[(x, y)]
                     # Mark walkable dead-end tiles with X (walls stay as #)
-                    if ch in (".", ",") and (x, y) in dead_end_tiles:
+                    if ch in (".", ",", ":") and (x, y) in dead_end_tiles:
                         row_chars.append("X")
                     else:
                         row_chars.append(ch)
@@ -551,7 +572,8 @@ class WorldMap:
 
         Unlike viewport A* (10x9 grid), this uses ALL explored tiles for the
         given map — hundreds or thousands of tiles — enabling multi-screen
-        maze navigation.
+        maze navigation.  Respects tile pair collision edges stored in
+        pair_blocked_edges (e.g. cave elevation boundaries).
 
         Args:
             map_id: Map ID to pathfind on.
@@ -572,6 +594,7 @@ class WorldMap:
         if start == goal:
             return [start]
         _extra_blocked = blocked or set()
+        _pair_bl = self.pair_blocked_edges.get(map_id, set())
         warp_map = self.warps.get(map_id, {})
         # Goal must be in explored territory OR be a known warp.
         # Warps are ROM-sourced and added to warp_map even if the player has
@@ -646,6 +669,8 @@ class WorldMap:
                 nx, ny = cx + dx, cy + dy
                 if (nx, ny) in closed:
                     continue
+                if ((cx, cy), (nx, ny)) in _pair_bl:
+                    continue  # tile pair collision (elevation boundary)
                 if not _passable(nx, ny, dx, dy):
                     continue
                 jitter = _tile_jitter.get((nx, ny), 0)
@@ -681,9 +706,10 @@ class WorldMap:
         if not tile_map or len(tile_map) < 30:
             return None
 
-        _WALKABLE = frozenset(".,")
+        _WALKABLE = frozenset(".,:")
         _dead = dead_end_tiles or set()
         _extra_blocked = blocked or set()
+        _pair_bl = self.pair_blocked_edges.get(map_id, set())
         warp_map = self.warps.get(map_id, {})
 
         # Precompute frontier set: walkable tiles with ≥1 unexplored neighbor
@@ -756,6 +782,8 @@ class WorldMap:
                 nx, ny = cx + ddx, cy + ddy
                 if (nx, ny) in closed:
                     continue
+                if ((cx, cy), (nx, ny)) in _pair_bl:
+                    continue  # tile pair collision (elevation boundary)
                 if not _passable(nx, ny, ddx, ddy):
                     continue
                 # Penalise dead-end tiles so path avoids them
@@ -1131,7 +1159,7 @@ class WorldMap:
         px, py = player_pos
         counts: Dict[str, int] = {"NORTH": 0, "SOUTH": 0, "EAST": 0, "WEST": 0}
 
-        _WALKABLE = frozenset(".,")  # floor + grass
+        _WALKABLE = frozenset(".,:")  # floor + grass + elevated platform
         for (tx, ty), ch in tile_map.items():
             # Only consider walkable tiles near the player
             if ch not in _WALKABLE:

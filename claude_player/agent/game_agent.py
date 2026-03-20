@@ -444,6 +444,7 @@ class GameAgent:
                         grid=spatial_data["base_grid"],
                         warp_data=spatial_data.get("warp_data_raw"),
                         last_map_id=prev_map_id,
+                        pair_blocked=spatial_data.get("pair_blocked"),
                     )
 
             # ── Unified navigation hint (single message, priority-based) ──

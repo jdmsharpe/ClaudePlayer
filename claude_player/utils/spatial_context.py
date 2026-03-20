@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, FrozenSet, List, Set, Tuple, Optional, Any
 from pyboy import PyBoy
 
 from claude_player.utils.ram_constants import (
@@ -87,6 +87,40 @@ _LEDGE_TILES: Dict[int, str] = {
 }
 
 _WATER_TILE_VRAM = 0x14 + 0x100  # Primary water tile
+
+# ── Tile pair collisions (pret/pokered data/tilesets/pair_collision_tile_ids.asm) ──
+# Pairs of raw wTileMap tile IDs that BLOCK movement between them, even though
+# both tiles are individually walkable.  Used by the game engine to simulate
+# elevation differences in caves (can't walk off a cliff) and terrain barriers
+# in forests.  The check is bidirectional: standing on tile A blocks moving to
+# tile B, AND vice versa.  Keyed by tileset ID (wCurMapTileset at 0xD367).
+_TILE_PAIR_COLLISIONS: Dict[int, List[Tuple[int, int]]] = {
+    17: [  # CAVERN (Mt. Moon, Rock Tunnel, Seafoam Islands, Victory Road, Cerulean Cave)
+        (0x20, 0x05),
+        (0x41, 0x05),
+        (0x2A, 0x05),
+        (0x05, 0x21),
+    ],
+    3: [  # FOREST (Viridian Forest)
+        (0x30, 0x2E),
+        (0x52, 0x2E),
+        (0x55, 0x2E),
+        (0x56, 0x2E),
+        (0x20, 0x2E),
+        (0x5E, 0x2E),
+        (0x5F, 0x2E),
+    ],
+}
+# Pre-compute as frozensets for O(1) bidirectional lookup
+_TILE_PAIR_SETS: Dict[int, Set[FrozenSet[int]]] = {
+    tid: {frozenset(pair) for pair in pairs}
+    for tid, pairs in _TILE_PAIR_COLLISIONS.items()
+}
+
+# Elevated cave platform tiles — shown as ':' in the grid for visual distinction.
+# These tiles form pair collisions with the ground tile (0x05) in CAVERN tilesets,
+# meaning you can't walk between them directly — must use stairs/steps.
+_CAVE_ELEVATED_TILES = frozenset({0x20, 0x21, 0x2A, 0x41})
 
 # Cuttable tree BLOCK IDs (metatile-level, from pret/pokered data/tilesets/cut_tree_blocks.asm)
 # Block IDs are unique per metatile, unlike VRAM sub-tiles which are shared
@@ -242,18 +276,25 @@ def _extract_collision_data(pyboy: PyBoy) -> Optional[List[List[int]]]:
     return None
 
 
-def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
+def _extract_terrain_data(
+    pyboy: PyBoy,
+) -> Tuple[Optional[List[List[str]]], Set[Tuple[Tuple[int, int], Tuple[int, int]]]]:
     """Classify visible tiles into terrain types for grid rendering.
 
-    Returns a 9x10 (height x width) grid of single-char terrain markers:
-        '.' = normal walkable
-        '#' = blocked (wall/tree/etc.)
-        ',' = tall grass (walkable, triggers wild encounters)
-        'v' = south-facing ledge (one-way jump down)
-        '>' = east-facing ledge (one-way jump right)
-        '<' = west-facing ledge (one-way jump left)
-        '=' = water (blocked without Surf)
-        'T' = cuttable tree (blocked, need Cut HM)
+    Returns a tuple of:
+        terrain: 9x10 (height x width) grid of single-char terrain markers:
+            '.' = normal walkable (ground level in caves)
+            ':' = elevated platform (walkable, but pair-collision blocks
+                  transitions to/from ground '.' tiles — must use stairs)
+            '#' = blocked (wall/tree/etc.)
+            ',' = tall grass (walkable, triggers wild encounters)
+            'v' = south-facing ledge (one-way jump down)
+            '>' = east-facing ledge (one-way jump right)
+            '<' = west-facing ledge (one-way jump left)
+            '=' = water (blocked without Surf)
+            'T' = cuttable tree (blocked, need Cut HM)
+        pair_blocked: set of ((x1,y1), (x2,y2)) viewport-relative edges
+            where tile pair collisions block movement between them.
 
     Walkability uses wTileMap (0xC3A0) raw tile IDs compared directly against
     the raw collision table — the same comparison CheckForCollision performs,
@@ -325,6 +366,8 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
                 walkable_raw.add(grass_raw)  # grass is walkable
 
         # Classify each metatile
+        pair_set = _TILE_PAIR_SETS.get(map_tileset, set())
+        is_cave = map_tileset == 17  # CAVERN tileset
         terrain: List[List[str]] = []
         for my in range(grid_h):
             row_out: List[str] = []
@@ -343,15 +386,37 @@ def _extract_terrain_data(pyboy: PyBoy) -> Optional[List[List[str]]]:
                     # All 4 sub-tiles must be walkable in the raw collision table.
                     # Tiles missed here (like cave stairs) are caught by the
                     # PyBoy collision cross-reference in _format_spatial_text.
-                    row_out.append('.')
+                    # Mark elevated cave platform tiles as ':' for visual distinction.
+                    if is_cave and raw in _CAVE_ELEVATED_TILES:
+                        row_out.append(':')
+                    else:
+                        row_out.append('.')
                 else:
                     row_out.append('#')
             terrain.append(row_out)
 
-        return terrain
+        # ── Compute tile pair collision edges ──
+        # For each adjacent pair of walkable tiles, check if the raw tile IDs
+        # form a collision pair in the current tileset.  These edges block A*
+        # even though both tiles are individually walkable.
+        pair_blocked: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
+        if pair_set:
+            for my in range(grid_h):
+                for mx in range(grid_w):
+                    raw_here = wmap_raw[my][mx]
+                    for dy, dx in ((0, 1), (1, 0)):  # right and down (symmetry covers all)
+                        ny, nx = my + dy, mx + dx
+                        if ny < grid_h and nx < grid_w:
+                            raw_there = wmap_raw[ny][nx]
+                            if frozenset({raw_here, raw_there}) in pair_set:
+                                # Both directions blocked (bidirectional)
+                                pair_blocked.add(((mx, my), (nx, ny)))
+                                pair_blocked.add(((nx, ny), (mx, my)))
+
+        return terrain, pair_blocked
     except Exception as e:
         logger.debug(f"Terrain data unavailable: {e}")
-        return None
+        return None, set()
 
 
 def _extract_cut_tree_positions(pyboy: PyBoy) -> Optional[set]:
@@ -769,6 +834,7 @@ def _format_warp_text(
     warp_data: Optional[Dict[str, Any]],
     grid: Optional[List[List[str]]] = None,
     player_pos: Optional[Tuple[int, int]] = None,
+    pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
 ) -> str:
     """Format warp/connection data with A*-computed paths when available."""
     if not warp_data:
@@ -814,7 +880,7 @@ def _format_warp_text(
             openings.sort(key=lambda pos: abs(pos[0] - px) + abs(pos[1] - py))
             # Try A* to closest openings — only trust hint if path exists
             for ox, oy in openings[:3]:
-                path = find_path(grid, player_pos, (ox, oy))
+                path = find_path(grid, player_pos, (ox, oy), pair_blocked=pair_blocked)
                 if path:
                     buttons = path_to_buttons(path)
                     return f"  [path to edge opening: {buttons}]" if buttons else ""
@@ -836,7 +902,7 @@ def _format_warp_text(
         for conn in warp_data["connections"]:
             hint = ""
             if can_pathfind:
-                edge_path = find_path_to_edge(grid, player_pos, conn["direction"])
+                edge_path = find_path_to_edge(grid, player_pos, conn["direction"], pair_blocked=pair_blocked)
                 if edge_path:
                     buttons = path_to_buttons(edge_path)
                     # Add one extra tile to walk OFF the edge
@@ -884,7 +950,8 @@ def _format_warp_text(
                 # Mark the warp tile as passable so A* routes THROUGH it
                 # to reach the overshoot (not around it).
                 over_path = find_path(grid, player_pos, over_pos,
-                                      extra_passable={exact_pos}) if over_in_grid else None
+                                      extra_passable={exact_pos},
+                                      pair_blocked=pair_blocked) if over_in_grid else None
 
                 if over_path:
                     buttons = path_to_buttons(over_path)
@@ -893,7 +960,7 @@ def _format_warp_text(
                     # Overshoot blocked or off-screen — path to exact trigger tile
                     wgx, wgy = exact_pos
                     if 0 <= wgx < grid_w and 0 <= wgy < grid_h:
-                        warp_path = find_path(grid, player_pos, exact_pos)
+                        warp_path = find_path(grid, player_pos, exact_pos, pair_blocked=pair_blocked)
                         if warp_path:
                             buttons = path_to_buttons(warp_path)
                             hint = f"  [path: {buttons}]" if buttons else "  [on this tile — step onto W]"
@@ -969,6 +1036,7 @@ def _format_npc_text(
     grid: Optional[List[List[str]]] = None,
     player_pos: Optional[Tuple[int, int]] = None,
     player_facing: Optional[str] = None,
+    pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
 ) -> str:
     """Format NPC/item data with A*-computed paths when available."""
     if not npc_data:
@@ -1014,7 +1082,7 @@ def _format_npc_text(
                 if entity["is_item"]:
                     # Items: try path directly TO the tile (overworld pickups).
                     # If blocked (item on table), fall through to adjacent+face.
-                    item_path = find_path(grid, player_pos, (tx, ty))
+                    item_path = find_path(grid, player_pos, (tx, ty), pair_blocked=pair_blocked)
                     if item_path:
                         buttons = path_to_buttons(item_path)
                         hint = f"  [path: {buttons}]" if buttons else "  [already here]"
@@ -1032,7 +1100,7 @@ def _format_npc_text(
                             best_path = [player_pos]
                             best_adj = (ax, ay)
                             break
-                        adj_path = find_path(grid, player_pos, (ax, ay))
+                        adj_path = find_path(grid, player_pos, (ax, ay), pair_blocked=pair_blocked)
                         if adj_path and (best_path is None or len(adj_path) < len(best_path)):
                             best_path = adj_path
                             best_adj = (ax, ay)
@@ -1123,6 +1191,7 @@ def _format_spatial_text(
     cut_tree_positions: Optional[set] = None,
     player_facing: Optional[str] = None,
     tile_terrain: Optional[str] = None,
+    pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
 ) -> str:
     """Build simplified spatial context for continuous mode.
 
@@ -1246,7 +1315,8 @@ def _format_spatial_text(
         _immediate_blocked: set = set()
         _warp_adjacent: set = set()  # directions with a building-warp tile immediately adjacent
         _ledge_pass = {'v': (0, 1), '>': (1, 0), '<': (-1, 0)}
-        _walkable = {'.', ',', '@', 'g'}  # floor, grass, player, ghost — NOT 'W' (warp teleports) or signs (solid)
+        _walkable = {'.', ':', ',', '@', 'g'}  # floor, platform, grass, player, ghost — NOT 'W' (warp teleports) or signs (solid)
+        _pair_bl = pair_blocked or set()
         if player_screen_pos and grid:
             _cpx, _cpy = player_screen_pos
             for _lbl, _dx, _dy in [("UP", 0, -1), ("DOWN", 0, 1),
@@ -1254,7 +1324,9 @@ def _format_spatial_text(
                 _nx, _ny = _cpx + _dx, _cpy + _dy
                 if 0 <= _nx < grid_width and 0 <= _ny < grid_height:
                     _c = grid[_ny][_nx]
-                    if _c in _ledge_pass:
+                    if ((_cpx, _cpy), (_nx, _ny)) in _pair_bl:
+                        _immediate_blocked.add(_lbl)  # tile pair collision (elevation)
+                    elif _c in _ledge_pass:
                         if (_dx, _dy) != _ledge_pass[_c]:
                             _immediate_blocked.add(_lbl)
                     elif _c == 'W':
@@ -1354,7 +1426,7 @@ def _format_spatial_text(
             edge_name = _MOVE_TO_EDGE.get(_ct_dir)
             if not edge_name:
                 continue
-            edge_path = find_path_to_edge(grid, player_screen_pos, edge_name)
+            edge_path = find_path_to_edge(grid, player_screen_pos, edge_name, pair_blocked=pair_blocked)
             if edge_path:
                 buttons = path_to_buttons(edge_path)
                 if buttons:
@@ -1374,7 +1446,7 @@ def _format_spatial_text(
             for alt_dir in _perp.get(_ct_dir, []):
                 alt_edge = _MOVE_TO_EDGE.get(alt_dir)
                 if alt_edge:
-                    alt_path = find_path_to_edge(grid, player_screen_pos, alt_edge)
+                    alt_path = find_path_to_edge(grid, player_screen_pos, alt_edge, pair_blocked=pair_blocked)
                     if alt_path:
                         alt_buttons = path_to_buttons(alt_path)
                         if alt_buttons:
@@ -1395,12 +1467,12 @@ def _format_spatial_text(
 
     # NPC/item text with A* paths
     has_grid = has_collision or terrain is not None
-    npc_text = _format_npc_text(npc_data, grid if has_grid else None, player_screen_pos, player_facing)
+    npc_text = _format_npc_text(npc_data, grid if has_grid else None, player_screen_pos, player_facing, pair_blocked=pair_blocked)
     if npc_text:
         lines.append(npc_text)
 
     # Warp/connection text with A* paths
-    warp_text = _format_warp_text(warp_data, grid if has_grid else None, player_screen_pos)
+    warp_text = _format_warp_text(warp_data, grid if has_grid else None, player_screen_pos, pair_blocked=pair_blocked)
     if warp_text:
         lines.append(warp_text)
 
@@ -1490,7 +1562,7 @@ def extract_spatial_context(
         tile_to_char = _build_tile_legend(visible)
         sprites = _extract_sprites(pyboy)
         collision = _extract_collision_data(pyboy)
-        terrain = _extract_terrain_data(pyboy)
+        terrain, pair_blocked = _extract_terrain_data(pyboy)
         cut_tree_pos = _extract_cut_tree_positions(pyboy)
         warp_data = _extract_warp_data(pyboy)
         npc_data = _extract_npc_data(pyboy, map_number=warp_data["map_number"] if warp_data else None)
@@ -1553,6 +1625,7 @@ def extract_spatial_context(
             cut_tree_positions=cut_tree_pos,
             player_facing=player_facing,
             tile_terrain=tile_terrain,
+            pair_blocked=pair_blocked,
         )
 
         # Player screen position (metatile coords) for world map accumulator
@@ -1606,6 +1679,19 @@ def extract_spatial_context(
                     continue
                 npc_abs_positions.append((pmx + npc["dx"], pmy + npc["dy"]))
 
+        # Convert viewport-relative pair_blocked edges to absolute map coords
+        # for world-map A* integration.
+        abs_pair_blocked: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
+        if pair_blocked and player_map_pos and player_screen_pos:
+            pmx, pmy = player_map_pos
+            psx, psy = player_screen_pos
+            for (vx1, vy1), (vx2, vy2) in pair_blocked:
+                ax1 = pmx + (vx1 - psx)
+                ay1 = pmy + (vy1 - psy)
+                ax2 = pmx + (vx2 - psx)
+                ay2 = pmy + (vy2 - psy)
+                abs_pair_blocked.add(((ax1, ay1), (ax2, ay2)))
+
         return {
             "text": text,
             "visible_tilemap": visible,
@@ -1617,6 +1703,7 @@ def extract_spatial_context(
             "map_number": map_number,
             "warp_data_raw": warp_data,
             "npc_abs_positions": npc_abs_positions,
+            "pair_blocked": abs_pair_blocked,
         }
     except Exception as e:
         logger.error(f"Error extracting spatial context: {e}", exc_info=True)

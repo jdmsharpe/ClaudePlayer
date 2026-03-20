@@ -14,11 +14,17 @@ class MessageUtils:
         text_blocks = [block for block in content_blocks if block.type == "text"]
         thinking_blocks = [block for block in content_blocks if block.type == "thinking"]
         
-        # Log Claude's thinking if available
+        # Log Claude's thinking: full text at DEBUG, 1-line summary at INFO
         if thinking_blocks:
-            logging.info("CLAUDE'S THINKING:")
+            total_chars = sum(len(b.thinking) for b in thinking_blocks)
+            # First 120 chars as preview, collapsed to single line
+            preview = thinking_blocks[0].thinking[:120].replace("\n", " ").strip()
+            if total_chars > 120:
+                preview += "..."
+            logging.info(f"THINKING: {total_chars} chars — {preview}")
+            logging.debug("CLAUDE'S THINKING (full):")
             for block in thinking_blocks:
-                logging.info(f"  {block.thinking}")
+                logging.debug(f"  {block.thinking}")
 
         # Log Claude's text response
         if text_blocks:

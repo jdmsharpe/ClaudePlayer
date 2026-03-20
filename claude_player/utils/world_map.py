@@ -896,6 +896,9 @@ class WorldMap:
         # NPC positions as temporary obstacles
         npc_blocked: Set[Tuple[int, int]] = set(npc_positions) if npc_positions else set()
 
+        # Flag for callers to detect exhausted-warp fallback
+        self._used_exhausted_warp = False
+
         # Exhausted warps: soft-deprioritize (try fresh warps first)
         exhausted = self.get_active_exhausted_warps(map_id, current_turn)
 
@@ -972,6 +975,7 @@ class WorldMap:
                         best_name = dest_name
                         best_len = len(path)
                 if best_path:
+                    self._used_exhausted_warp = True
                     logger.info(
                         f"NAV: using exhausted warp to {best_name} as fallback "
                         f"(no fresh alternative on map 0x{map_id:02X})"

@@ -11,6 +11,9 @@ from typing import Dict, List, Optional, Tuple
 
 from claude_player.utils.world_map import WorldMap
 
+# Last NAV method used — set by compute_nav(), read by game_agent for TURN_SUMMARY
+last_nav_method: str = ""
+
 # Direction keyword mapping for COMPASS fallback NAV parsing
 _DIR_TO_COMPASS_KW = {
     "NORTH": "UP", "SOUTH": "DOWN",
@@ -139,6 +142,8 @@ def compute_nav(
     Returns:
         The spatial_text string, potentially with a NAV hint injected.
     """
+    global last_nav_method
+    last_nav_method = ""
     dead_end_zones = world_map.dead_ends.get(map_id, [])
     wm_nav = None
 
@@ -187,6 +192,13 @@ def compute_nav(
                 variance=variance,
             )
             if wm_nav:
+                # Detect if this was a cached route or exhausted-warp fallback
+                if "cached" in wm_nav:
+                    last_nav_method = "cache"
+                elif getattr(world_map, "_used_exhausted_warp", False):
+                    last_nav_method = "exhausted"
+                else:
+                    last_nav_method = "graph"
                 logging.info(f"NAV result: {wm_nav}")
                 break
             # A* couldn't reach this hop — exclude and retry
@@ -219,6 +231,7 @@ def compute_nav(
                     f"NAV(map): to unexplored frontier ({total_dist} tiles): "
                     f"{buttons} — re-evaluate after executing"
                 )
+                last_nav_method = "frontier"
                 logging.info(f"NAV frontier fallback (graph failed): {wm_nav}")
 
     # ── Step 2b: COMPASS fallback (no graph data or frontier empty) ──
@@ -243,8 +256,10 @@ def compute_nav(
             variance=variance,
         )
         if wm_nav:
+            last_nav_method = "compass"
             logging.info(f"NAV result: {wm_nav}")
         else:
+            last_nav_method = "none"
             logging.info("NAV result: None (no path found)")
 
     # ── Step 3: Inject into spatial text ──

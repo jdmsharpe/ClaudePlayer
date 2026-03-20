@@ -135,6 +135,10 @@ class GameAgent:
         self._last_move_direction: str | None = None  # Last directional token (U/D/L/R)
         self._consecutive_reversals = 0  # Count of back-to-back direction reversals
 
+        # Track which directions were blocked at current position
+        self._blocked_directions: set[str] = set()  # e.g. {"U", "R", "L"}
+        self._blocked_at_pos: tuple[int, int] | None = None  # position where blocks were recorded
+
         # Dead-end memory is stored directly in self._world_map.dead_ends so it
         # persists across sessions (serialized alongside tiles/warps in world_map.json).
         self._current_map_id: int | None = None  # tracks map changes for reset
@@ -151,6 +155,15 @@ class GameAgent:
         # Per-turn token/cost stash for TURN_SUMMARY logging
         self._last_turn_tokens = 0
         self._last_turn_cost = 0.0
+
+        # Periodic aggregate stats (emitted every _STATS_INTERVAL turns)
+        self._stats_interval = 25
+        self._stats_blocked = 0  # UNCHANGED outcomes since last stats
+        self._stats_moved = 0    # successful moves since last stats
+        self._stats_cost = 0.0   # cost since last stats
+        self._stats_thinking_only = 0  # THINKING-ONLY burns since last stats
+        self._stats_no_action = 0      # NO-ACTION turns since last stats
+        self._stats_last_turn = 0      # turn number at last stats emission
 
         # Cumulative token/cost tracking (deferred until after _save_dir is set)
 
@@ -1049,6 +1062,7 @@ class GameAgent:
                 # Detect thinking-only responses (no text or tool output)
                 if not message_content["text_blocks"] and not message_content["tool_use_blocks"]:
                     self._consecutive_thinking_only += 1
+                    self._stats_thinking_only += 1
                     logging.warning(
                         f"THINKING-ONLY RESPONSE: t={self.game_state.turn_count} "
                         f"(#{self._consecutive_thinking_only}, "
@@ -1400,6 +1414,7 @@ class GameAgent:
                 if not actions and message_content and message_content.get("tool_use_blocks"):
                     if any(t.name != "send_inputs" for t in message_content["tool_use_blocks"]):
                         no_action = True
+                        self._stats_no_action += 1
                         logging.warning(
                             f"NO-ACTION TURN: t={self.game_state.turn_count} "
                             f"Model used tools but didn't send_inputs — nudging"
@@ -1457,14 +1472,40 @@ class GameAgent:
                     _flags += " battle=true"
                 if no_action:
                     _flags += " NO_ACTION"
+                # Gather stuck + NAV diagnostics for TURN_SUMMARY
+                from claude_player.agent.nav_planner import last_nav_method as _nav_method
+                _stuck_str = f" stuck={self._stuck_count}" if self._stuck_count > 0 else ""
+                _nav_str = f" nav={_nav_method}" if _nav_method else ""
                 logging.info(
                     f"TURN_SUMMARY: t={self.game_state.turn_count}"
                     f" map={_map_str} pos={_pos_str}{_hp_str}{_flags}"
+                    f"{_stuck_str}{_nav_str}"
                     f" goal=\"{self.game_state.current_goal or 'None'}\""
                     f" cost=${self._last_turn_cost:.4f} tokens={self._last_turn_tokens}"
                     f"{_tools_str}{_actions_str}"
                     f" duration={last_analysis_duration:.1f}s"
                 )
+
+                # Accumulate periodic stats
+                self._stats_cost += self._last_turn_cost
+                _cur_turn = self.game_state.turn_count
+                if _cur_turn - self._stats_last_turn >= self._stats_interval:
+                    _total_moves = self._stats_blocked + self._stats_moved
+                    _block_pct = (self._stats_blocked / _total_moves * 100) if _total_moves > 0 else 0
+                    logging.info(
+                        f"STATS: t={self._stats_last_turn + 1}-{_cur_turn}"
+                        f" blocked={_block_pct:.0f}%({self._stats_blocked}/{_total_moves})"
+                        f" cost=${self._stats_cost:.2f}"
+                        f" thinking_only={self._stats_thinking_only}"
+                        f" no_action={self._stats_no_action}"
+                        f" session=${self.cost_tracker.cost_usd:.2f}"
+                    )
+                    self._stats_blocked = 0
+                    self._stats_moved = 0
+                    self._stats_cost = 0.0
+                    self._stats_thinking_only = 0
+                    self._stats_no_action = 0
+                    self._stats_last_turn = _cur_turn
 
                 logging.info(f"======= END ANALYSIS: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =======")
                 timing_parts = f"total={last_analysis_duration:.2f}s (prep={prep_duration:.2f}s, action={action_duration:.2f}s)"
@@ -1628,11 +1669,35 @@ class GameAgent:
                     _post_map = self.pyboy.memory[ADDR_CUR_MAP]
                     if _pre_map != _post_map:
                         self._last_action_feedback = f"Executed: {action} — map changed (warped)"
+                        self._blocked_directions.clear()
+                        self._blocked_at_pos = None
                     elif _pre_x == _post_x and _pre_y == _post_y:
-                        self._last_action_feedback = f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}). Path was blocked."
+                        # Extract directions attempted from action string
+                        _dirs_tried = set(re.findall(r'[UDLR]', action.upper()))
+                        _dir_names = {"U": "UP", "D": "DOWN", "L": "LEFT", "R": "RIGHT"}
+                        _cur_pos = (_post_x, _post_y)
+                        if self._blocked_at_pos != _cur_pos:
+                            self._blocked_directions.clear()
+                            self._blocked_at_pos = _cur_pos
+                        self._blocked_directions.update(_dirs_tried)
+                        _all_dirs = {"U", "D", "L", "R"}
+                        _untried = _all_dirs - self._blocked_directions
+                        _blocked_str = ",".join(sorted(_dir_names[d] for d in self._blocked_directions))
+                        _untried_str = ",".join(sorted(_dir_names[d] for d in _untried)) if _untried else "NONE"
+                        self._last_action_feedback = (
+                            f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}). Path was blocked.\n"
+                            f"BLOCKED directions at ({_post_x},{_post_y}): {_blocked_str} | Untried: {_untried_str}"
+                        )
                     else:
                         self._last_action_feedback = f"Executed: {action} — moved ({_pre_x},{_pre_y})→({_post_x},{_post_y})"
+                        self._blocked_directions.clear()
+                        self._blocked_at_pos = None
                     logging.info(f"OUTCOME: t={self.game_state.turn_count} {self._last_action_feedback}")
+                    # Track stats for periodic aggregate
+                    if _pre_x == _post_x and _pre_y == _post_y and _pre_map == _post_map:
+                        self._stats_blocked += 1
+                    else:
+                        self._stats_moved += 1
                     # Refresh battle context after action so the web/terminal cursor
                     # matches the live game state (cursor RAM updates immediately on button press)
                     if self._in_battle:
@@ -1778,10 +1843,7 @@ class GameAgent:
                 if fps_elapsed >= fps_log_interval:
                     current_fps = fps_frame_count / fps_elapsed
                     fps_target = 59.7
-                    if current_fps < fps_target * 0.9:
-                        logging.warning(f"FPS: {current_fps:.1f} (target: {fps_target}, frames: {fps_frame_count} in {fps_elapsed:.1f}s)")
-                    else:
-                        logging.debug(f"FPS: {current_fps:.1f} (target: {fps_target}, frames: {fps_frame_count} in {fps_elapsed:.1f}s)")
+                    logging.debug(f"FPS: {current_fps:.1f} (target: {fps_target}, frames: {fps_frame_count} in {fps_elapsed:.1f}s)")
                     self.display.update(fps=current_fps)
                     fps_frame_count = 0
                     fps_last_log_time = current_time

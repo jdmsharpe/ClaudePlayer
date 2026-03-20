@@ -423,7 +423,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   /* Tile cell backgrounds */
   .tc-w  { background: #0d1117; color: #21262d; }
-  .tc-f  { background: #161b22; color: #3a4048; }
+  .tc-f  { background: #1c2028; color: #5a6270; }
   .tc-el { background: #0e1216; color: #252a30; }
   .tc-g  { background: #071b05; color: #3fb950; }
   .tc-a  { background: #020d1a; color: #58a6ff; }

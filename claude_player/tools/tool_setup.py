@@ -131,7 +131,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         direction = tool_input["direction"].lower()
         distance = min(max(tool_input.get("distance", 4), 1), 8)
 
-        terrain = _extract_terrain_data(self.pyboy)
+        terrain, pair_blocked = _extract_terrain_data(self.pyboy)
         if terrain is None:
             return [{"type": "text", "text": "Error: Terrain data unavailable"}]
 
@@ -151,7 +151,8 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[direction]
 
         tile_desc = {
-            '.': 'walkable', '#': 'BLOCKED (wall)', ',': 'grass (walkable)',
+            '.': 'walkable', ':': 'elevated platform (walkable, stairs needed to change level)',
+            '#': 'BLOCKED (wall)', ',': 'grass (walkable)',
             'v': 'ledge DOWN', '<': 'ledge LEFT', '>': 'ledge RIGHT',
             '=': 'water (BLOCKED)', 'T': 'tree (BLOCKED, need Cut)', 'W': 'warp/exit',
             'i': 'ITEM (face it + press A to pick up)',
@@ -168,8 +169,10 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
 
         lines = []
         first_blocked = None
+        prev_x, prev_y = px, py
         x, y = px, py
         for i in range(distance):
+            prev_x, prev_y = x, y
             x += dx
             y += dy
             if 0 <= x < grid_w and 0 <= y < grid_h:
@@ -180,7 +183,11 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
                     blocked = True
                 else:
                     desc = tile_desc.get(t, f'unknown ({t})')
-                if t in ('#', '=', 'T') or t in sprite_blocked:
+                # Check tile pair collision (elevation boundary)
+                if ((prev_x, prev_y), (x, y)) in pair_blocked:
+                    desc += f' — ELEVATION BOUNDARY (cannot cross, find stairs)'
+                    blocked = True
+                elif t in ('#', '=', 'T') or t in sprite_blocked:
                     blocked = True
                 elif t in ledge_blocks and ledge_blocks[t] == direction:
                     desc += f' — IMPASSABLE going {direction}'

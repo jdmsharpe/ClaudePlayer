@@ -115,8 +115,8 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                     status5 = pyboy.memory[ADDR_STATUS_FLAGS5]
                     wy = pyboy.memory[ADDR_WINDOW_Y]
                     text_active = bool(status5 & 0x01) or wy < 144
-                    if not text_active and a_presses > 0:
-                        # Text cleared — we're done
+                    if not text_active:
+                        # Text cleared (or wasn't active) — we're done
                         break
                     # Snapshot visible text tiles for stale-detection
                     snapshot = bytes(pyboy.memory[_TILE_MAP + i] for i in range(360))
@@ -135,10 +135,12 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                         if _stopping():
                             break
                         _tick()
-                    pyboy.send_input(WindowEvent.RELEASE_BUTTON_A)
+                    pyboy.send_input(WindowEvent.RELEASE_BUTTON_A)  # always release
                     _tick()
                     frames_used += _A_HOLD + 1
                     a_presses += 1
+                    if _stopping():
+                        break
                     # Gap between presses
                     for _ in range(_A_GAP):
                         if _stopping():

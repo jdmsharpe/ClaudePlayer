@@ -8,7 +8,7 @@ class GameState:
     def __init__(self):
         self.identified_game = None
         self.cartridge_title = ""
-        # Two-tier goal system: strategic (milestone) + tactical (map-specific)
+        # Three-tier goal system: strategic (milestone) + tactical (map-specific) + side objectives (persistent)
         self.strategic_goal: Optional[str] = None
         self.tactical_goal: Optional[str] = None
         self._tactical_goal_override: bool = False  # True when agent manually set tactical goal

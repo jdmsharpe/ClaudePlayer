@@ -120,7 +120,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
     def handle_complete_side_objective(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
         query = tool_input["objective"].lower()
         for i, obj in enumerate(self.game_state.side_objectives):
-            if query in obj.lower() or obj.lower() in query:
+            if query in obj.lower():
                 removed = self.game_state.side_objectives.pop(i)
                 logging.info(f"SIDE OBJECTIVE COMPLETED: {removed}")
                 remaining = self.game_state.side_objectives

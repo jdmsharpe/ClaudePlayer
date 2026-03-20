@@ -174,7 +174,10 @@ class MemoryManager:
         messages.append({"role": "user", "content": user_block})
 
         is_initial = self.update_count == 1 and not current_kb
-        system = INITIAL_KB_PROMPT if is_initial else KB_SYSTEM_PROMPT
+        system_text = INITIAL_KB_PROMPT if is_initial else KB_SYSTEM_PROMPT
+        # Wrap as cached content block so the static KB system prompt
+        # gets cache-read pricing on subsequent KB calls within 5 min
+        system = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
 
         try:
             memory_config = self.config.MEMORY.copy() if hasattr(self.config, 'MEMORY') else {}

@@ -370,6 +370,10 @@ def extract_menu_context(
         swap_pending = pyboy.memory[_ADDR_MENU_TO_SWAP]
         scroll_offset = pyboy.memory[_ADDR_LIST_SCROLL]
 
+        # Reject invalid cursor state (e.g. stale battle cursor after battle ends)
+        if cursor > max_item:
+            return None
+
         # Check for naming screen first (special case — doesn't use standard menu)
         naming_type = pyboy.memory[_ADDR_NAMING_TYPE]
         # Naming screen sets wNamingScreenType to 0-2, but this byte might be stale.

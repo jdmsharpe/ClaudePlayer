@@ -76,7 +76,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "ACTION": {},
 
         "MEMORY": {
-            "MEMORY_INTERVAL": 30,
+            "MEMORY_INTERVAL": 20,
             "MODEL": "claude-sonnet-4-6",
             "THINKING": True,
             "DYNAMIC_THINKING": True,

@@ -37,7 +37,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
     # Register set_strategic_goal tool
     @registry.register(
         name="set_strategic_goal",
-        description="Set the high-level strategic goal (milestone objective). Auto-goal normally handles this from story flags. Only use to override with a specific mission like 'heal at Pokémon Center' or 'buy Potions at Mart'. Clears any tactical override so map-based hints resume.",
+        description="Set the high-level strategic goal (milestone objective). Auto-goal normally handles this from story flags — do NOT override unless the auto-goal is genuinely wrong. For temporary tasks like healing, buying items, or catching Pokemon, use add_side_objective instead. Clears any tactical override so map-based hints resume.",
         input_schema={
             "type": "object",
             "properties": {
@@ -74,6 +74,7 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
     def handle_set_tactical_goal(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
         self.game_state.tactical_goal = tool_input["goal"]
         self.game_state._tactical_goal_override = True
+        self.game_state._tactical_override_grace = 1  # survive 1 map change (e.g. floor hop)
         logging.info(f"TACTICAL GOAL SET TO: {self.game_state.tactical_goal}")
         return [{"type": "text", "text": f"Tactical goal set to: {self.game_state.tactical_goal} (auto-clears on map change)"}]
 

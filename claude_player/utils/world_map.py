@@ -164,11 +164,13 @@ class WorldMap:
             pair_warps.setdefault((fm, tm), []).append(wp)
 
         for (a, b), a_warps in pair_warps.items():
+            if a == b:
+                continue  # intra-map warp (e.g. stairs within same floor), not cycling
             if (b, a) not in pair_warps:
                 continue
             b_warps = pair_warps[(b, a)]
-            # Need at least 2 total transitions in each direction to confirm cycling
-            if len(a_warps) < 2 or len(b_warps) < 1:
+            # Need at least 2 full round-trips (3+2 transitions) to confirm cycling
+            if len(a_warps) < 3 or len(b_warps) < 2:
                 continue
             # Mark the specific warps used as exhausted
             for wp in a_warps:
@@ -180,9 +182,11 @@ class WorldMap:
                 f"exhausted {len(a_warps)} warps on 0x{a:02X}, "
                 f"{len(b_warps)} warps on 0x{b:02X}"
             )
-            # Invalidate route cache for both maps to prevent NAV
-            # from reusing a cached path to the wrong warp
+            # Invalidate route cache for cycling maps — but skip from_map
+            # since it was just confirmed as a working route this transition
             for mid in (a, b):
+                if mid == from_map:
+                    continue  # just confirmed; don't invalidate
                 if mid in self.route_cache:
                     logger.info(f"ROUTE CACHE INVALIDATED: map 0x{mid:02X} (cycling)")
                     del self.route_cache[mid]
@@ -490,6 +494,14 @@ class WorldMap:
                 for mid, edges in self.pair_blocked_edges.items()
                 if edges
             },
+            "exhausted_warps": {
+                str(mid): {f"{x},{y}": turn for (x, y), turn in warps.items()}
+                for mid, warps in self._exhausted_warps.items()
+                if warps
+            },
+            "warp_transitions": [
+                [fm, list(wp), tm] for fm, wp, tm in self._warp_transitions
+            ],
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -541,9 +553,18 @@ class WorldMap:
                     self.pair_blocked_edges[mid] = set()
                 for e in edges:
                     self.pair_blocked_edges[mid].add((tuple(e[0]), tuple(e[1])))
+            for mid_str, warps in data.get("exhausted_warps", {}).items():
+                mid = int(mid_str)
+                for key, turn in warps.items():
+                    x, y = map(int, key.split(","))
+                    self._exhausted_warps.setdefault(mid, {})[(x, y)] = turn
+            for entry in data.get("warp_transitions", []):
+                fm, wp, tm = entry[0], tuple(entry[1]), entry[2]
+                self._warp_transitions.append((fm, wp, tm))
             logger.info(
                 f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles "
-                f"across {len(self.tiles)} maps, {len(self.map_graph)} graph nodes"
+                f"across {len(self.tiles)} maps, {len(self.map_graph)} graph nodes, "
+                f"{sum(len(w) for w in self._exhausted_warps.values())} exhausted warps"
             )
         except Exception as e:
             logger.warning(f"WorldMap load failed: {e}")

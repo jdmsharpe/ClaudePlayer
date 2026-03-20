@@ -93,7 +93,7 @@ Configuration is loaded from `config.json` (created automatically on first run i
 
   // Memory agent settings (inherits MODEL_DEFAULTS; add keys here to override)
   "MEMORY": {
-    "MEMORY_INTERVAL": 30,               // Run memory agent every N turns
+    "MEMORY_INTERVAL": 20,               // Run memory agent every N turns
     "MODEL": "claude-sonnet-4-6",        // Claude model to use
     "THINKING": true,
     "DYNAMIC_THINKING": true,

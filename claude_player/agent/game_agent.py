@@ -386,7 +386,7 @@ class GameAgent:
             current_pos = spatial_data.get("player_pos")
             detected_state = spatial_data.get("game_state")
             in_overworld = detected_state and detected_state.get("state") == "overworld"
-            if not in_overworld or screen_changed:
+            if not in_overworld:
                 self._stuck_count = 0
             elif self._previous_player_pos is not None and current_pos == self._previous_player_pos:
                 self._stuck_count += 1
@@ -422,9 +422,14 @@ class GameAgent:
                             arrival_pos=current_pos,
                         )
                     self._visited_positions.clear()
-                    # Evict stale tactical goal and resume auto-derivation for new map
-                    self.game_state._tactical_goal_override = False
-                    self.game_state.tactical_goal = None
+                    # Tactical override gets a 1-map-change grace period so
+                    # goals like "skip fossil, exit cave" survive floor hops
+                    if self.game_state._tactical_goal_override:
+                        if self.game_state._tactical_override_grace > 0:
+                            self.game_state._tactical_override_grace -= 1
+                        else:
+                            self.game_state._tactical_goal_override = False
+                            self.game_state.tactical_goal = None
                     # Snapshot the name of the map we just left for orientation context
                     if self._current_map_name:
                         self._last_map_name = self._current_map_name
@@ -1203,7 +1208,7 @@ class GameAgent:
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
-                            "content": [{"type": "text", "text": "Run sequence queued — will attempt to flee twice with auto-retry"}]
+                            "content": [{"type": "text", "text": f"RUN inputs sent this turn: {result_text}. If still in battle next turn, call run_from_battle again."}]
                         })
                 except Exception as e:
                     error_msg = f"ERROR executing run_from_battle: {str(e)}"
@@ -1678,8 +1683,11 @@ class GameAgent:
                         self._blocked_directions.clear()
                         self._blocked_at_pos = None
                     elif _pre_x == _post_x and _pre_y == _post_y:
-                        # Extract directions attempted from action string
-                        _dirs_tried = set(re.findall(r'[UDLR]', action.upper()))
+                        # Extract directions — only track blocking for pure movement actions
+                        # (non-movement tokens like A/B/W/T/S/X indicate menu/battle actions
+                        # whose UNCHANGED outcome doesn't mean directional blocking)
+                        _has_non_dir = bool(re.search(r'[ABWTSTX]', action.upper()))
+                        _dirs_tried = set(re.findall(r'[UDLR]', action.upper())) if not _has_non_dir else set()
                         _dir_names = {"U": "UP", "D": "DOWN", "L": "LEFT", "R": "RIGHT"}
                         _cur_pos = (_post_x, _post_y)
                         if self._blocked_at_pos != _cur_pos:

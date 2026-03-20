@@ -277,7 +277,7 @@ MOVE_DATA: Dict[int, Tuple[str, str, int, int]] = {
     0x62: ("QUICK ATTACK", "Normal",   40, 30),
     0x63: ("RAGE",         "Normal",   20, 20),
     0x64: ("TELEPORT",     "Psychic",   0, 20),
-    0x65: ("NIGHT SHADE",  "Ghost",     0, 15),  # Level-based damage
+    0x65: ("NIGHT SHADE",  "Ghost",     1, 15),  # Level-based damage (power=1 so TIP treats as damage move)
     0x66: ("MIMIC",        "Normal",    0, 10),
     0x67: ("SCREECH",      "Normal",    0, 40),
     0x68: ("DOUBLE TEAM",  "Normal",    0, 15),

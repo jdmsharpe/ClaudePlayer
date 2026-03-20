@@ -145,6 +145,11 @@ def _effective_power(
     base = m["power"]
     if base <= 0:
         return 0.0
+    # Fixed-damage moves (power=1) like NIGHT SHADE, SEISMIC TOSS, DRAGON RAGE
+    # ignore type effectiveness entirely in Gen 1 — they always deal fixed damage
+    name = m.get("name", "")
+    if base == 1 and any(k in name for k in ("NIGHT SHADE", "SEISMIC", "DRAGON RAGE", "SONICBOOM", "PSYWAVE")):
+        return 1.0  # flat score; _estimate_damage handles actual values
     eff = _type_effectiveness(m["type"], enemy_types) if enemy_types else 1.0
     stab = 1.5 if (player_types and m["type"] in player_types) else 1.0
     if player_stats and enemy_stats:
@@ -792,7 +797,7 @@ def _generate_battle_tip(
             if catch_move and catch_move[1] in ("sleep", "paralyze"):
                 m, strategy = catch_move
                 nav = _fight_nav_presses(m["slot"], num_moves, current=fight_cursor)
-                compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
+                compound = f"B {_ABS_NAV_FIGHT} A W32 {nav} A"
                 label = "Put it to SLEEP" if strategy == "sleep" else "PARALYZE it"
                 return (f"RARE: {enemy['name']}! {label} first for catch bonus! "
                         f"Use {m['name']} — send: {compound}")
@@ -802,7 +807,7 @@ def _generate_battle_tip(
             if enemy_hp_pct > 30 and catch_move and catch_move[1] == "weaken":
                 m, _ = catch_move
                 nav = _fight_nav_presses(m["slot"], num_moves, current=fight_cursor)
-                compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
+                compound = f"B {_ABS_NAV_FIGHT} A W32 {nav} A"
                 status_tag = f" [{enemy_status}]" if enemy_status != "OK" else ""
                 return (f"RARE: {enemy['name']}! Weaken gently{status_tag} — "
                         f"use {m['name']} ({m['power']}pwr, won't KO) "
@@ -884,7 +889,7 @@ def _generate_battle_tip(
         # submenu retains its previous cursor position on re-entry.
         num_moves = len(player.get("moves", [])) or 4
         nav = _fight_nav_presses(best_slot, num_moves, current=fight_cursor)
-        compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
+        compound = f"B {_ABS_NAV_FIGHT} A W32 {nav} A"
         eff = _type_effectiveness(best_move["type"], etypes) if etypes else 1.0
         eff_tag = f", {eff:g}x vs {'/'.join(etypes)}" if eff != 1.0 and etypes else ""
         is_special = best_move["type"] in SPECIAL_TYPES
@@ -947,7 +952,7 @@ def _generate_battle_tip(
         first_move = player["moves"][0]["name"] if player["moves"] else "STRUGGLE"
         num_moves = len(player.get("moves", [])) or 4
         nav = _fight_nav_presses(0, num_moves, current=fight_cursor)
-        compound = f"B {_ABS_NAV_FIGHT} A W {nav} A"
+        compound = f"B {_ABS_NAV_FIGHT} A W32 {nav} A"
         return (f"Unwinnable: only {first_move} (status). Use it to let the battle end "
                 f"→ blackout → free heal at Pokémon Center. Send: {compound}")
 

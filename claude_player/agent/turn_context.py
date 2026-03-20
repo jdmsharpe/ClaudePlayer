@@ -214,8 +214,8 @@ class TurnContextBuilder:
             # Use tactical goal for NAV routing (more precise map match),
             # with strategic goal as fallback for map-graph BFS.
             nav_goal = tactical or strategic or ""
-            # Escalate pathfinding variance when stuck: 0→0, 3→1, 5→2, 7+→3
-            nav_variance = min(3, max(0, (stuck_count - 1) // 2))
+            # Escalate pathfinding variance when stuck: 1→1, 2→2, 3+→3
+            nav_variance = min(3, max(0, stuck_count))
             spatial_text = compute_nav(
                 world_map, map_id, player_pos,
                 goal_text=nav_goal,

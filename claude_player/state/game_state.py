@@ -12,6 +12,7 @@ class GameState:
         self.strategic_goal: Optional[str] = None
         self.tactical_goal: Optional[str] = None
         self._tactical_goal_override: bool = False  # True when agent manually set tactical goal
+        self._tactical_override_grace: int = 0  # Map changes remaining before override clears
         self.turn_count = 0
         self.memory_turn = 0  # Turn when memory was last written
         self.complete_message_history = []  # Store ALL messages without truncation

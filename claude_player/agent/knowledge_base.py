@@ -268,8 +268,9 @@ class KnowledgeBase:
                     self.write_section("strategy", extra)
             else:
                 content = "\n".join(lines)
-                self.write_location_by_name(map_name, content)
-                logging.info(f"  Migrated location: {map_name} ({len(lines)} lines)")
+                if content.strip():
+                    self.write_location_by_name(map_name, content)
+                    logging.info(f"  Migrated location: {map_name} ({len(lines)} lines)")
 
     @staticmethod
     def _extract_map_name_from_line(line: str) -> Optional[str]:
@@ -285,7 +286,7 @@ class KnowledgeBase:
             return floor
 
         # Match "Route N", "City Name", etc. before a colon or parenthesis
-        m = re.match(r'^([A-Z][A-Za-z\s.\'é]+?)[\s]*[\(:]', line)
+        m = re.match(r'^([A-Z][A-Za-z0-9\s.\'é]+?)[\s]*[\(:]', line)
         if m:
             return m.group(1).strip()
 

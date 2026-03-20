@@ -230,6 +230,63 @@ class WorldMap:
             if current_turn - exhaust_turn < _WARP_EXHAUST_DECAY_TURNS
         }
 
+    def get_cross_map_stuck_warning(self) -> Optional[str]:
+        """Detect cross-map looping from warp transition history.
+
+        Scans the last 20 warp transitions for repetitive map pairs.
+        If the same two maps account for 6+ transitions (3 round-trips)
+        and no *new* map has been visited in the last 8 transitions,
+        returns a warning string for injection into turn context.
+
+        Returns:
+            Warning string if cross-map looping detected, else None.
+        """
+        transitions = self._warp_transitions
+        if len(transitions) < 6:
+            return None
+
+        # Count transitions per directed map pair
+        pair_counts: Dict[Tuple[int, int], int] = {}
+        for from_map, _, to_map in transitions:
+            pair_counts[(from_map, to_map)] = pair_counts.get((from_map, to_map), 0) + 1
+
+        # Find the most repeated undirected pair (A→B + B→A)
+        seen_pairs: set = set()
+        worst_pair = None
+        worst_count = 0
+        for (a, b), count_ab in pair_counts.items():
+            if a == b:
+                continue
+            key = (min(a, b), max(a, b))
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            count_ba = pair_counts.get((b, a), 0)
+            total = count_ab + count_ba
+            if total > worst_count:
+                worst_count = total
+                worst_pair = (a, b)
+
+        if worst_pair is None or worst_count < 6:
+            return None
+
+        # Check variety in recent transitions — if the agent is visiting
+        # 4+ distinct maps in the last 8 warps, it's exploring, not looping
+        recent = list(transitions)[-8:]
+        recent_maps = {fm for fm, _, _ in recent} | {tm for _, _, tm in recent}
+        if len(recent_maps) > 3:
+            return None  # visiting variety of maps, not stuck
+
+        a, b = worst_pair
+        name_a = self.map_names.get(a, f"0x{a:02X}")
+        name_b = self.map_names.get(b, f"0x{b:02X}")
+        return (
+            f"CROSS-MAP LOOP: You have warped between {name_a} and {name_b} "
+            f"{worst_count} times without progress. The warps you are using "
+            f"may lead to dead-end sections. Try a DIFFERENT warp, or explore "
+            f"unexplored areas on the current map before warping again."
+        )
+
     def set_pending_route(
         self,
         map_id: int,

@@ -383,12 +383,12 @@ class GameAgent:
             map_changed = False
             prev_map_id = self._current_map_id  # for graph 0xFF resolution
             if current_pos is not None:
-                # Detect map change: map_id changed OR large position jump
+                # Detect map change: map_id changed (position-jump heuristic
+                # removed — large caves like Mt. Moon B1F are 28x28 and
+                # routine movement easily exceeds 10 tiles, causing false
+                # warp transitions and spurious cycling detection)
                 map_changed = (
-                    (new_map_id is not None and new_map_id != self._current_map_id)
-                    or (self._visited_positions
-                        and abs(current_pos[0] - self._visited_positions[-1][0])
-                        + abs(current_pos[1] - self._visited_positions[-1][1]) > 10)
+                    new_map_id is not None and new_map_id != self._current_map_id
                 )
                 if map_changed:
                     # Confirm pending route cache on successful warp

@@ -23,29 +23,39 @@ from claude_player.agent.knowledge_base import KnowledgeBase
 
 # System prompt for the KB update subagent
 KB_SYSTEM_PROMPT = """\
-You maintain a categorized Knowledge Base for a Pokémon Red AI agent.
+You are a KNOWLEDGE BASE UPDATER, not the game agent. You do NOT play the game.
+Do NOT use tools. Do NOT respond to battle situations. Do NOT narrate gameplay.
 
-Your job: read the current KB sections and recent gameplay, then produce UPDATED sections.
+Your ONLY job: read current KB sections + recent gameplay context, then output UPDATED \
+XML sections.
 
-You will be told which sections to update. Output ONLY the requested sections using these exact XML tags:
+CRITICAL: Your entire response must be XML tags. No preamble, no explanation, no markdown.
+
+Output ONLY the requested sections using these exact XML tags:
 
 <party>
-1 line per Pokémon: name, type, key strengths/weaknesses, matchup notes.
-Do NOT include HP, level, or PP — those come from RAM in real-time.
-Focus on SUBJECTIVE knowledge: who to lead with, type matchup lessons, team composition strategy.
+1 line per Pokémon: name, type, key strengths/weaknesses, role on team.
+NEVER include HP, level, PP, or fainted status — RAM provides those every turn.
+WRONG: "CHARMELEON Lv28 — 19/82 HP, SCRATCH 0pp"
+RIGHT: "CHARMELEON (Fire) — Lead attacker. SCRATCH+EMBER for offense. Weak to Water/Rock."
+Focus on: type matchup lessons, who to lead with, team composition strategy, catch priorities.
 Max 15 lines.
 </party>
 
 <strategy>
-Current plan, priorities, what to try next, mistakes to avoid RIGHT NOW.
-Include milestone progress context and immediate navigation goals.
+Current plan, priorities, milestone progress, next steps.
+Focus on DURABLE goals — not ephemeral battle state or menu cursor positions.
+WRONG: "Cursor on SCRATCH (0pp) — press D R A to reach LEER"
+RIGHT: "Clear Mt. Moon B2F, get fossil, exit via B1F east to Route 4"
+Remove info that becomes stale after the current battle/menu ends.
 Max 20 lines.
 </strategy>
 
 <lessons>
-Hard-won rules that prevent repeating past failures.
-Each lesson should be a concrete, actionable rule — not vague advice.
-Mark hallucination-prone beliefs with [VERIFY].
+Hard-won rules that prevent repeating past failures. Each must be concrete and actionable.
+Prefix with [CRITICAL] for rules that caused major setbacks when violated.
+Prefix with [RULE] for general best practices.
+Mark unverified claims with [VERIFY].
 Max 20 lines.
 </lessons>
 
@@ -56,16 +66,20 @@ Max 30 lines per map.
 </location>
 
 Rules:
-- AUTHORITATIVE STORY PROGRESS and PARTY STATUS come from RAM — use exact values
-- Consolidate aggressively. Remove stale info. No turn-by-turn logs
+- You are NOT the game agent. Do NOT use tools or respond to game events.
+- Your ENTIRE response must be XML-tagged sections. Nothing else.
+- AUTHORITATIVE data comes from RAM — use exact values for story progress
+- Consolidate aggressively. Remove stale info. No turn-by-turn battle logs.
 - No filler, no speculation, no battle play-by-play
-- Output ONLY the XML-tagged sections requested. No preamble or explanation
 - You may output multiple <location> tags if the agent visited multiple maps
 """
 
 INITIAL_KB_PROMPT = """\
+You are a KNOWLEDGE BASE UPDATER, not the game agent. Do NOT play the game or use tools.
+
 The agent just started playing. Create initial KB sections from the gameplay so far.
-Output party, strategy, and lessons sections. Keep each section concise.
+Output party, strategy, and lessons sections using XML tags. Keep each section concise.
+Your entire response must be XML tags — no preamble or explanation.
 """
 
 
@@ -197,6 +211,17 @@ class MemoryManager:
 
             # Parse XML-tagged sections from subagent output
             updated = self._parse_and_write(raw_output, current_map_id)
+
+            # Fallback: if no sections parsed from text blocks, check thinking
+            # blocks — the subagent sometimes puts XML there instead
+            if not updated and content["thinking_blocks"]:
+                thinking_output = ""
+                for block in content["thinking_blocks"]:
+                    thinking_output += block.thinking
+                fallback = self._parse_and_write(thinking_output, current_map_id)
+                if fallback:
+                    updated = fallback
+                    logging.info("KB: parsed sections from thinking block (fallback)")
             self.game_state.memory_turn = self.game_state.turn_count
             self._last_update_map_id = current_map_id
 

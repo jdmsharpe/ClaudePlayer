@@ -144,6 +144,13 @@ class TurnContextBuilder:
             spatial_data=spatial_data,
         )
 
+        # ── Cross-map loop warning ──
+        if not in_battle:
+            cross_map_warning = world_map.get_cross_map_stuck_warning()
+            if cross_map_warning:
+                user_content.append({"type": "text", "text": cross_map_warning})
+                logging.warning(f"CROSS-MAP LOOP: detected by warp history")
+
         # ── Timing header (inserted at position 0) ──
         current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         header = f"Current time: {current_time_str}\nTurn #{game_state.turn_count}"

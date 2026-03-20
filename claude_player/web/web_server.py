@@ -424,6 +424,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* Tile cell backgrounds */
   .tc-w  { background: #0d1117; color: #21262d; }
   .tc-f  { background: #161b22; color: #3a4048; }
+  .tc-el { background: #1c2028; color: #5a6270; }
   .tc-g  { background: #071b05; color: #3fb950; }
   .tc-a  { background: #020d1a; color: #58a6ff; }
   .tc-l  { background: #191100; color: #d29922; font-weight: bold; }
@@ -897,12 +898,12 @@ function stopSpinner() {
 
 /* Tile char -> text color class (used in legend) */
 const TC = {
-  '#':'tw','.':'tf',',':'tg','=':'ta','v':'tl','>':'tl','<':'tl',
+  '#':'tw','.':'tf',':':'tel',',':'tg','=':'ta','v':'tl','>':'tl','<':'tl',
   'T':'tt','B':'tb','W':'te','@':'tp','i':'ti','o':'to','g':'tgh'
 };
 /* Tile char -> table cell background class */
 const TCB = {
-  '#':'tc-w','.':'tc-f',',':'tc-g','=':'tc-a','v':'tc-l','>':'tc-l','<':'tc-l','^':'tc-l',
+  '#':'tc-w','.':'tc-f',':':'tc-el',',':'tc-g','=':'tc-a','v':'tc-l','>':'tc-l','<':'tc-l','^':'tc-l',
   'T':'tc-t','B':'tc-b','W':'tc-e','@':'tc-p','i':'tc-i','o':'tc-o','g':'tc-gh','?':'tc-unk'
 };
 

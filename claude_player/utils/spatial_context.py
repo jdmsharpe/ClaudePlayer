@@ -396,22 +396,45 @@ def _extract_terrain_data(
             terrain.append(row_out)
 
         # ── Compute tile pair collision edges ──
-        # For each adjacent pair of walkable tiles, check if the raw tile IDs
-        # form a collision pair in the current tileset.  These edges block A*
-        # even though both tiles are individually walkable.
+        # For each adjacent pair of tiles whose raw IDs form a collision pair,
+        # determine which transitions are blocked.  Cave elevation boundaries
+        # are DIRECTIONAL for north/south movement:
+        #   - Elevated tile NORTH of ground tile → passable both ways
+        #     (step down going south, climb up going north)
+        #   - Elevated tile SOUTH of ground tile → blocked both ways
+        #     (can't step off backward or push through from below)
+        #   - East/west transitions → always blocked
         pair_blocked: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
         if pair_set:
             for my in range(grid_h):
                 for mx in range(grid_w):
                     raw_here = wmap_raw[my][mx]
-                    for dy, dx in ((0, 1), (1, 0)):  # right and down (symmetry covers all)
+                    for dy, dx in ((0, 1), (1, 0)):  # down and right
                         ny, nx = my + dy, mx + dx
                         if ny < grid_h and nx < grid_w:
                             raw_there = wmap_raw[ny][nx]
-                            if frozenset({raw_here, raw_there}) in pair_set:
-                                # Both directions blocked (bidirectional)
+                            if frozenset({raw_here, raw_there}) not in pair_set:
+                                continue
+
+                            if dx != 0:
+                                # East/west transition: always blocked
                                 pair_blocked.add(((mx, my), (nx, ny)))
                                 pair_blocked.add(((nx, ny), (mx, my)))
+                            else:
+                                # North/south transition (dy == 1: here=north, there=south)
+                                here_elevated = raw_here in _CAVE_ELEVATED_TILES
+                                there_elevated = raw_there in _CAVE_ELEVATED_TILES
+                                if here_elevated and not there_elevated:
+                                    # Elevated NORTH, ground SOUTH → passable
+                                    pass
+                                elif there_elevated and not here_elevated:
+                                    # Ground NORTH, elevated SOUTH → blocked
+                                    pair_blocked.add(((mx, my), (nx, ny)))
+                                    pair_blocked.add(((nx, ny), (mx, my)))
+                                else:
+                                    # Same level or unknown → blocked (safety)
+                                    pair_blocked.add(((mx, my), (nx, ny)))
+                                    pair_blocked.add(((nx, ny), (mx, my)))
 
         return terrain, pair_blocked
     except Exception as e:

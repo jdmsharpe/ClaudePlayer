@@ -223,7 +223,7 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
     (  -2,  0x44): "Pokémon Center rest stop.",
     (  -2,  0x3B): "Navigate Mt. Moon 1F — head NORTH toward the cave interior to find stairs down to Mt. Moon B1F. Do NOT use W0/W1 warps (wrong exit, ledges block east).",
-    (  -2,  0x3C): "B1F has sections separated by walls. Find stairs to Mt. Moon B2F (north zone) to reach the fossil area and exit. Avoid warps that lead to B2F south dead-end. Explore unexplored passages to connect sections.",
+    (  -2,  0x3C): "B1F has sections separated by walls. If B2F stairs are unreachable, take any 1F warp FIRST — return to Mt. Moon 1F and re-enter B1F from a different staircase to reach Mt. Moon B2F (north zone). Follow NAV even when it routes to 1F — it is an intermediate hop, not backtracking.",
     (  -2,  0x3D): "B2F has two disconnected zones. Goal: reach W1 to Mt. Moon B1F (east exit) for Route 4. If stuck in the south zone, return to B1F and find a different route to B2F north zone.",
     (  -2,  0x0F): "Route 4. If ledges (<) block eastward travel, you exited Mt. Moon from the WRONG side. Go back INTO Mt. Moon and progress through B1F→B2F→B1F to reach the correct Route 4 exit. If path east is clear, head EAST to Cerulean City.",
     # Beat Misty (0x0BF)

@@ -9,7 +9,11 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
+from claude_player.utils.warp_overrides import WARP_DEST_NAME_OVERRIDES
 from claude_player.utils.world_map import WorldMap
+
+# Pre-compute lowercased override names for fast validation
+_OVERRIDE_NAMES_LOWER = {v.lower() for v in WARP_DEST_NAME_OVERRIDES.values()}
 
 # Last NAV method used — set by compute_nav(), read by game_agent for TURN_SUMMARY
 last_nav_method: str = ""
@@ -177,6 +181,21 @@ def compute_nav(
             hop_name = world_map.map_names.get(hop_id)
             if not hop_name:
                 break
+            # Refine hop_name: if the goal text contains a more specific
+            # warp dest_name that starts with the base hop_name (e.g.
+            # "Mt. Moon B1F (east exit)" vs "Mt. Moon B1F"), prefer
+            # the specific name so find_nav_hint can disambiguate warps
+            # that share the same dest_map.
+            refined_dest = hop_name
+            for search_text in search_texts:
+                # Look for "hop_name (qualifier)" pattern in goal text,
+                # but only accept it if the match is a known override name
+                # — prevents incidental parentheticals from misfiring.
+                pattern = re.escape(hop_name) + r"\s*\([^)]+\)"
+                m = re.search(pattern, search_text, re.IGNORECASE)
+                if m and m.group(0).lower() in _OVERRIDE_NAMES_LOWER:
+                    refined_dest = m.group(0)
+                    break
             logging.info(
                 f"NAV graph: target={world_map.map_names.get(target_map_id)!r} "
                 f"next_hop={hop_name!r} path_len={len(map_path)} "
@@ -185,7 +204,7 @@ def compute_nav(
             )
             wm_nav = world_map.find_nav_hint(
                 map_id, player_pos,
-                preferred_dest=hop_name,
+                preferred_dest=refined_dest,
                 dead_end_zones=dead_end_zones,
                 npc_positions=npc_positions,
                 current_turn=current_turn,

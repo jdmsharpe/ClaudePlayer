@@ -99,8 +99,12 @@ class WorldMap:
                 if dest_mid not in self.map_graph:
                     self.map_graph[dest_mid] = set()
                 self.map_graph[dest_mid].add(map_id)
-                if dest_mid not in self.map_names and w.get("dest_name"):
-                    self.map_names[dest_mid] = w["dest_name"]
+                # Use base (unqualified) name for map_names — override
+                # names like "Mt. Moon B1F (east exit)" must not pollute
+                # the canonical map name used by BFS target matching.
+                canonical = w.get("dest_base_name") or w.get("dest_name")
+                if dest_mid not in self.map_names and canonical:
+                    self.map_names[dest_mid] = canonical
         for conn in warp_data.get("connections", []):
             dest_mid = conn.get("dest_map")
             if dest_mid is not None and dest_mid != 0xFF:
@@ -1022,8 +1026,10 @@ class WorldMap:
                         best_len = len(path)
                         break
 
-            # Fall back to any reachable warp when no preferred_dest given.
-            if not best_path and not preferred_dest:
+            # Fall back to any reachable warp when no preferred_dest given,
+            # or when preferred warps existed but were all unreachable
+            # (e.g. B2F south zone can't reach W1 but CAN reach W2).
+            if not best_path and (not preferred_dest or preferred_warps):
                 for warp_pos, dest_name in other_warps:
                     path = self.find_path_to(map_id, player_pos, warp_pos, max_steps=200, blocked=npc_blocked, variance=variance)
                     if path and len(path) < best_len:

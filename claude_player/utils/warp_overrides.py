@@ -24,6 +24,34 @@
 
 from typing import Dict, Tuple
 
+# Per-warp destination name overrides.
+#
+# When multiple warps on the same map share the same dest_map (e.g. all four
+# Mt. Moon B2F warps go to Mt. Moon B1F), the NAV pipeline can't distinguish
+# them.  This dict gives individual warps unique dest_names so that MAP_HINTS
+# and goal text can target a specific warp.
+#
+# Key:   (cur_map_number, warp_index) — same as WARP_POSITION_OVERRIDES
+# Value: override dest_name string
+WARP_DEST_NAME_OVERRIDES: Dict[Tuple[int, int], str] = {
+    # --- Mt. Moon B2F (0x3D) ---
+    # All 4 warps have dest_map = 0x3C (Mt. Moon B1F), but land on different
+    # B1F warps.  Only W1 leads to the B1F east section with the Route 4 exit.
+    (0x3D, 0): "Mt. Moon B1F (dead end)",        # W0 → B1F dead-end room
+    (0x3D, 1): "Mt. Moon B1F (east exit)",        # W1 → B1F east section → Route 4
+    (0x3D, 2): "Mt. Moon B1F (west entry)",       # W2 → B1F west (loops back)
+    (0x3D, 3): "Mt. Moon B1F (dead end north)",   # W3 → B1F dead-end room north
+
+    # --- Mt. Moon B1F (0x3C) ---
+    # 8 warps; several go to Mt. Moon 1F or B2F.  Disambiguate the B2F entries.
+    # W4 leads to B2F south zone (dead end); W5/W6 lead to B2F north zone
+    # (fossil area + W1 exit).
+    (0x3C, 4): "Mt. Moon B2F (south dead-end)",   # W4 → B2F W2 pos (south zone)
+    (0x3C, 5): "Mt. Moon B2F (north zone)",        # W5 → B2F W0 pos (north zone!)
+    (0x3C, 6): "Mt. Moon B2F (north zone)",        # W6 → B2F W3 pos (north zone)
+    (0x3C, 7): "Route 4 (exit)",                   # W7 → Route 4 (the goal)
+}
+
 WARP_POSITION_OVERRIDES: Dict[Tuple[int, int], Tuple[int, int]] = {
     # (map_number, warp_index): (override_y, override_x)
 

@@ -601,7 +601,7 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         if num_warps > _MAX_WARPS or map_height == 0 or map_width == 0:
             return None
 
-        from claude_player.utils.warp_overrides import WARP_POSITION_OVERRIDES
+        from claude_player.utils.warp_overrides import WARP_POSITION_OVERRIDES, WARP_DEST_NAME_OVERRIDES
 
         warps = []
         for i in range(num_warps):
@@ -625,12 +625,16 @@ def _extract_warp_data(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
             over_dy = dy + (1 if dy > 0 else -1 if dy < 0 else 0)
             over_dx = dx + (1 if dx > 0 else -1 if dx < 0 else 0)
 
+            base_name = MAP_NAMES.get(dest_map, f"Map 0x{dest_map:02X}")
             warps.append({
                 "map_y": wy, "map_x": wx,
                 "dy": dy, "dx": dx,           # raw RAM — used for display/overlay
                 "over_dy": over_dy, "over_dx": over_dx,  # A* overshoot target
                 "dest_map": dest_map,
-                "dest_name": MAP_NAMES.get(dest_map, f"Map 0x{dest_map:02X}"),
+                "dest_name": WARP_DEST_NAME_OVERRIDES.get(
+                    (map_number, i), base_name,
+                ),
+                "dest_base_name": base_name,   # unqualified — used for map_names
             })
 
         # Read map connections (seamless edge transitions like Pallet Town ↔ Route 1)

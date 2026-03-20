@@ -441,6 +441,35 @@ def _extract_terrain_data(
                                     pair_blocked.add(((mx, my), (nx, ny)))
                                     pair_blocked.add(((nx, ny), (mx, my)))
 
+        # ── Post-process: collapse elevation shelf tiles ──
+        # In caves, wall-floor boundary metatiles have bottom walk-tiles
+        # composed entirely of floor tile IDs — technically walkable but
+        # unreachable from adjacent lower ground due to the elevation
+        # boundary.  Detect tiles sandwiched between a pair-blocked edge
+        # and a wall (or another shelf tile) and reclassify as '#'.
+        if is_cave and pair_blocked:
+            changed = True
+            while changed:
+                changed = False
+                for my in range(grid_h):
+                    for mx in range(grid_w):
+                        if terrain[my][mx] not in ('.', ':'):
+                            continue
+                        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                            ny, nx = my + dy, mx + dx
+                            if not (0 <= ny < grid_h and 0 <= nx < grid_w):
+                                continue
+                            if ((mx, my), (nx, ny)) not in pair_blocked:
+                                continue
+                            # Pair-blocked in this direction — check opposite
+                            # for wall (or previously collapsed shelf tile).
+                            oy, ox = my - dy, mx - dx
+                            if (0 <= oy < grid_h and 0 <= ox < grid_w
+                                    and terrain[oy][ox] == '#'):
+                                terrain[my][mx] = '#'
+                                changed = True
+                                break
+
         return terrain, pair_blocked
     except Exception as e:
         logger.debug(f"Terrain data unavailable: {e}")

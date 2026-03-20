@@ -117,10 +117,12 @@ _TILE_PAIR_SETS: Dict[int, Set[FrozenSet[int]]] = {
     for tid, pairs in _TILE_PAIR_COLLISIONS.items()
 }
 
-# Elevated cave platform tiles — shown as ':' in the grid for visual distinction.
-# These tiles form pair collisions with the ground tile (0x05) in CAVERN tilesets,
-# meaning you can't walk between them directly — must use stairs/steps.
-_CAVE_ELEVATED_TILES = frozenset({0x20, 0x21, 0x2A, 0x41})
+# Lower cave ground tiles — shown as ':' in the grid for visual distinction.
+# These tiles form pair collisions with the upper floor tile (0x05) in CAVERN
+# tilesets.  0x05 = upper platform (shown as '.'), 0x20/0x21/0x2A/0x41 = lower
+# ground (shown as ':').  Elevation boundaries block movement except where
+# the upper side is NORTH (camera perspective: step down south, climb up north).
+_CAVE_LOWER_TILES = frozenset({0x20, 0x21, 0x2A, 0x41})
 
 # Cuttable tree BLOCK IDs (metatile-level, from pret/pokered data/tilesets/cut_tree_blocks.asm)
 # Block IDs are unique per metatile, unlike VRAM sub-tiles which are shared
@@ -386,8 +388,8 @@ def _extract_terrain_data(
                     # All 4 sub-tiles must be walkable in the raw collision table.
                     # Tiles missed here (like cave stairs) are caught by the
                     # PyBoy collision cross-reference in _format_spatial_text.
-                    # Mark elevated cave platform tiles as ':' for visual distinction.
-                    if is_cave and raw in _CAVE_ELEVATED_TILES:
+                    # Mark lower cave ground tiles as ':' for visual distinction.
+                    if is_cave and raw in _CAVE_LOWER_TILES:
                         row_out.append(':')
                     else:
                         row_out.append('.')
@@ -422,13 +424,16 @@ def _extract_terrain_data(
                                 pair_blocked.add(((nx, ny), (mx, my)))
                             else:
                                 # North/south transition (dy == 1: here=north, there=south)
-                                here_elevated = raw_here in _CAVE_ELEVATED_TILES
-                                there_elevated = raw_there in _CAVE_ELEVATED_TILES
-                                if here_elevated and not there_elevated:
-                                    # Elevated NORTH, ground SOUTH → passable
+                                # Upper (0x05 = '.') NORTH of lower (0x20/etc = ':') → passable
+                                # Lower NORTH of upper → blocked
+                                here_is_lower = raw_here in _CAVE_LOWER_TILES
+                                there_is_lower = raw_there in _CAVE_LOWER_TILES
+                                if not here_is_lower and there_is_lower:
+                                    # Upper NORTH, lower SOUTH → passable
+                                    # (step down going south, climb up going north)
                                     pass
-                                elif there_elevated and not here_elevated:
-                                    # Ground NORTH, elevated SOUTH → blocked
+                                elif here_is_lower and not there_is_lower:
+                                    # Lower NORTH, upper SOUTH → blocked
                                     pair_blocked.add(((mx, my), (nx, ny)))
                                     pair_blocked.add(((nx, ny), (mx, my)))
                                 else:

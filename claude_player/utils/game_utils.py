@@ -4,13 +4,15 @@ import base64
 from io import BytesIO
 from pyboy import PyBoy
 from pyboy.utils import WindowEvent
+from claude_player.utils.ram_constants import ADDR_STATUS_FLAGS5, ADDR_WINDOW_Y
 
 # Define button rules documentation
-button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), X (SELECT), W (WAIT).
+button_rules = """Buttons: A, B, U (UP), D (DOWN), L (LEFT), R (RIGHT), S (START), X (SELECT), W (WAIT), T (TALK).
 Format: BUTTON[FRAMES]. Separate tokens with spaces. A bare letter (no number) = 8-frame press.
   Single press: A — press A once.  Hold: A16 — hold A for 16 frames.
   Simultaneous: AB — press A and B together (8 frames). AB2 — hold both for 2 frames.
   Wait: W — pause 8 frames. W16 — pause 16 frames with no button pressed.
+  Talk: T — auto-advance ALL dialogue (keeps pressing A until text box closes). Use for NPC conversations, sign reading, item pickups, nurse healing — any multi-line text. Saves turns vs manual A A A A A.
 
 MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16. Max 128 frames/token (8 tiles), 256 total/turn.
   U16 = 1 tile, R48 = 3 tiles, D96 = 6 tiles, L128 = 8 tiles (max single token).
@@ -18,6 +20,7 @@ MOVEMENT: 1 tile = 16 frames. Count tiles, multiply by 16. Max 128 frames/token 
 CRITICAL: Counts under 16 (e.g. D10) will NOT complete a tile move. Always use multiples of 16.
 FACING: U2/D2/L2/R2 = turn to face that direction without moving (2-frame tap). Used in [path:] hints for NPC interaction — e.g. "U32 L2 A" = walk up 2 tiles, face left, press A.
 BUTTONS: Use bare A, B, S, X for single presses (8 frames). Avoid A1/B1 — 1-frame presses can be missed.
+TALK: Use T after facing an NPC or sign to auto-clear all dialogue. Example: "U32 L2 A T" = walk up, face left, interact, then auto-advance all text. T replaces "A A A A A" for dialogue. Do NOT use T during battle (use explicit A presses for battle menus).
 """
 
 # Button mappings — module-level constants (avoid rebuilding per call)
@@ -92,6 +95,57 @@ def press_and_release_buttons(pyboy: PyBoy, input_string: str, settle_frames: in
                     if _stopping():
                         break
                     _tick()
+                continue
+
+            # T = auto-advance dialogue (press A until text box closes)
+            if buttons == 'T':
+                _MAX_TALK_FRAMES = 600  # ~10s safety cap
+                _A_HOLD = 8             # frames per A press
+                _A_GAP = 12             # frames between presses (let game process)
+                _STABLE_BAIL = 3        # bail after N unchanged A presses
+                _TILE_MAP = 0xC3A0
+                frames_used = 0
+                unchanged_count = 0
+                prev_snapshot = None
+                a_presses = 0
+                while frames_used < _MAX_TALK_FRAMES:
+                    if _stopping():
+                        break
+                    # Check if text box is still active
+                    status5 = pyboy.memory[ADDR_STATUS_FLAGS5]
+                    wy = pyboy.memory[ADDR_WINDOW_Y]
+                    text_active = bool(status5 & 0x01) or wy < 144
+                    if not text_active and a_presses > 0:
+                        # Text cleared — we're done
+                        break
+                    # Snapshot visible text tiles for stale-detection
+                    snapshot = bytes(pyboy.memory[_TILE_MAP + i] for i in range(360))
+                    if prev_snapshot is not None and snapshot == prev_snapshot:
+                        unchanged_count += 1
+                        if unchanged_count >= _STABLE_BAIL:
+                            # Text isn't advancing (YES/NO prompt, shop menu, etc.)
+                            logging.debug(f"T token: text stale after {a_presses} presses, bailing")
+                            break
+                    else:
+                        unchanged_count = 0
+                    prev_snapshot = snapshot
+                    # Press A
+                    pyboy.send_input(WindowEvent.PRESS_BUTTON_A)
+                    for _ in range(_A_HOLD):
+                        if _stopping():
+                            break
+                        _tick()
+                    pyboy.send_input(WindowEvent.RELEASE_BUTTON_A)
+                    _tick()
+                    frames_used += _A_HOLD + 1
+                    a_presses += 1
+                    # Gap between presses
+                    for _ in range(_A_GAP):
+                        if _stopping():
+                            break
+                        _tick()
+                    frames_used += _A_GAP
+                logging.info(f"T token: {a_presses} A-presses in {frames_used} frames")
                 continue
 
             # Validate all button chars

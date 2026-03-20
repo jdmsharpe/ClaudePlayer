@@ -77,6 +77,59 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
         logging.info(f"TACTICAL GOAL SET TO: {self.game_state.tactical_goal}")
         return [{"type": "text", "text": f"Tactical goal set to: {self.game_state.tactical_goal} (auto-clears on map change)"}]
 
+    # Register add_side_objective tool
+    @registry.register(
+        name="add_side_objective",
+        description="Add a side objective (persists across map changes, unlike tactical goals). Use for secondary tasks: 'Heal at Pokémon Center', 'Catch a Pikachu', 'Buy Potions'. Max 5 side objectives.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "objective": {
+                    "type": "string",
+                    "description": "Short side objective description"
+                }
+            },
+            "required": ["objective"]
+        }
+    )
+    def handle_add_side_objective(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        obj = tool_input["objective"]
+        if len(self.game_state.side_objectives) >= 5:
+            return [{"type": "text", "text": f"Error: Max 5 side objectives. Complete or clear one first. Current: {' | '.join(self.game_state.side_objectives)}"}]
+        if obj in self.game_state.side_objectives:
+            return [{"type": "text", "text": f"Already tracked: {obj}"}]
+        self.game_state.side_objectives.append(obj)
+        logging.info(f"SIDE OBJECTIVE ADDED: {obj}")
+        return [{"type": "text", "text": f"Side objective added: {obj} (total: {len(self.game_state.side_objectives)})"}]
+
+    # Register complete_side_objective tool
+    @registry.register(
+        name="complete_side_objective",
+        description="Mark a side objective as done and remove it. Pass the exact text or a substring to match.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "objective": {
+                    "type": "string",
+                    "description": "Side objective text (or substring) to complete"
+                }
+            },
+            "required": ["objective"]
+        }
+    )
+    def handle_complete_side_objective(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        query = tool_input["objective"].lower()
+        for i, obj in enumerate(self.game_state.side_objectives):
+            if query in obj.lower() or obj.lower() in query:
+                removed = self.game_state.side_objectives.pop(i)
+                logging.info(f"SIDE OBJECTIVE COMPLETED: {removed}")
+                remaining = self.game_state.side_objectives
+                msg = f"Completed: {removed}"
+                if remaining:
+                    msg += f" | Remaining: {' | '.join(remaining)}"
+                return [{"type": "text", "text": msg}]
+        return [{"type": "text", "text": f"No matching side objective for '{tool_input['objective']}'. Current: {' | '.join(self.game_state.side_objectives) or '(none)'}"}]
+
     # --- Knowledge Base tools ---
     from claude_player.agent.knowledge_base import KnowledgeBase
     saves_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "saves")

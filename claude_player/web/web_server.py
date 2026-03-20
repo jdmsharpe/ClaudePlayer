@@ -47,6 +47,7 @@ class WebStreamer:
                     "game": d.game,
                     "goal": d.goal,
                     "tactical_goal": d.tactical_goal,
+                    "side_objectives": d.side_objectives,
                     "status": d.status,
                     "fps": d.fps,
                     "elapsed": d._elapsed(),
@@ -374,6 +375,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .tactical-section .panel-label { margin-bottom: 0; }
   .tactical-section .panel-label::before { background: #f0883e !important; }
   #ai-tactical-goal { color: #f0883e; font-weight: 600; font-size: 12px; }
+  .side-section { display: flex; align-items: center; gap: 6px; }
+  .side-section .panel-label { margin-bottom: 0; }
+  .side-section .panel-label::before { background: #3fb950 !important; }
+  #ai-side-objectives { color: #3fb950; font-weight: 600; font-size: 12px; }
   #goal-progress { display: flex; align-items: center; gap: 4px; }
   .party-panel .panel-label::before { background: #f85149; }
   .bag-panel .panel-label::before { background: #e3b341; }
@@ -824,6 +829,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="panel-label">Tactical</div>
       <div class="ai-goal-text" id="ai-tactical-goal">-</div>
     </div>
+    <div class="side-section" id="side-section" style="display:none">
+      <span class="tactical-sep">|</span>
+      <div class="panel-label">Side</div>
+      <div class="ai-goal-text" id="ai-side-objectives">-</div>
+    </div>
   </div>
 
   <div class="frame-panel">
@@ -946,6 +956,15 @@ async function pollState() {
       setText('ai-tactical-goal', tg);
     } else {
       tgSection.style.display = 'none';
+    }
+    // Side objectives (persistent secondary tasks)
+    const so = d.side_objectives || '';
+    const soSection = document.getElementById('side-section');
+    if (so) {
+      soSection.style.display = 'flex';
+      setText('ai-side-objectives', so);
+    } else {
+      soSection.style.display = 'none';
     }
     _lastAction = d.last_action || '-';
     renderMarkdown('ai-response', d.last_response || '-');

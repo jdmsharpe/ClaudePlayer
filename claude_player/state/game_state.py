@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import List, Optional
 
 
 class GameState:
@@ -21,6 +21,7 @@ class GameState:
         self.auto_goal_enabled = True
         self.fight_cursor: int = 0   # Tracked fight-submenu cursor; updated each battle turn
         self.visited_maps: set = set()  # Map IDs ever visited; used for visit-check milestones
+        self.side_objectives: List[str] = []  # Persistent side goals (heal, catch, buy items)
 
     @property
     def current_goal(self) -> Optional[str]:
@@ -45,6 +46,8 @@ class GameState:
             parts.append(f"Strategic goal: {self.strategic_goal or 'Not set'}")
             if self.tactical_goal:
                 parts.append(f"Tactical goal: {self.tactical_goal}")
+            if self.side_objectives:
+                parts.append(f"Side objectives: {' | '.join(self.side_objectives)}")
         return "\n".join(parts)
 
     def log_state(self, map_id=None, map_name=None, player_pos=None,
@@ -61,6 +64,8 @@ class GameState:
         logging.info(f"STRATEGIC GOAL: {self.strategic_goal or 'Not set'}")
         if self.tactical_goal:
             logging.info(f"TACTICAL GOAL: {self.tactical_goal}")
+        if self.side_objectives:
+            logging.info(f"SIDE OBJECTIVES: {' | '.join(self.side_objectives)}")
         # Location context: map + position in one line for easy grepping
         loc_parts = []
         if map_id is not None:

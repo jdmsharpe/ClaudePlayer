@@ -260,6 +260,10 @@ class GameAgent:
         """Return the current tactical goal for display, or empty string."""
         return self.game_state.tactical_goal or ""
 
+    def _side_objectives_display(self) -> str:
+        """Return pipe-separated side objectives for display, or empty string."""
+        return " | ".join(self.game_state.side_objectives) if self.game_state.side_objectives else ""
+
     def _limit_screenshots_in_history(self):
         """
         Limit the number of screenshots in chat history to MAX_SCREENSHOTS.
@@ -898,6 +902,7 @@ class GameAgent:
             game=self.game_state.identified_game or self.game_state.cartridge_title or "",
             goal=self._goal_with_progress(),
             tactical_goal=self._tactical_goal_display(),
+            side_objectives=self._side_objectives_display(),
             spatial_grid=spatial_grid,
             party_summary=party_summary,
             party_mons=party_mons_list,
@@ -1517,6 +1522,7 @@ class GameAgent:
                     game=self.game_state.identified_game or self.game_state.cartridge_title or "",
                     goal=self._goal_with_progress(),
                     tactical_goal=self._tactical_goal_display(),
+                    side_objectives=self._side_objectives_display(),
                 )
                 
                 # Reset error count after successful analysis

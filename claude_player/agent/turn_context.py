@@ -188,13 +188,16 @@ class TurnContextBuilder:
         if last_map_name:
             spatial_text = f"[Entered from: {last_map_name}]\n" + spatial_text
 
-        # Prepend two-tier goal header
+        # Prepend goal header (strategic + tactical + side objectives)
         strategic = game_state.strategic_goal
         tactical = game_state.tactical_goal
-        if strategic or tactical:
+        side_objs = game_state.side_objectives
+        if strategic or tactical or side_objs:
             goal_header = f"STRATEGIC GOAL: {strategic or '(none)'}"
             if tactical:
                 goal_header += f"\nTACTICAL GOAL: {tactical}"
+            if side_objs:
+                goal_header += f"\nSIDE OBJECTIVES: {' | '.join(side_objs)}"
             spatial_text = goal_header + "\n" + spatial_text
 
         # Append accumulated world map and run NAV pipeline

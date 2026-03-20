@@ -1054,7 +1054,7 @@ function renderGrid(text) {
         tr.appendChild(th);
       }
       tbody.appendChild(tr);
-    } else if (/^\s*\d{1,2} [^:]/.test(line) && table) {
+    } else if (/^\s*\d{1,2} \S/.test(line) && table) {
       renderTileTableRow(tbody, line);
     } else if (line.includes('= walkable') || line.includes('= blocked')) {
       flushTable();

@@ -12,7 +12,7 @@ class ModelConfig(TypedDict):
 
 class MemoryConfig(TypedDict):
     MEMORY_INTERVAL: int  # Update memory every N turns via background subagent
-    MODEL: str            # Model for memory subagent (default: claude-haiku-4-5)
+    MODEL: str            # Model for memory subagent (default: claude-sonnet-4-6)
     MAX_TOKENS: int       # Max tokens for memory subagent response
     THINKING: bool        # Enable extended thinking for memory subagent
     THINKING_BUDGET: int  # Thinking budget tokens for memory subagent

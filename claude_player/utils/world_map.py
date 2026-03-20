@@ -874,6 +874,8 @@ class WorldMap:
             preferred_warps: List[Tuple[Tuple[int, int], str]] = []
             other_warps: List[Tuple[Tuple[int, int], str]] = []
             for warp_pos, dest_name in warp_map.items():
+                if warp_pos == player_pos:
+                    continue  # can't path to warp we're standing on
                 if preferred_dest and preferred_dest.lower() in dest_name.lower():
                     preferred_warps.append((warp_pos, dest_name))
                 else:

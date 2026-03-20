@@ -23,6 +23,7 @@ from claude_player.utils.battle_context import extract_battle_context
 from claude_player.utils.party_context import extract_party_context
 from claude_player.utils.bag_context import extract_bag_context
 from claude_player.utils.menu_context import extract_menu_context
+from claude_player.utils.text_context import extract_text_context
 from claude_player.utils.terminal_display import TerminalDisplay
 from claude_player.utils.sound_output import SoundOutput
 from claude_player.utils.ram_constants import (
@@ -119,9 +120,6 @@ class GameAgent:
 
         # Track consecutive thinking-only responses for recovery
         self._consecutive_thinking_only = 0
-
-        # Last NAV button sequence for auto-execute fallback on no-action turns
-        self._last_nav_buttons = None  # str | None
 
         # Track consecutive turns at the same position for stuck detection
         self._stuck_count = 0
@@ -678,6 +676,9 @@ class GameAgent:
                     self.pyboy, party_data=party_data, bag_data=bag_data,
                 )
 
+        # Extract on-screen text (dialogue, signs, item pickups) from wTileMap
+        text_data = extract_text_context(self.pyboy)
+
         return {
             "screenshot": screenshot,
             "spatial_data": spatial_data,
@@ -685,6 +686,7 @@ class GameAgent:
             "party_data": party_data,
             "bag_data": bag_data,
             "menu_data": menu_data,
+            "text_data": text_data,
             "cartridge_title": self.pyboy.cartridge_title,
         }
 
@@ -914,7 +916,6 @@ class GameAgent:
             action_history=self._action_history,
         )
         self._last_action_feedback = None  # consumed by builder
-        self._last_nav_buttons = self._context_builder.last_nav_buttons
 
         # Add user message to chat history
         if len(self.chat_history) == 0:
@@ -1055,14 +1056,7 @@ class GameAgent:
                         f"but no text or tool output."
                     )
 
-                    # If NAV buttons are available, skip retry — caller will auto-execute
-                    if self._last_nav_buttons and not self._in_battle:
-                        logging.info(
-                            f"RECOVERY: t={self.game_state.turn_count} "
-                            f"NAV fallback available, skipping retry"
-                        )
-                        break
-                    elif attempt < max_retries:
+                    if attempt < max_retries:
                         # Append a nudge message for the retry
                         nudge = {
                             "role": "user",
@@ -1406,40 +1400,19 @@ class GameAgent:
                 if not actions and message_content and message_content.get("tool_use_blocks"):
                     if any(t.name != "send_inputs" for t in message_content["tool_use_blocks"]):
                         no_action = True
-                        if self._last_nav_buttons and not self._in_battle:
-                            # Auto-execute the NAV path instead of wasting a round-trip nudge
-                            logging.warning(
-                                f"NO-ACTION TURN: t={self.game_state.turn_count} "
-                                f"Model used tools but didn't send_inputs — "
-                                f"auto-executing NAV: {self._last_nav_buttons}"
-                            )
-                            actions = [self._last_nav_buttons]
-                        else:
-                            logging.warning(
-                                f"NO-ACTION TURN: t={self.game_state.turn_count} "
-                                f"Model used tools but didn't send_inputs — nudging"
-                            )
-                            nudge = {
-                                "role": "user",
-                                "content": [{"type": "text", "text":
-                                    "You used tools but didn't send any game inputs. "
-                                    "Always include a send_inputs call with your actions."
-                                }]
-                            }
-                            self.chat_history.append(nudge)
-                            self.game_state.add_to_complete_history(nudge)
-
-                # Thinking-only fallback: model produced no output at all
-                if (not actions and message_content
-                        and not message_content.get("tool_use_blocks")
-                        and not message_content.get("text_blocks")
-                        and self._last_nav_buttons and not self._in_battle):
-                    no_action = True
-                    logging.warning(
-                        f"THINKING-ONLY FALLBACK: t={self.game_state.turn_count} "
-                        f"auto-executing NAV: {self._last_nav_buttons}"
-                    )
-                    actions = [self._last_nav_buttons]
+                        logging.warning(
+                            f"NO-ACTION TURN: t={self.game_state.turn_count} "
+                            f"Model used tools but didn't send_inputs — nudging"
+                        )
+                        nudge = {
+                            "role": "user",
+                            "content": [{"type": "text", "text":
+                                "You used tools but didn't send any game inputs. "
+                                "Always include a send_inputs call with your actions."
+                            }]
+                        }
+                        self.chat_history.append(nudge)
+                        self.game_state.add_to_complete_history(nudge)
 
                 # Safely update shared variables
                 with lock:

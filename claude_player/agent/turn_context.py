@@ -49,8 +49,7 @@ class TurnContextBuilder:
         self._last_bag_inject_turn: int = 0
         self._bag_refresh_interval = bag_refresh_interval
 
-        # Last NAV button sequence (e.g. "L64 U16") for fallback auto-execution
-        self.last_nav_buttons: Optional[str] = None
+        # (Removed: last_nav_buttons for auto-execute fallback)
 
     def build(
         self,
@@ -111,6 +110,11 @@ class TurnContextBuilder:
         just_exited_battle = was_in_battle and not in_battle
         if menu_data and menu_data.get("text") and not just_exited_battle:
             user_content.append({"type": "text", "text": menu_data["text"]})
+
+        # ── Screen text (dialogue, signs, notifications) ──
+        text_data = captured_state.get("text_data")
+        if text_data and text_data.get("text"):
+            user_content.append({"type": "text", "text": text_data["text"]})
 
         # ── Party injection (change-based + periodic) ──
         self._maybe_inject_party(
@@ -211,9 +215,7 @@ class TurnContextBuilder:
                 current_turn=game_state.turn_count,
                 variance=nav_variance,
             )
-            # Extract button sequence from NAV hint for fallback auto-execution
-            nav_match = re.search(r'NAV\(map\): .+?: (.+?) —', spatial_text)
-            self.last_nav_buttons = nav_match.group(1).strip() if nav_match else None
+            pass  # NAV hint included in spatial_text for the model to use
         return spatial_text
 
     def _maybe_inject_party(

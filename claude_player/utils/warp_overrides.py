@@ -35,20 +35,25 @@ from typing import Dict, Tuple
 # Value: override dest_name string
 WARP_DEST_NAME_OVERRIDES: Dict[Tuple[int, int], str] = {
     # --- Mt. Moon B2F (0x3D) ---
-    # All 4 warps have dest_map = 0x3C (Mt. Moon B1F), but land on different
-    # B1F warps.  Only W1 leads to the B1F east section with the Route 4 exit.
-    (0x3D, 0): "Mt. Moon B1F (dead end)",        # W0 → B1F dead-end room
-    (0x3D, 1): "Mt. Moon B1F (east exit)",        # W1 → B1F east section → Route 4
-    (0x3D, 2): "Mt. Moon B1F (west entry)",       # W2 → B1F west (loops back)
-    (0x3D, 3): "Mt. Moon B1F (dead end north)",   # W3 → B1F dead-end room north
+    # pokered: W0→B1F W1, W1→B1F W4, W2→B1F W5, W3→B1F W6
+    # All 4 warps share dest_map = 0x3C (Mt. Moon B1F).
+    # B2F north zone: W0(9,25), W1(17,21), W3(7,5)
+    # B2F south zone: W2(27,15) — entry from B1F W5
+    (0x3D, 0): "Mt. Moon B1F (north stairs)",       # W0 north zone → B1F W1
+    (0x3D, 1): "Mt. Moon B1F (east exit)",           # W1 north zone → B1F W4 → Route 4
+    (0x3D, 2): "Mt. Moon B1F (south entry)",         # W2 south zone → B1F W5 (loops back)
+    (0x3D, 3): "Mt. Moon B1F (northwest stairs)",    # W3 north zone → B1F W6
 
     # --- Mt. Moon B1F (0x3C) ---
-    # 8 warps; several go to Mt. Moon 1F or B2F.  Disambiguate the B2F entries.
-    # W4 leads to B2F south zone (dead end); W5/W6 lead to B2F north zone
-    # (fossil area + W1 exit).
-    (0x3C, 4): "Mt. Moon B2F (south dead-end)",   # W4 → B2F W2 pos (south zone)
-    (0x3C, 5): "Mt. Moon B2F (north zone)",        # W5 → B2F W0 pos (north zone!)
-    (0x3C, 6): "Mt. Moon B2F (north zone)",        # W6 → B2F W3 pos (north zone)
+    # pokered: W1→B2F W0, W4→B2F W1, W5→B2F W2, W6→B2F W3
+    # B1F W1(17,11) → B2F north zone (W0 at 9,25)
+    # B1F W4(21,17) → B2F north zone (W1 at 17,21 = the exit!)
+    # B1F W5(13,27) → B2F SOUTH zone (W2 at 27,15 — loops back!)
+    # B1F W6(23,3)  → B2F north zone (W3 at 7,5)
+    (0x3C, 1): "Mt. Moon B2F (north zone)",        # W1 → B2F W0 (north zone!)
+    (0x3C, 4): "Mt. Moon B2F (north zone)",        # W4 → B2F W1 (north zone — exit!)
+    (0x3C, 5): "Mt. Moon B2F (south dead-end)",    # W5 → B2F W2 (SOUTH zone loop!)
+    (0x3C, 6): "Mt. Moon B2F (north zone)",        # W6 → B2F W3 (north zone)
     (0x3C, 7): "Route 4 (exit)",                   # W7 → Route 4 (the goal)
 }
 

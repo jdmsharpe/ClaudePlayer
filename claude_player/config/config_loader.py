@@ -16,17 +16,15 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+_VALID_EFFORT_LEVELS = {"low", "medium", "high", "max"}
+
+
 def _validate_config(config: ConfigClass) -> None:
     """Validate critical configuration values, raising ValueError on problems."""
-    if config.MODEL_DEFAULTS["THINKING_BUDGET"] < 1024:
+    effort = config.MODEL_DEFAULTS.get("EFFORT", "medium")
+    if effort not in _VALID_EFFORT_LEVELS:
         raise ValueError(
-            f"THINKING_BUDGET ({config.MODEL_DEFAULTS['THINKING_BUDGET']}) must be >= 1024 (API minimum)"
-        )
-
-    if config.MODEL_DEFAULTS["THINKING_BUDGET"] >= config.MODEL_DEFAULTS["MAX_TOKENS"]:
-        raise ValueError(
-            f"THINKING_BUDGET ({config.MODEL_DEFAULTS['THINKING_BUDGET']}) must be less than "
-            f"MAX_TOKENS ({config.MODEL_DEFAULTS['MAX_TOKENS']})"
+            f"EFFORT ('{effort}') must be one of {_VALID_EFFORT_LEVELS}"
         )
 
     if config.MAX_HISTORY_MESSAGES < 2:
@@ -66,12 +64,12 @@ def load_config(config_file='config.json') -> ConfigClass:
         "WEB_PORT": 0,
 
         "MODEL_DEFAULTS": {
-            "MODEL": "claude-sonnet-4-6",
+            "MODEL": "claude-opus-4-6",
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,
             "MAX_TOKENS": 4096,
-            "THINKING_BUDGET": 1024,
+            "EFFORT": "medium",
         },
 
         "ACTION": {},
@@ -82,8 +80,8 @@ def load_config(config_file='config.json') -> ConfigClass:
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,
-            "MAX_TOKENS": 16384,
-            "THINKING_BUDGET": 11111,
+            "MAX_TOKENS": 16000,
+            "EFFORT": "medium",
         },
 
         "STUCK": {

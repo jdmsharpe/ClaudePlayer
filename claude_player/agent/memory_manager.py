@@ -294,17 +294,13 @@ class MemoryManager:
         try:
             memory_config = self.config.MEMORY.copy() if hasattr(self.config, 'MEMORY') else {}
             if "MODEL" not in memory_config:
-                memory_config["MODEL"] = "claude-sonnet-4-6"
+                memory_config["MODEL"] = "claude-opus-4-6"
             if "MAX_TOKENS" not in memory_config:
                 memory_config["MAX_TOKENS"] = 16000
             if "THINKING" not in memory_config:
                 memory_config["THINKING"] = True
-            if "THINKING_BUDGET" not in memory_config:
-                memory_config["THINKING_BUDGET"] = 10000
-            # Ensure enough headroom for XML output after thinking
-            tb = memory_config.get("THINKING_BUDGET", 10000)
-            if memory_config["MAX_TOKENS"] < tb + 4096:
-                memory_config["MAX_TOKENS"] = tb + 4096
+            if "EFFORT" not in memory_config:
+                memory_config["EFFORT"] = "medium"
 
             response = self.client.send_request(memory_config, system, messages, [])
             content = MessageUtils.print_and_extract_message_content(response)

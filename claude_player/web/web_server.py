@@ -82,7 +82,7 @@ class WebStreamer:
             return jsonify({
                 "model": action.get("MODEL", ""),
                 "max_tokens": action.get("MAX_TOKENS", ""),
-                "thinking_budget": action.get("THINKING_BUDGET", ""),
+                "effort": action.get("EFFORT", "medium"),
                 "memory_interval": memory.get("MEMORY_INTERVAL", ""),
             })
 
@@ -1616,7 +1616,7 @@ pollState();
     const defs = [
       ['model',        c.model],
       ['max_tokens',   c.max_tokens],
-      ['thinking',     c.thinking_budget],
+      ['effort',       c.effort],
       ['memory interval', c.memory_interval],
     ];
     defs.forEach(function([key, val]) {

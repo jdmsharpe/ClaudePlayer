@@ -81,12 +81,13 @@ Configuration is loaded from `config.json` (created automatically on first run i
 
   // Default model settings — inherited by ACTION if not overridden
   "MODEL_DEFAULTS": {
-    "MODEL": "claude-sonnet-4-6",        // Claude model to use
-    "THINKING": true,                    // Enable extended thinking
+    "MODEL": "claude-opus-4-6",          // Claude model to use
+    "THINKING": true,                    // Enable extended thinking (adaptive on Opus 4.6)
     "DYNAMIC_THINKING": true,            // Allow Claude to toggle thinking on/off
     "EFFICIENT_TOOLS": true,             // Use token-efficient-tools beta
     "MAX_TOKENS": 4096,                  // Maximum tokens per response
-    "THINKING_BUDGET": 1028              // Maximum tokens for thinking
+    "EFFORT": "medium"                   // low/medium/high/max — controls thinking depth
+    // "THINKING_BUDGET": 1024           // Optional: set for budget_tokens mode (Sonnet)
   },
 
   // Action mode overrides (inherits MODEL_DEFAULTS; add keys here to override)
@@ -95,12 +96,12 @@ Configuration is loaded from `config.json` (created automatically on first run i
   // Memory agent settings (inherits MODEL_DEFAULTS; add keys here to override)
   "MEMORY": {
     "MEMORY_INTERVAL": 20,               // Run memory agent every N turns
-    "MODEL": "claude-sonnet-4-6",        // Claude model to use
+    "MODEL": "claude-opus-4-6",          // Claude model to use
     "THINKING": true,
     "DYNAMIC_THINKING": true,
     "EFFICIENT_TOOLS": true,
-    "MAX_TOKENS": 8192,
-    "THINKING_BUDGET": 4096
+    "MAX_TOKENS": 16000,
+    "EFFORT": "medium"
   }
 }
 ```

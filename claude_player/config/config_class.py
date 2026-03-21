@@ -1,21 +1,23 @@
 from typing import Optional, Tuple, TypedDict
 
 
-class ModelConfig(TypedDict):
+class ModelConfig(TypedDict, total=False):
     MODEL: str
     THINKING: bool
     DYNAMIC_THINKING: bool
     EFFICIENT_TOOLS: bool
     MAX_TOKENS: int
-    THINKING_BUDGET: int
+    EFFORT: str           # "low" | "medium" | "high" | "max" — controls thinking depth + tool calls
+    THINKING_BUDGET: int  # Optional: if set, use budget_tokens; if absent, use adaptive thinking
 
 
-class MemoryConfig(TypedDict):
+class MemoryConfig(TypedDict, total=False):
     MEMORY_INTERVAL: int  # Update memory every N turns via background subagent
-    MODEL: str            # Model for memory subagent (default: claude-sonnet-4-6)
+    MODEL: str            # Model for memory subagent
     MAX_TOKENS: int       # Max tokens for memory subagent response
     THINKING: bool        # Enable extended thinking for memory subagent
-    THINKING_BUDGET: int  # Thinking budget tokens for memory subagent
+    EFFORT: str           # Effort level for memory subagent
+    THINKING_BUDGET: int  # Optional: if set, use budget_tokens instead of adaptive
 
 
 class ActionConfig(ModelConfig):

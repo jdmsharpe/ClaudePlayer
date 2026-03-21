@@ -166,14 +166,17 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
         """
         try:
             thinking_enabled = mode_config.get("THINKING", False)
+            effort = mode_config.get("EFFORT", "medium")
 
             # Log config once on first request
             if not self._logged_config:
                 logging.info(f"API Request Configuration:")
                 logging.info(f"  Model: {mode_config.get('MODEL', 'default')}")
-                logging.info(f"  Thinking enabled: {thinking_enabled}")
+                thinking_mode = "disabled"
                 if thinking_enabled:
-                    logging.info(f"  Thinking budget: {mode_config.get('THINKING_BUDGET', 'default')}")
+                    thinking_mode = f"budget={mode_config['THINKING_BUDGET']}" if mode_config.get("THINKING_BUDGET") else "adaptive"
+                logging.info(f"  Thinking: {thinking_mode}")
+                logging.info(f"  Effort: {effort}")
                 logging.info(f"  Efficient tools: {mode_config.get('EFFICIENT_TOOLS', False)}")
                 logging.info(f"  Max tokens: {mode_config.get('MAX_TOKENS', 'default')}")
                 logging.info(f"  Prompt caching: {isinstance(system_prompt, list)}")
@@ -189,13 +192,19 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
                 "tools": self._prepare_tools_cached(tools),
                 "system": system_value,
                 "messages": chat_history,
+                "output_config": {"effort": effort},
             }
 
             if thinking_enabled:
-                request_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": mode_config["THINKING_BUDGET"]
-                }
+                # Use budget_tokens if THINKING_BUDGET is set (Sonnet), else adaptive (Opus 4.6)
+                budget = mode_config.get("THINKING_BUDGET")
+                if budget:
+                    request_params["thinking"] = {
+                        "type": "enabled",
+                        "budget_tokens": budget,
+                    }
+                else:
+                    request_params["thinking"] = {"type": "adaptive"}
 
             with self.client.messages.stream(**request_params) as stream:
                 return stream.get_final_message()

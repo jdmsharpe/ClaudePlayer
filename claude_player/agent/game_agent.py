@@ -1096,10 +1096,14 @@ class GameAgent:
                 if hasattr(self.game_state, 'runtime_thinking_enabled'):
                     action_config["THINKING"] = self.config.MODEL_DEFAULTS.get("THINKING", True) and self.game_state.runtime_thinking_enabled
 
-                # Recovery escalation: disable thinking after repeated thinking-only failures
+                # Recovery escalation: lower effort first, then disable thinking
                 if attempt > 0 and self._consecutive_thinking_only >= 2:
-                    action_config["THINKING"] = False
-                    logging.warning(f"RECOVERY: t={self.game_state.turn_count} Temporarily disabling thinking to force output")
+                    if attempt == 1:
+                        action_config["EFFORT"] = "low"
+                        logging.warning(f"RECOVERY: t={self.game_state.turn_count} Dropping effort to low to force output")
+                    else:
+                        action_config["THINKING"] = False
+                        logging.warning(f"RECOVERY: t={self.game_state.turn_count} Disabling thinking to force output")
 
                 # Send request to Claude
                 message = self.claude.send_request(

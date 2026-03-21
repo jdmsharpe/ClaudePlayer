@@ -6,7 +6,6 @@ a TurnContextBuilder once in __init__ and calls build() each turn.
 """
 
 import logging
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,8 +17,9 @@ from claude_player.utils.world_map import WorldMap
 class TurnContextBuilder:
     """Builds the user_content list sent to Claude each turn.
 
-    Encapsulates injection-policy state (party/bag snapshots and refresh
-    intervals) so GameAgent doesn't need to manage those fields directly.
+    Assembles screenshot, spatial/battle context, party, bag, stuck warnings,
+    and KB location notes into the user message content blocks.  Party and bag
+    are injected every turn for always-current state.
 
     The Knowledge Base is injected in two layers:
     - System prompt (cached): party + strategy + lessons via KnowledgeBase.build_cached_block()
@@ -27,29 +27,13 @@ class TurnContextBuilder:
 
     Args:
         knowledge_base: Categorized KB instance for persistent agent memory.
-        party_refresh_interval: Inject party context every N turns even if unchanged.
-        bag_refresh_interval: Inject bag context every N turns even if unchanged.
     """
 
     def __init__(
         self,
         knowledge_base: KnowledgeBase,
-        party_refresh_interval: int = 10,
-        bag_refresh_interval: int = 15,
     ):
         self.kb = knowledge_base
-
-        # Party injection policy
-        self._last_party_snapshot: Optional[tuple] = None
-        self._last_party_inject_turn: int = 0
-        self._party_refresh_interval = party_refresh_interval
-
-        # Bag injection policy
-        self._last_bag_snapshot: Optional[tuple] = None
-        self._last_bag_inject_turn: int = 0
-        self._bag_refresh_interval = bag_refresh_interval
-
-        # (Removed: last_nav_buttons for auto-execute fallback)
 
     def build(
         self,
@@ -103,6 +87,7 @@ class TurnContextBuilder:
             spatial_text = self._build_spatial_text(
                 spatial_data, world_map, game_state, last_map_name,
                 stuck_count=stuck_count,
+                world_map_text=captured_state.get("world_map_text"),
             )
             user_content.append({"type": "text", "text": spatial_text})
 
@@ -116,17 +101,13 @@ class TurnContextBuilder:
         if text_data and text_data.get("text"):
             user_content.append({"type": "text", "text": text_data["text"]})
 
-        # ── Party injection (change-based + periodic) ──
-        self._maybe_inject_party(
-            user_content, party_data, game_state.turn_count,
-            was_in_battle=was_in_battle, in_battle=in_battle,
-        )
+        # ── Party injection (every turn — always current) ──
+        if party_data and party_data.get("text"):
+            user_content.append({"type": "text", "text": party_data["text"]})
 
-        # ── Bag injection (change-based + periodic) ──
-        self._maybe_inject_bag(
-            user_content, bag_data, game_state.turn_count,
-            was_in_battle=was_in_battle, in_battle=in_battle,
-        )
+        # ── Bag injection (every turn — always current) ──
+        if bag_data and bag_data.get("text"):
+            user_content.append({"type": "text", "text": bag_data["text"]})
 
         # ── Critical HP warning ──
         self._maybe_inject_critical_hp(
@@ -181,6 +162,7 @@ class TurnContextBuilder:
         game_state: Any,
         last_map_name: Optional[str],
         stuck_count: int = 0,
+        world_map_text: Optional[str] = None,
     ) -> str:
         """Build spatial context text with world map, goals, and NAV hint."""
         spatial_text = spatial_data["text"]
@@ -204,10 +186,12 @@ class TurnContextBuilder:
         map_id = spatial_data.get("map_number")
         player_pos = spatial_data.get("player_pos")
         if map_id is not None and player_pos is not None:
-            world_map_text = world_map.render(
-                map_id, player_pos,
-                dead_end_zones=world_map.dead_ends.get(map_id, []),
-            )
+            # Use pre-rendered world map from captured_state if available
+            if world_map_text is None:
+                world_map_text = world_map.render(
+                    map_id, player_pos,
+                    dead_end_zones=world_map.dead_ends.get(map_id, []),
+                ) or ""
             if world_map_text:
                 spatial_text += "\n" + world_map_text
             # World-map A* NAV: map graph BFS → compass fallback → inject hint
@@ -227,60 +211,6 @@ class TurnContextBuilder:
             )
             pass  # NAV hint included in spatial_text for the model to use
         return spatial_text
-
-    def _maybe_inject_party(
-        self,
-        user_content: list,
-        party_data: Optional[Dict],
-        turn_count: int,
-        was_in_battle: bool,
-        in_battle: bool,
-    ):
-        """Inject party context on meaningful changes or periodically."""
-        if not party_data or not party_data.get("text"):
-            return
-        current_snapshot = tuple(
-            (m["hp"], m["status"]) for m in party_data["party"]
-        )
-        turns_since = turn_count - self._last_party_inject_turn
-        just_left_battle = was_in_battle and not in_battle
-        party_changed = current_snapshot != self._last_party_snapshot
-        needs_healing = party_data.get("health", {}).get("needs_healing", False)
-        periodic = turns_since >= self._party_refresh_interval
-
-        if party_changed or just_left_battle or needs_healing or periodic:
-            user_content.append({"type": "text", "text": party_data["text"]})
-            self._last_party_inject_turn = turn_count
-            if party_changed:
-                logging.debug("Party context injected: state changed")
-
-        self._last_party_snapshot = current_snapshot
-
-    def _maybe_inject_bag(
-        self,
-        user_content: list,
-        bag_data: Optional[Dict],
-        turn_count: int,
-        was_in_battle: bool,
-        in_battle: bool,
-    ):
-        """Inject bag context on item change, post-battle, warnings, or periodically."""
-        if not bag_data or not bag_data.get("text"):
-            return
-        current_snapshot = bag_data.get("snapshot")
-        turns_since = turn_count - self._last_bag_inject_turn
-        just_left_battle = was_in_battle and not in_battle
-        bag_changed = current_snapshot != self._last_bag_snapshot
-        has_warnings = bool(bag_data.get("assessment", {}).get("warnings"))
-        periodic = turns_since >= self._bag_refresh_interval
-
-        if bag_changed or just_left_battle or has_warnings or periodic:
-            user_content.append({"type": "text", "text": bag_data["text"]})
-            self._last_bag_inject_turn = turn_count
-            if bag_changed:
-                logging.debug("Bag context injected: inventory changed")
-
-        self._last_bag_snapshot = current_snapshot
 
     @staticmethod
     def _maybe_inject_critical_hp(

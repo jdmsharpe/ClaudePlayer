@@ -119,8 +119,10 @@ class MemoryManager:
         # Read current KB state for the sections we're updating
         current_kb = self._read_current_state(sections_to_update, current_map_id)
 
-        # Trim chat history: last 60 messages, clean orphaned leading messages
-        recent = chat_history[-60:] if len(chat_history) > 60 else chat_history[:]
+        # Trim chat history: 2x MEMORY_INTERVAL messages (each turn ≈ 2 msgs)
+        memory_interval = self.config.MEMORY.get("MEMORY_INTERVAL", 20) if self.config else 20
+        history_window = memory_interval * 2
+        recent = chat_history[-history_window:] if len(chat_history) > history_window else chat_history[:]
         while recent:
             first = recent[0]
             if first["role"] == "assistant":

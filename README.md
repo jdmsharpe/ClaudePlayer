@@ -84,7 +84,7 @@ Configuration is loaded from `config.json` (created automatically on first run i
     "THINKING": true,                    // Enable extended thinking
     "DYNAMIC_THINKING": true,            // Allow Claude to toggle thinking on/off
     "EFFICIENT_TOOLS": true,             // Use token-efficient-tools beta
-    "MAX_TOKENS": 2048,                  // Maximum tokens per response
+    "MAX_TOKENS": 4096,                  // Maximum tokens per response
     "THINKING_BUDGET": 1028              // Maximum tokens for thinking
   },
 

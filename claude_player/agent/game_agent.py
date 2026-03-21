@@ -176,6 +176,15 @@ class GameAgent:
         # World map saves more frequently (JSON only — no emulator state risk)
         self._last_world_map_save_turn = 0
         self._world_map_save_interval = 20
+
+        # Cached display-only values (never change or change rarely)
+        self._cached_trainer_name: str | None = None
+        self._cached_trainer_id: int | None = None
+        self._cached_dex_caught: int = 0
+        self._cached_dex_seen: int = 0
+        self._cached_play_time: str = "0:00"
+        self._last_display_refresh_turn: int = 0
+        self._display_refresh_interval: int = 20  # refresh dex/playtime every N turns
         self._save_dir = os.path.join(os.path.dirname(self.config.ROM_PATH), "saves")
         self._save_path = os.path.join(self._save_dir, "autosave.state")
         self._visited_maps_path = os.path.join(self._save_dir, "visited_maps.json")
@@ -222,8 +231,6 @@ class GameAgent:
         # Turn context builder: assembles user_content for Claude each turn
         self._context_builder = TurnContextBuilder(
             knowledge_base=self._knowledge_base,
-            party_refresh_interval=10,
-            bag_refresh_interval=15,
         )
 
         # Initialize chat history
@@ -863,42 +870,49 @@ class GameAgent:
                 f"[cursor:{mt['cursor']}/{mt.get('max_item', 0)}]"
             )
 
-        # Read Pokédex caught/seen counts from RAM (19-byte bitfields, 1 bit per species)
-        dex_caught = sum(bin(self.pyboy.memory[ADDR_POKEDEX_OWNED + i]).count("1") for i in range(19))
-        dex_seen = sum(bin(self.pyboy.memory[ADDR_POKEDEX_SEEN + i]).count("1") for i in range(19))
+        # Trainer name/ID: read once, cache forever (never changes in-game)
+        if self._cached_trainer_name is None:
+            raw = []
+            for i in range(11):
+                b = self.pyboy.memory[ADDR_PLAYER_NAME + i]
+                if b == 0x50:
+                    break
+                raw.append(b)
+            self._cached_trainer_name = "".join(G1_CHARS.get(b, "") for b in raw).strip() or ""
+            self._cached_trainer_id = (self.pyboy.memory[ADDR_PLAYER_ID] << 8) | self.pyboy.memory[ADDR_PLAYER_ID + 1]
 
-        # Read trainer name from RAM (11 bytes, Gen 1 charset, 0x50=terminator)
-        raw = []
-        for i in range(11):
-            b = self.pyboy.memory[ADDR_PLAYER_NAME + i]
-            if b == 0x50:
-                break
-            raw.append(b)
-        trainer_name = "".join(G1_CHARS.get(b, "") for b in raw).strip() or ""
-
-        # Trainer ID (2 bytes big-endian)
-        trainer_id = (self.pyboy.memory[ADDR_PLAYER_ID] << 8) | self.pyboy.memory[ADDR_PLAYER_ID + 1]
-
-        # Play time (wPlayTimeHours = 0xDA40 word, wPlayTimeMinutes = 0xDA42 byte)
-        pt_hours = (self.pyboy.memory[0xDA40] << 8) | self.pyboy.memory[0xDA41]
-        pt_mins = self.pyboy.memory[0xDA42]
-        play_time = f"{pt_hours}:{pt_mins:02d}"
+        # Pokédex + play time: refresh every N turns (display-only, not in Claude context)
+        turns_since_refresh = self.game_state.turn_count - self._last_display_refresh_turn
+        if turns_since_refresh >= self._display_refresh_interval or self._last_display_refresh_turn == 0:
+            self._cached_dex_caught = sum(bin(self.pyboy.memory[ADDR_POKEDEX_OWNED + i]).count("1") for i in range(19))
+            self._cached_dex_seen = sum(bin(self.pyboy.memory[ADDR_POKEDEX_SEEN + i]).count("1") for i in range(19))
+            pt_hours = (self.pyboy.memory[0xDA40] << 8) | self.pyboy.memory[0xDA41]
+            pt_mins = self.pyboy.memory[0xDA42]
+            self._cached_play_time = f"{pt_hours}:{pt_mins:02d}"
+            self._last_display_refresh_turn = self.game_state.turn_count
 
         # Badges list from bag data (already read above)
         badges_list = bag_data.get("badges", []) if bag_data else []
 
-        # Render world map for display (overworld only, hidden during battle)
+        # Render world map (overworld only, hidden during battle)
         world_map_text = ""
+        world_map_text_ai = ""
         if not self._in_battle and spatial_data:
             map_id = spatial_data.get("map_number")
             player_pos = spatial_data.get("player_pos")
             if map_id is not None and player_pos is not None:
+                dead_ends = self._world_map.dead_ends.get(map_id, [])
+                # AI context render (full size) — passed to turn_context to avoid re-rendering
+                world_map_text_ai = self._world_map.render(
+                    map_id, player_pos, dead_end_zones=dead_ends,
+                ) or ""
+                # Dashboard render (smaller cap)
                 from claude_player.utils.world_map import _MAX_DISPLAY_SIZE
                 world_map_text = self._world_map.render(
-                    map_id, player_pos,
-                    dead_end_zones=self._world_map.dead_ends.get(map_id, []),
+                    map_id, player_pos, dead_end_zones=dead_ends,
                     max_size=_MAX_DISPLAY_SIZE,
                 ) or ""
+        captured_state["world_map_text"] = world_map_text_ai
 
         # Update terminal display
         self.display.update(
@@ -915,11 +929,11 @@ class GameAgent:
             bag_items=bag_items_list,
             menu_summary=menu_summary,
             world_map_text=world_map_text,
-            dex_caught=dex_caught,
-            dex_seen=dex_seen,
-            trainer_name=trainer_name,
-            trainer_id=trainer_id,
-            play_time=play_time,
+            dex_caught=self._cached_dex_caught,
+            dex_seen=self._cached_dex_seen,
+            trainer_name=self._cached_trainer_name,
+            trainer_id=self._cached_trainer_id,
+            play_time=self._cached_play_time,
             badges=badges_list,
             session_cost=self.cost_tracker.cost_usd,
         )
@@ -1433,7 +1447,8 @@ class GameAgent:
                             "role": "user",
                             "content": [{"type": "text", "text":
                                 "You used tools but didn't send any game inputs. "
-                                "Always include a send_inputs call with your actions."
+                                "Goal/objective tools update your plan but do NOT move — "
+                                "you MUST also call send_inputs with movement inputs."
                             }]
                         }
                         self.chat_history.append(nudge)
@@ -1486,11 +1501,15 @@ class GameAgent:
                 from claude_player.agent.nav_planner import last_nav_method as _nav_method
                 _stuck_str = f" stuck={self._stuck_count}" if self._stuck_count > 0 else ""
                 _nav_str = f" nav={_nav_method}" if _nav_method else ""
+                _side_str = ""
+                if self.game_state.side_objectives:
+                    _side_str = f" side=\"{' | '.join(self.game_state.side_objectives)}\""
                 logging.info(
                     f"TURN_SUMMARY: t={self.game_state.turn_count}"
                     f" map={_map_str} pos={_pos_str}{_hp_str}{_flags}"
                     f"{_stuck_str}{_nav_str}"
                     f" goal=\"{self.game_state.current_goal or 'None'}\""
+                    f"{_side_str}"
                     f" cost=${self._last_turn_cost:.4f} tokens={self._last_turn_tokens}"
                     f"{_tools_str}{_actions_str}"
                     f" duration={last_analysis_duration:.1f}s"

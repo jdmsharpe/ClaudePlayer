@@ -172,7 +172,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=1280">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClaudePlayer</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -181,7 +181,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     background: #0d1117;
     color: #e6edf3;
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: 13px;
+    font-size: 15px;
     overflow: hidden;
     height: 100vh;
     width: 100vw;
@@ -192,11 +192,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ---------- Unified section label ---------- */
   /* All section headers (panel-label, info-label, ai-label) share one style */
   .panel-label, .info-label, .ai-label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: #6e7681;
+    color: #8b949e;
     margin-bottom: 5px;
     display: flex;
     align-items: center;
@@ -216,10 +216,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 12px;
+    padding: 6px 14px;
     background: linear-gradient(180deg, #1c2128 0%, #161b22 100%);
     border-bottom: 1px solid #30363d;
-    font-size: 13px;
+    font-size: 14px;
   }
   .pill {
     display: inline-flex;
@@ -231,7 +231,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     border: 1px solid #30363d;
     white-space: nowrap;
   }
-  .pill-label { color: #6e7681; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .pill-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   .pill-value { color: #e6edf3; font-weight: 600; }
   .pill.game { background: #0d419d22; border-color: #1f6feb40; }
   .pill.game .pill-value { color: #58a6ff; }
@@ -241,7 +241,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .pill.error .pill-value { color: #f85149; }
   .spacer { flex: 1; }
   .title-text {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.2px;
     color: #e6edf3;
@@ -264,16 +264,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     background: #161b22;
     border: 1px solid #21262d;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: 12px;
   }
-  .cfg-badge .cfg-key { color: #6e7681; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
-  .cfg-badge .cfg-val { color: #c9d1d9; font-weight: 600; font-family: "Cascadia Mono", "Fira Code", monospace; }
+  .cfg-badge .cfg-key { color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; font-size: 11px; }
+  .cfg-badge .cfg-val { color: #e6edf3; font-weight: 600; font-family: "Cascadia Mono", "Fira Code", monospace; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   /* ---------- Main grid ---------- */
   .main {
     display: grid;
-    grid-template-columns: 1fr 540px 720px;
+    grid-template-columns: 1fr 1.2fr 1.5fr;
     grid-template-rows: auto 1fr auto;
     gap: 0;
     flex: 1;
@@ -317,7 +317,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     overflow: hidden;
   }
   .info-section {
-    padding: 6px 10px;
+    padding: 8px 12px;
     background: #161b22;
     border-radius: 6px;
     border: 1px solid #21262d;
@@ -334,14 +334,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     grid-column: 2;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 8px;
+    gap: 8px;
+    padding: 10px;
     overflow: hidden;
     border-bottom: 1px solid #30363d;
   }
 
   .panel {
-    padding: 8px 10px;
+    padding: 10px 12px;
     background: #161b22;
     border: 1px solid #21262d;
     border-radius: 6px;
@@ -363,22 +363,22 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 12px;
+    padding: 8px 14px;
     background: #161b22;
     border-bottom: 1px solid #30363d;
   }
   .goal-bar .panel-label { margin-bottom: 0; }
   .goal-bar .panel-label::before { background: #58a6ff; }
-  .goal-bar .ai-goal-text { font-size: 12px; }
+  .goal-bar .ai-goal-text { font-size: 14px; }
   .tactical-sep { color: #30363d; margin: 0 4px; font-size: 14px; }
   .tactical-section { display: flex; align-items: center; gap: 6px; }
   .tactical-section .panel-label { margin-bottom: 0; }
   .tactical-section .panel-label::before { background: #f0883e !important; }
-  #ai-tactical-goal { color: #f0883e; font-weight: 600; font-size: 12px; }
+  #ai-tactical-goal { color: #f0883e; font-weight: 600; font-size: 14px; }
   .side-section { display: flex; align-items: center; gap: 6px; }
   .side-section .panel-label { margin-bottom: 0; }
   .side-section .panel-label::before { background: #3fb950 !important; }
-  #ai-side-objectives { color: #3fb950; font-weight: 600; font-size: 12px; }
+  #ai-side-objectives { color: #3fb950; font-weight: 600; font-size: 14px; }
   #goal-progress { display: flex; align-items: center; gap: 4px; }
   .party-panel .panel-label::before { background: #f85149; }
   .bag-panel .panel-label::before { background: #e3b341; }
@@ -479,7 +479,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .grid-legend { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 8px; margin-bottom: 10px; }
   .legend-entry { display: inline-flex; align-items: center; gap: 3px; }
   .legend-sym { font-weight: bold; font-size: 13px; }
-  .legend-desc { color: #6e7681; font-size: 11px; }
+  .legend-desc { color: #8b949e; font-size: 12px; }
   .npc-line { line-height: 1.5; }
   .npc-id   { color: #f85149; font-weight: bold; }
   .npc-name { color: #e6edf3; font-weight: 600; }
@@ -513,7 +513,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   .battle-section {
     margin-bottom: 8px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     background: #161b22;
     border-radius: 6px;
     border: 1px solid #21262d;
@@ -521,15 +521,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .battle-section.your { border-left: 3px solid #3fb950; }
   .battle-section.enemy { border-left: 3px solid #f85149; }
   .battle-section-label {
-    font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 1px; color: #6e7681; margin-bottom: 5px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #8b949e; margin-bottom: 5px;
   }
   .battle-info-row { display: flex; align-items: center; gap: 8px; }
   .battle-hp-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .battle-hp-row .hp-bar { flex: 1; max-width: 200px; }
   .battle-mon-name { font-weight: 700; color: #e6edf3; }
-  .battle-mon-level { color: #8b949e; }
-  .battle-mon-status { font-size: 11px; font-weight: 600; }
+  .battle-mon-level { color: #c9d1d9; }
+  .battle-mon-status { font-size: 12px; font-weight: 600; }
   .battle-mon-status.ok { color: #3fb950; }
   .battle-mon-status.fnt { color: #f85149; }
   .battle-mon-status.bad { color: #d29922; }
@@ -540,9 +540,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     background: linear-gradient(90deg, transparent, #21262d 30%, #21262d 70%, transparent);
   }
   .type-badge {
-    display: inline-block; padding: 1px 5px; border-radius: 3px;
-    font-size: 10px; font-weight: 700; text-transform: uppercase;
-    min-width: 52px; text-align: center; box-sizing: border-box;
+    display: inline-block; padding: 2px 6px; border-radius: 3px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    min-width: 56px; text-align: center; box-sizing: border-box;
     letter-spacing: 0.3px; color: #fff;
   }
   .type-normal   { background: #a8a878; color: #333; }
@@ -562,18 +562,18 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .type-dragon   { background: #7038f8; }
   .battle-stats { display: flex; gap: 10px; margin-top: 6px; }
   .battle-stat-col { min-width: 44px; }
-  .battle-stat-label { color: #6e7681; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
-  .battle-stat-value { color: #c9d1d9; font-weight: 600; font-size: 12px; }
+  .battle-stat-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .battle-stat-value { color: #e6edf3; font-weight: 600; font-size: 13px; }
   .move-row {
     display: flex; align-items: center; gap: 6px;
     padding: 4px 6px; border-radius: 3px; margin-bottom: 3px;
   }
   .move-row.active { background: #1f6feb20; border: 1px solid #1f6feb40; }
-  .move-cursor { color: #58a6ff; font-weight: bold; width: 10px; text-align: center; font-size: 11px; }
+  .move-cursor { color: #58a6ff; font-weight: bold; width: 12px; text-align: center; font-size: 13px; }
   .move-name { font-weight: 600; color: #e6edf3; min-width: 110px; flex-shrink: 0; }
-  .move-power { color: #8b949e; min-width: 56px; text-align: right; }
-  .move-pp { color: #8b949e; min-width: 64px; text-align: right; }
-  .move-hm { color: #d2a8ff; font-size: 10px; font-weight: 600; }
+  .move-power { color: #c9d1d9; min-width: 56px; text-align: right; }
+  .move-pp { color: #c9d1d9; min-width: 64px; text-align: right; }
+  .move-hm { color: #d2a8ff; font-size: 11px; font-weight: 600; }
   .battle-menu {
     color: #d2a8ff;
     padding: 3px 8px; margin-bottom: 4px;
@@ -587,7 +587,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* Markdown in AI panels */
   .ai-response code, .ai-thinking code {
     font-family: "Cascadia Mono", "Fira Code", monospace;
-    font-size: 12px; background: #21262d; padding: 1px 4px;
+    font-size: 13px; background: #21262d; padding: 2px 5px;
     border-radius: 3px; border: 1px solid #30363d; color: #e6edf3;
   }
   .ai-response strong, .ai-thinking strong { color: #e6edf3; }
@@ -597,33 +597,33 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .party-panel .mon {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
+    gap: 8px;
+    margin-bottom: 6px;
   }
   .mon-name { font-weight: 600; width: 110px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mon-nickname { color: #8b949e; font-size: 11px; width: 80px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
-  .mon-level { color: #8b949e; width: 34px; flex-shrink: 0; font-size: 11px; }
+  .mon-nickname { color: #8b949e; font-size: 12px; width: 80px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+  .mon-level { color: #c9d1d9; width: 34px; flex-shrink: 0; font-size: 12px; }
   .mon-types { display: flex; align-items: center; gap: 3px; width: 100px; flex-shrink: 0; }
-  .mon-status-col { width: 32px; flex-shrink: 0; font-size: 11px; font-weight: 600; color: #f85149; }
+  .mon-status-col { width: 36px; flex-shrink: 0; font-size: 12px; font-weight: 600; color: #f85149; }
   .hp-bar {
     width: 100%;
-    height: 5px;
+    height: 8px;
     background: #21262d;
-    border-radius: 3px;
+    border-radius: 4px;
     overflow: hidden;
     border: 1px solid #30363d;
   }
   .hp-fill {
     height: 100%;
-    border-radius: 3px;
+    border-radius: 4px;
     transition: width 0.4s ease;
   }
-  .hp-text { color: #8b949e; font-size: 11px; width: 46px; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; }
-  .mon-status { color: #f85149; font-size: 11px; font-weight: 600; }
+  .hp-text { color: #c9d1d9; font-size: 12px; width: 50px; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .mon-status { color: #f85149; font-size: 12px; font-weight: 600; }
   .bars-col { display: flex; flex-direction: column; flex: 1; gap: 2px; }
   .exp-bar {
     width: 100%;
-    height: 3px;
+    height: 4px;
     background: #21262d;
     border-radius: 3px;
     overflow: hidden;
@@ -643,11 +643,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     padding: 3px 10px; border-radius: 6px;
     background: #21262d; border: 1px solid #30363d;
   }
-  .bag-item-label { color: #6e7681; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .bag-item-value { color: #e6edf3; font-weight: 700; font-size: 13px; }
-  .bag-inv { font-size: 11px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bag-item-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .bag-item-value { color: #e6edf3; font-weight: 700; font-size: 14px; }
+  .bag-inv { font-size: 12px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bag-inv-name { color: #c9d1d9; }
-  .bag-inv-qty { color: #6e7681; font-size: 10px; }
+  .bag-inv-qty { color: #8b949e; font-size: 11px; }
   .bag-item.badges { border-color: #e3b34140; }
   .bag-item.badges .bag-item-value { color: #e3b341; }
   .bag-item.money { border-color: #3fb95040; }
@@ -683,7 +683,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .left-info > .panel {
     border-bottom: 1px solid #21262d;
     border-right: none;
-    padding: 8px 10px;
+    padding: 10px 12px;
     flex: 1;
     overflow: hidden;
     margin: 8px;
@@ -710,7 +710,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   .party-bar > .panel {
     border-bottom: 1px solid #21262d;
-    padding: 8px 10px;
+    padding: 10px 12px;
     margin: 8px;
     border-radius: 6px;
     background: #161b22;
@@ -720,19 +720,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .ai-panel {
     grid-row: 2 / span 2;
     grid-column: 3;
-    padding: 8px 12px;
+    padding: 10px 14px;
     overflow: hidden;
     display: grid;
     grid-template-columns: 1fr;
     grid-template-rows: 2fr 1fr;
-    gap: 8px;
+    gap: 10px;
     min-height: 0;
     border-left: 1px solid #30363d;
     border-bottom: 1px solid #30363d;
   }
   .ai-section {
     overflow: hidden;
-    padding: 8px 10px;
+    padding: 10px 14px;
     background: #161b22;
     border-radius: 6px;
     border: 1px solid #21262d;
@@ -752,9 +752,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .ai-response-section .ai-label::before { background: #7ee787; }
   .ai-thinking-section .ai-label::before { background: #6e7681; }
   .ai-thinking {
-    color: #c9d1d9;
+    color: #e6edf3;
     overflow-y: auto;
-    line-height: 1.5;
+    line-height: 1.6;
     flex: 1;
     min-height: 0;
   }
@@ -773,9 +773,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     line-height: 40px;
   }
   .ai-response {
-    color: #c9d1d9;
+    color: #e6edf3;
     overflow-y: auto;
-    line-height: 1.5;
+    line-height: 1.6;
     flex: 1;
     min-height: 0;
   }

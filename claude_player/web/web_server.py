@@ -631,7 +631,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
   /* Streaming cursor blink */
   .streaming-cursor::after {
-    content: '\u2588';
+    content: '\2588';
     animation: blink 0.6s step-end infinite;
     color: #58a6ff;
     font-weight: 400;

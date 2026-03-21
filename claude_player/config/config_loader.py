@@ -54,7 +54,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "CONTINUOUS_ANALYSIS_INTERVAL": 1.0,
         "MAX_ADAPTIVE_INTERVAL": 15.0,
         "ENABLE_SPATIAL_CONTEXT": True,
-        "GRID_IN_PROMPT": True,
+        "GRID_IN_PROMPT": False,
         "ENABLE_SOUND": True,
         "SOUND_VOLUME": 50,
         "MAX_HISTORY_MESSAGES": 15,
@@ -76,7 +76,7 @@ def load_config(config_file='config.json') -> ConfigClass:
 
         "MEMORY": {
             "MEMORY_INTERVAL": 20,
-            "MODEL": "claude-sonnet-4-6",
+            "MODEL": "claude-opus-4-6",
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,

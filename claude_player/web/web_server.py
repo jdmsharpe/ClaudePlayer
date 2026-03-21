@@ -647,6 +647,23 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     to   { opacity: 1; }
   }
 
+  /* Active section glow while streaming — fades in/out via transition */
+  .ai-section, .action-section {
+    transition: border-color 0.5s ease, box-shadow 0.5s ease;
+  }
+  .ai-thinking-section.stream-active {
+    border-color: #6e768180;
+    box-shadow: 0 0 12px #6e768130, inset 0 0 8px #6e768110;
+  }
+  .ai-response-section.stream-active {
+    border-color: #7ee78780;
+    box-shadow: 0 0 12px #7ee78730, inset 0 0 8px #7ee78710;
+  }
+  .action-section.stream-active {
+    border-color: #ffa65780;
+    box-shadow: 0 0 12px #ffa65730, inset 0 0 8px #ffa65710;
+  }
+
   /* Party */
   .party-bar > .panel { overflow-y: auto; }
   .party-panel .mon {
@@ -951,6 +968,7 @@ function startSpinner() {
   if (_spinnerTimer) return;
   const el = document.getElementById('ai-action');
   el.textContent = SPINNER_FRAMES[0];
+  document.querySelector('.action-section').classList.add('stream-active');
   _spinnerTimer = setInterval(function() {
     _spinnerIdx = (_spinnerIdx + 1) % SPINNER_FRAMES.length;
     el.textContent = SPINNER_FRAMES[_spinnerIdx];
@@ -959,6 +977,7 @@ function startSpinner() {
 function stopSpinner() {
   if (_spinnerTimer) { clearInterval(_spinnerTimer); _spinnerTimer = null; }
   document.getElementById('ai-action').textContent = _lastAction;
+  document.querySelector('.action-section').classList.remove('stream-active');
 }
 
 /* Tile char -> text color class (used in legend) */
@@ -1683,6 +1702,8 @@ function connectSSE() {
   src.onmessage = function(e) {
     try {
       const msg = JSON.parse(e.data);
+      const thinkSec = document.querySelector('.ai-thinking-section');
+      const respSec = document.querySelector('.ai-response-section');
       if (msg.type === 'stream_start') {
         _streaming = true;
         _streamThinking = '';
@@ -1692,7 +1713,9 @@ function connectSSE() {
         const respEl = document.getElementById('ai-response');
         thinkEl.textContent = '';
         thinkEl.classList.add('streaming-cursor');
+        thinkSec.classList.add('stream-active');
         respEl.textContent = '';
+        respSec.classList.remove('stream-active');
       } else if (msg.type === 'thinking') {
         _streamThinking += msg.data;
         _thinkingHasContent = true;
@@ -1700,11 +1723,13 @@ function connectSSE() {
         appendToken(el, msg.data);
       } else if (msg.type === 'text') {
         _streamText += msg.data;
-        // Move cursor from thinking to response on first text token
+        // Move glow + cursor from thinking to response on first text token
         const thinkEl = document.getElementById('ai-thinking');
         const respEl = document.getElementById('ai-response');
         thinkEl.classList.remove('streaming-cursor');
+        thinkSec.classList.remove('stream-active');
         respEl.classList.add('streaming-cursor');
+        respSec.classList.add('stream-active');
         appendToken(respEl, msg.data);
       } else if (msg.type === 'stream_end') {
         _streaming = false;
@@ -1712,6 +1737,8 @@ function connectSSE() {
         const respEl = document.getElementById('ai-response');
         thinkEl.classList.remove('streaming-cursor');
         respEl.classList.remove('streaming-cursor');
+        thinkSec.classList.remove('stream-active');
+        respSec.classList.remove('stream-active');
         // Re-render with markdown formatting to avoid visual jump
         // when pollState takes over with renderMarkdown
         if (_streamThinking) renderMarkdown('ai-thinking', _streamThinking);

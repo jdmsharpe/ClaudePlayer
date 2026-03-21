@@ -71,6 +71,7 @@ Configuration is loaded from `config.json` (created automatically on first run i
   "CONTINUOUS_ANALYSIS_INTERVAL": 1.0,    // Base analysis interval in seconds
   "MAX_ADAPTIVE_INTERVAL": 15.0,          // Max interval when agent is idle
   "ENABLE_SPATIAL_CONTEXT": true,         // Whether to include map/grid context in prompts
+  "GRID_IN_PROMPT": false,                 // false = replace ASCII grid with compact direction summary in API calls
   "ENABLE_SOUND": true,                   // Whether to enable emulator sound
   "MAX_HISTORY_MESSAGES": 15,             // Max messages kept in context window
   "MAX_SCREENSHOTS": 1,                   // Max recent screenshots kept in chat history

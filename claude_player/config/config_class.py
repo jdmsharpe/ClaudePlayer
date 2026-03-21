@@ -32,6 +32,7 @@ class ConfigClass:
     CONTINUOUS_ANALYSIS_INTERVAL: float
     MAX_ADAPTIVE_INTERVAL: float
     ENABLE_SPATIAL_CONTEXT: bool
+    GRID_IN_PROMPT: bool  # Include ASCII grid in API prompt (False = compact direction summary)
     ENABLE_SOUND: bool
     SOUND_VOLUME: int  # 0-100
     MAX_HISTORY_MESSAGES: int

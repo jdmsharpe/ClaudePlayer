@@ -32,8 +32,10 @@ class TurnContextBuilder:
     def __init__(
         self,
         knowledge_base: KnowledgeBase,
+        grid_in_prompt: bool = True,
     ):
         self.kb = knowledge_base
+        self._grid_in_prompt = grid_in_prompt
 
     def build(
         self,
@@ -165,7 +167,7 @@ class TurnContextBuilder:
         world_map_text: Optional[str] = None,
     ) -> str:
         """Build spatial context text with world map, goals, and NAV hint."""
-        spatial_text = spatial_data["text"]
+        spatial_text = spatial_data["text"] if self._grid_in_prompt else spatial_data.get("api_text", spatial_data["text"])
         # Prepend "entered from" note for orientation after warps
         if last_map_name:
             spatial_text = f"[Entered from: {last_map_name}]\n" + spatial_text

@@ -231,6 +231,7 @@ class GameAgent:
         # Turn context builder: assembles user_content for Claude each turn
         self._context_builder = TurnContextBuilder(
             knowledge_base=self._knowledge_base,
+            grid_in_prompt=getattr(config, 'GRID_IN_PROMPT', True),
         )
 
         # Initialize chat history

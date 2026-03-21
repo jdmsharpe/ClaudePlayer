@@ -56,6 +56,7 @@ def load_config(config_file='config.json') -> ConfigClass:
         "CONTINUOUS_ANALYSIS_INTERVAL": 1.0,
         "MAX_ADAPTIVE_INTERVAL": 15.0,
         "ENABLE_SPATIAL_CONTEXT": True,
+        "GRID_IN_PROMPT": True,
         "ENABLE_SOUND": True,
         "SOUND_VOLUME": 50,
         "MAX_HISTORY_MESSAGES": 15,

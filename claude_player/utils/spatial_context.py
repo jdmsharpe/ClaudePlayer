@@ -1243,6 +1243,76 @@ def _format_npc_text(
     return "\n".join(lines)
 
 
+def _build_direction_summary(
+    grid: List[List[str]],
+    player_pos: Optional[Tuple[int, int]],
+    pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
+) -> str:
+    """Compact cardinal-direction walkability summary from player position.
+
+    Scans each direction from @ until hitting an obstacle or viewport edge.
+    Returns a single-line summary like:
+      WALKABLE: UP:3→wall | DOWN:1→ledge(v) | LEFT:blocked | RIGHT:5→warp
+    """
+    if not player_pos or not grid:
+        return ""
+    px, py = player_pos
+    gh = len(grid)
+    gw = len(grid[0]) if grid else 0
+    if not (0 <= px < gw and 0 <= py < gh):
+        return ""
+
+    _walk = frozenset('.,:@g')
+    _pb = pair_blocked or set()
+    _ledge_pass = {'v': (0, 1), '>': (1, 0), '<': (-1, 0)}
+    _names = {
+        '#': 'wall', '=': 'water', 'T': 'tree(Cut)', 's': 'sign',
+        'P': 'PC', 'B': 'boulder', 'i': 'item', 'o': 'object',
+    }
+
+    dirs = [("UP", 0, -1), ("DOWN", 0, 1), ("LEFT", -1, 0), ("RIGHT", 1, 0)]
+    parts = []
+
+    for name, dx, dy in dirs:
+        steps = 0
+        hit = "edge"
+        cx, cy = px, py
+        for _ in range(max(gw, gh)):
+            nx, ny = cx + dx, cy + dy
+            if not (0 <= nx < gw and 0 <= ny < gh):
+                hit = "edge"
+                break
+            if ((cx, cy), (nx, ny)) in _pb:
+                hit = "elevation"
+                break
+            c = grid[ny][nx]
+            if c in _walk:
+                steps += 1
+                cx, cy = nx, ny
+                continue
+            if c == 'W':
+                steps += 1
+                hit = "warp"
+                break
+            if c in _ledge_pass:
+                if (dx, dy) == _ledge_pass[c]:
+                    steps += 1
+                hit = f"ledge({c})"
+                break
+            if c.isdigit():
+                hit = "NPC"
+                break
+            hit = _names.get(c, c)
+            break
+
+        if steps == 0:
+            parts.append(f"{name}:blocked({hit})")
+        else:
+            parts.append(f"{name}:{steps}→{hit}")
+
+    return "WALKABLE: " + " | ".join(parts)
+
+
 def _format_spatial_text(
     collision: Optional[List[List[int]]],
     visible: List[List[int]],
@@ -1253,6 +1323,7 @@ def _format_spatial_text(
     game_state_info: Optional[Dict[str, str]] = None,
     story_progress: Optional[Dict[str, Any]] = None,
     terrain: Optional[List[List[str]]] = None,
+    include_grid: bool = True,
     cut_tree_positions: Optional[set] = None,
     player_facing: Optional[str] = None,
     tile_terrain: Optional[str] = None,
@@ -1468,10 +1539,15 @@ def _format_spatial_text(
             lines.append("COMPASS (off-screen exits — crow-flies bearing, NOT a path — follow NAV below):")
             lines.extend(compass_lines)
 
-    # Grid with column index header
-    lines.append("   " + "".join(str(x % 10) for x in range(grid_width)))
-    for y in range(grid_height):
-        lines.append(f"{y:2d} " + "".join(grid[y]))
+    # Grid or compact direction summary
+    if include_grid:
+        lines.append("   " + "".join(str(x % 10) for x in range(grid_width)))
+        for y in range(grid_height):
+            lines.append(f"{y:2d} " + "".join(grid[y]))
+    else:
+        dir_summary = _build_direction_summary(grid, player_screen_pos, pair_blocked)
+        if dir_summary:
+            lines.append(dir_summary)
 
     # NAV: A* path toward off-screen compass targets through visible obstacles.
     # This gives multi-step maze navigation instead of just 1-tile MOVES.
@@ -1677,7 +1753,7 @@ def extract_spatial_context(
         except Exception:
             pass
 
-        text = _format_spatial_text(
+        _fmt_kwargs = dict(
             collision=collision,
             visible=visible,
             tile_to_char=tile_to_char,
@@ -1692,6 +1768,8 @@ def extract_spatial_context(
             tile_terrain=tile_terrain,
             pair_blocked=pair_blocked,
         )
+        text = _format_spatial_text(**_fmt_kwargs, include_grid=True)
+        api_text = _format_spatial_text(**_fmt_kwargs, include_grid=False)
 
         # Player screen position (metatile coords) for world map accumulator
         player_screen_pos = None
@@ -1759,6 +1837,7 @@ def extract_spatial_context(
 
         return {
             "text": text,
+            "api_text": api_text,
             "visible_tilemap": visible,
             "player_pos": player_map_pos,
             "game_state": game_state_info,
@@ -1772,4 +1851,4 @@ def extract_spatial_context(
         }
     except Exception as e:
         logger.error(f"Error extracting spatial context: {e}", exc_info=True)
-        return {"text": "", "visible_tilemap": previous_tilemap, "player_pos": previous_player_pos, "game_state": {}, "story_progress": None}
+        return {"text": "", "api_text": "", "visible_tilemap": previous_tilemap, "player_pos": previous_player_pos, "game_state": {}, "story_progress": None}

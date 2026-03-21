@@ -57,6 +57,9 @@ class WorldMap:
         self._warp_transitions: deque = deque(maxlen=20)
         # map_id → {(warp_x, warp_y): turn_exhausted} — soft-deprioritized warps
         self._exhausted_warps: Dict[int, Dict[Tuple[int, int], int]] = {}
+        # Active cycling pairs: map_id → {set of map_ids currently cycling with it}
+        # Populated by record_warp_transition, decays with exhausted warps.
+        self._cycling_maps: Dict[int, Set[int]] = {}
         # Verified route cache: map_id → {dest_name → [(x,y), ...]}
         # Routes cached when A* path successfully leads to a warp (confirmed
         # by map transition).  Used as a shortcut on future visits.
@@ -192,16 +195,20 @@ class WorldMap:
             # Need at least 2 full round-trips (3+2 transitions) to confirm cycling
             if len(a_warps) < 3 or len(b_warps) < 2:
                 continue
-            # Mark the specific warps used as exhausted
+            # Mark the specific warps used as exhausted — don't refresh
+            # already-exhausted warps so they can decay naturally
             for wp in a_warps:
-                self._exhausted_warps.setdefault(a, {})[wp] = turn
+                self._exhausted_warps.setdefault(a, {}).setdefault(wp, turn)
             for wp in b_warps:
-                self._exhausted_warps.setdefault(b, {})[wp] = turn
+                self._exhausted_warps.setdefault(b, {}).setdefault(wp, turn)
             logger.info(
                 f"WARP CYCLING detected: 0x{a:02X}↔0x{b:02X} — "
                 f"exhausted {len(a_warps)} warps on 0x{a:02X}, "
                 f"{len(b_warps)} warps on 0x{b:02X}"
             )
+            # Track cycling relationship so NAV can skip these hops
+            self._cycling_maps.setdefault(a, set()).add(b)
+            self._cycling_maps.setdefault(b, set()).add(a)
             # Invalidate route cache for cycling maps — but skip from_map
             # since it was just confirmed as a working route this transition
             for mid in (a, b):
@@ -253,6 +260,22 @@ class WorldMap:
             pos for pos, exhaust_turn in exhausted.items()
             if current_turn - exhaust_turn < _WARP_EXHAUST_DECAY_TURNS
         }
+
+    def get_cycling_maps(self, map_id: int, current_turn: int) -> Set[int]:
+        """Return set of map IDs currently in a cycling relationship with map_id.
+
+        Cycling decays when all exhausted warps between the pair have decayed.
+        """
+        cycling = self._cycling_maps.get(map_id, set())
+        if not cycling:
+            return set()
+        # Only return maps where exhausted warps are still active
+        active: Set[int] = set()
+        for other_id in cycling:
+            if self.get_active_exhausted_warps(map_id, current_turn) or \
+               self.get_active_exhausted_warps(other_id, current_turn):
+                active.add(other_id)
+        return active
 
     def get_cross_map_stuck_warning(self) -> Optional[str]:
         """Detect cross-map looping from warp transition history.

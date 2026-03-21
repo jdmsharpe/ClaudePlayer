@@ -360,24 +360,24 @@ STAGE_MULTS = [25, 28, 33, 40, 50, 66, 100, 150, 200, 250, 300, 350, 400]
 # Gen 1 item IDs -> (display name, HP restored).  9999 = full HP.
 HP_ITEMS: Dict[int, Tuple[str, int]] = {
     0x14: ("Potion",       20),
-    0x1D: ("Super Potion", 50),
-    0x1C: ("Hyper Potion", 200),
-    0x1B: ("Max Potion",   9999),
-    0x1A: ("Full Restore", 9999),  # also cures status
-    0x21: ("Fresh Water",  50),
-    0x22: ("Soda Pop",     60),
-    0x23: ("Lemonade",     80),
+    0x13: ("Super Potion", 50),
+    0x12: ("Hyper Potion", 200),
+    0x11: ("Max Potion",   9999),
+    0x10: ("Full Restore", 9999),  # also cures status
+    0x3C: ("Fresh Water",  50),
+    0x3D: ("Soda Pop",     60),
+    0x3E: ("Lemonade",     80),
 }
 
 # Status cure items: item_id -> (name, set of statuses cured).
 STATUS_CURE_ITEMS: Dict[int, Tuple[str, frozenset]] = {
-    0x15: ("Antidote",    frozenset({"PSN"})),
-    0x16: ("Burn Heal",   frozenset({"BRN"})),
-    0x17: ("Ice Heal",    frozenset({"FRZ"})),
-    0x18: ("Awakening",   frozenset({"SLP"})),
-    0x19: ("Parlyz Heal", frozenset({"PAR"})),
-    0x1E: ("Full Heal",   frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
-    0x1A: ("Full Restore",frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
+    0x0B: ("Antidote",    frozenset({"PSN"})),
+    0x0C: ("Burn Heal",   frozenset({"BRN"})),
+    0x0D: ("Ice Heal",    frozenset({"FRZ"})),
+    0x0E: ("Awakening",   frozenset({"SLP"})),
+    0x0F: ("Parlyz Heal", frozenset({"PAR"})),
+    0x34: ("Full Heal",   frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
+    0x10: ("Full Restore",frozenset({"PSN", "BRN", "FRZ", "SLP", "PAR"})),
 }
 
 # ---------------------------------------------------------------------------

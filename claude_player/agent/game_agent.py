@@ -665,6 +665,11 @@ class GameAgent:
                             self._world_map, new_map_id,
                             self.game_state.strategic_goal,
                         )
+                    # Cap tactical goal length — detailed routing belongs in
+                    # location notes, not the goal string (saves ~100 tokens/turn)
+                    _MAX_TACTICAL_LEN = 200
+                    if self.game_state.tactical_goal and len(self.game_state.tactical_goal) > _MAX_TACTICAL_LEN:
+                        self.game_state.tactical_goal = self.game_state.tactical_goal[:_MAX_TACTICAL_LEN].rsplit(" ", 1)[0] + "… (see location notes)"
                     if self.game_state.tactical_goal != old_tactical:
                         logging.info(f"AUTO-TACTICAL-GOAL: {self.game_state.tactical_goal}")
 
@@ -1792,11 +1797,13 @@ class GameAgent:
                         self._blocked_directions.clear()
                         self._blocked_at_pos = None
                     logging.info(f"OUTCOME: t={self.game_state.turn_count} {self._last_action_feedback}")
-                    # Track stats for periodic aggregate
-                    if _pre_x == _post_x and _pre_y == _post_y and _pre_map == _post_map:
-                        self._stats_blocked += 1
-                    else:
-                        self._stats_moved += 1
+                    # Track stats for periodic aggregate — skip battle turns
+                    # (position can't change during battle, so UNCHANGED is expected)
+                    if not self._in_battle:
+                        if _pre_x == _post_x and _pre_y == _post_y and _pre_map == _post_map:
+                            self._stats_blocked += 1
+                        else:
+                            self._stats_moved += 1
                     # Refresh battle context after action so the web/terminal cursor
                     # matches the live game state (cursor RAM updates immediately on button press)
                     if self._in_battle:

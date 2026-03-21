@@ -40,18 +40,18 @@ WARP_DEST_NAME_OVERRIDES: Dict[Tuple[int, int], str] = {
     # B2F north zone: W0(9,25), W1(17,21), W3(7,5)
     # B2F south zone: W2(27,15) — entry from B1F W5
     (0x3D, 0): "Mt. Moon B1F (north stairs)",       # W0 north zone → B1F W1
-    (0x3D, 1): "Mt. Moon B1F (east exit)",           # W1 north zone → B1F W4 → Route 4
+    (0x3D, 1): "Mt. Moon B1F (west section)",         # W1 north zone → B1F W4 (dead-end pocket)
     (0x3D, 2): "Mt. Moon B1F (south entry)",         # W2 south zone → B1F W5 (loops back)
-    (0x3D, 3): "Mt. Moon B1F (northwest stairs)",    # W3 north zone → B1F W6
+    (0x3D, 3): "Mt. Moon B1F (upper exit to Route 4)", # W3 north zone → B1F W6 near W7/Route 4
 
     # --- Mt. Moon B1F (0x3C) ---
     # pokered: W1→B2F W0, W4→B2F W1, W5→B2F W2, W6→B2F W3
     # B1F W1(17,11) → B2F north zone (W0 at 9,25)
-    # B1F W4(21,17) → B2F north zone (W1 at 17,21 = the exit!)
+    # B1F W4(21,17) → B2F north zone (W1 at 17,21)
     # B1F W5(13,27) → B2F SOUTH zone (W2 at 27,15 — loops back!)
     # B1F W6(23,3)  → B2F north zone (W3 at 7,5)
     (0x3C, 1): "Mt. Moon B2F (north zone)",        # W1 → B2F W0 (north zone!)
-    (0x3C, 4): "Mt. Moon B2F (north zone)",        # W4 → B2F W1 (north zone — exit!)
+    (0x3C, 4): "Mt. Moon B2F (north zone)",        # W4 → B2F W1 (north zone)
     (0x3C, 5): "Mt. Moon B2F (south dead-end)",    # W5 → B2F W2 (SOUTH zone loop!)
     (0x3C, 6): "Mt. Moon B2F (north zone)",        # W6 → B2F W3 (north zone)
     (0x3C, 7): "Route 4 (exit)",                   # W7 → Route 4 (the goal)

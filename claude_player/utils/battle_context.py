@@ -681,9 +681,9 @@ def _generate_battle_tip(
     that selects FIGHT and the best move in ONE send_inputs call so the
     agent doesn't waste a full turn navigating each sub-menu separately.
     """
-    # Enemy already fainted — press A to clear EXP/level-up/move-learned text
+    # Enemy already fainted — use T to auto-advance all EXP/level-up text
     if enemy["hp"] == 0:
-        return "Enemy fainted! Press A a few times to advance EXP/level-up text."
+        return "Enemy fainted! Use T to auto-advance all EXP/level-up text. Send: T"
 
     # Player fainted — give specific YES/NO and party-select guidance
     if player["hp"] == 0:
@@ -937,7 +937,7 @@ def _generate_battle_tip(
             train_tag = f"TRAIN: Team needs XP (min Lv{min_party_level} vs enemy Lv{enemy['level']}) — FIGHT! "
 
         return (f"{train_tag}Use {best_move['name']} ({best_move['power']}pwr, {cat}{stab_tag}{eff_tag}{burn_tag})"
-                f"{spd_note}{estatus_note} — send: {compound}")
+                f"{spd_note}{estatus_note} — send: {compound} T")
 
     if menu_type in ("main", "fight") and not damage_moves:
         if battle_type == 1:  # wild — RUN is an option

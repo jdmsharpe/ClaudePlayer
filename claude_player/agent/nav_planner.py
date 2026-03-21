@@ -24,6 +24,11 @@ last_nav_method: str = ""
 # results, force frontier exploration to discover new territory.
 _consecutive_exhausted: int = 0
 
+# Cache A* failures: (map_id, hop_id) pairs that failed.
+# Cleared when the map's tile count changes (new tiles explored).
+_failed_hops: dict = {}  # map_id → {hop_id: tile_count_at_failure}
+
+
 # Direction keyword mapping for COMPASS fallback NAV parsing
 _DIR_TO_COMPASS_KW = {
     "NORTH": "UP", "SOUTH": "DOWN",
@@ -174,6 +179,24 @@ def compute_nav(
             break  # Found a match in this tier, don't fall through
 
     exclude_maps: set = set()
+    # Pre-exclude maps we're currently cycling with — prevents the
+    # BFS from routing back through the same floor over and over.
+    cycling = world_map.get_cycling_maps(map_id, current_turn)
+    if cycling:
+        exclude_maps.update(cycling)
+        logging.info(
+            f"NAV: pre-excluding cycling maps: "
+            f"{[f'0x{m:02X}' for m in cycling]}"
+        )
+    # Pre-exclude hops that previously failed A* on this map (same tile count)
+    global _failed_hops
+    cur_tile_count = len(world_map.tiles.get(map_id, {}))
+    cached_failures = _failed_hops.get(map_id, {})
+    for hop_id, tile_count in list(cached_failures.items()):
+        if tile_count == cur_tile_count:
+            exclude_maps.add(hop_id)
+        else:
+            del cached_failures[hop_id]  # tiles changed, retry
     if target_map_id is not None:
         # BFS with retry: if A* can't reach the first hop,
         # exclude it and re-BFS for an alternate route.
@@ -226,9 +249,10 @@ def compute_nav(
                     last_nav_method = "graph"
                 logging.info(f"NAV result: {wm_nav}")
                 break
-            # A* couldn't reach this hop — exclude and retry
+            # A* couldn't reach this hop — exclude, cache failure, and retry
             logging.info(f"NAV graph: {hop_name!r} unreachable via A*, excluding")
             exclude_maps.add(hop_id)
+            _failed_hops.setdefault(map_id, {})[hop_id] = cur_tile_count
 
     # ── Track consecutive exhausted results ──
     # When graph routing repeatedly falls back to exhausted warps,

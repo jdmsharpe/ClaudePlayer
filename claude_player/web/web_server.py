@@ -273,7 +273,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ---------- Main grid ---------- */
   .main {
     display: grid;
-    grid-template-columns: 1fr 1.2fr 1.5fr;
+    grid-template-columns: 0.7fr 1.3fr 1.5fr;
     grid-template-rows: auto 1fr auto;
     gap: 0;
     flex: 1;
@@ -294,8 +294,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     overflow: hidden;
   }
   .frame-panel img {
-    height: 100%;
-    width: auto;
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
     image-rendering: pixelated;
     border: 2px solid #30363d;
     border-radius: 4px;

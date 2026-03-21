@@ -638,6 +638,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   @keyframes blink { 50% { opacity: 0; } }
 
+  /* Token fade-in during streaming */
+  .token-chunk {
+    animation: tokenFade 0.3s ease-out both;
+  }
+  @keyframes tokenFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
   /* Party */
   .party-bar > .panel { overflow-y: auto; }
   .party-panel .mon {
@@ -1653,6 +1662,21 @@ pollState();
 let _streaming = false;
 let _streamThinking = '';
 let _streamText = '';
+let _thinkingHasContent = false;
+
+function appendToken(el, text) {
+  /* Append a delta chunk as a span with fade-in animation */
+  const span = document.createElement('span');
+  span.className = 'token-chunk';
+  /* Preserve newlines as <br> for readable streaming */
+  const parts = text.split('\n');
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) el.appendChild(document.createElement('br'));
+    if (parts[i]) span.appendChild(document.createTextNode(parts[i]));
+  }
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
 
 function connectSSE() {
   const src = new EventSource('/api/stream-tokens');
@@ -1663,6 +1687,7 @@ function connectSSE() {
         _streaming = true;
         _streamThinking = '';
         _streamText = '';
+        _thinkingHasContent = false;
         const thinkEl = document.getElementById('ai-thinking');
         const respEl = document.getElementById('ai-response');
         thinkEl.textContent = '';
@@ -1670,9 +1695,9 @@ function connectSSE() {
         respEl.textContent = '';
       } else if (msg.type === 'thinking') {
         _streamThinking += msg.data;
+        _thinkingHasContent = true;
         const el = document.getElementById('ai-thinking');
-        el.textContent = _streamThinking;
-        el.scrollTop = el.scrollHeight;
+        appendToken(el, msg.data);
       } else if (msg.type === 'text') {
         _streamText += msg.data;
         // Move cursor from thinking to response on first text token
@@ -1680,12 +1705,17 @@ function connectSSE() {
         const respEl = document.getElementById('ai-response');
         thinkEl.classList.remove('streaming-cursor');
         respEl.classList.add('streaming-cursor');
-        respEl.textContent = _streamText;
-        respEl.scrollTop = respEl.scrollHeight;
+        appendToken(respEl, msg.data);
       } else if (msg.type === 'stream_end') {
         _streaming = false;
-        document.getElementById('ai-thinking').classList.remove('streaming-cursor');
-        document.getElementById('ai-response').classList.remove('streaming-cursor');
+        const thinkEl = document.getElementById('ai-thinking');
+        const respEl = document.getElementById('ai-response');
+        thinkEl.classList.remove('streaming-cursor');
+        respEl.classList.remove('streaming-cursor');
+        // Re-render with markdown formatting to avoid visual jump
+        // when pollState takes over with renderMarkdown
+        if (_streamThinking) renderMarkdown('ai-thinking', _streamThinking);
+        if (_streamText) renderMarkdown('ai-response', _streamText);
       }
     } catch (err) { /* ignore parse errors */ }
   };

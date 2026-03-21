@@ -15,13 +15,15 @@ class MessageUtils:
         thinking_blocks = [block for block in content_blocks if block.type == "thinking"]
         
         # Log Claude's thinking: full text at DEBUG, 1-line summary at INFO
+        # Adaptive thinking on Opus 4.6 can produce multiple interleaved blocks
         if thinking_blocks:
             total_chars = sum(len(b.thinking) for b in thinking_blocks)
+            count_str = f" ({len(thinking_blocks)} blocks)" if len(thinking_blocks) > 1 else ""
             # First 120 chars as preview, collapsed to single line
             preview = thinking_blocks[0].thinking[:120].replace("\n", " ").strip()
             if total_chars > 120:
                 preview += "..."
-            logging.info(f"THINKING: {total_chars} chars — {preview}")
+            logging.info(f"THINKING: {total_chars} chars{count_str} — {preview}")
             logging.debug("CLAUDE'S THINKING (full):")
             for block in thinking_blocks:
                 logging.debug(f"  {block.thinking}")

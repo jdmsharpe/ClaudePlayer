@@ -1198,7 +1198,8 @@ class GameAgent:
                     response_text = message_content["text_blocks"][0].text
                 thinking_text = ""
                 if message_content["thinking_blocks"]:
-                    thinking_text = message_content["thinking_blocks"][0].thinking
+                    # Concatenate all thinking blocks (interleaved thinking may produce multiple)
+                    thinking_text = "\n---\n".join(b.thinking for b in message_content["thinking_blocks"] if b.thinking)
                 self.display.update(
                     last_response=response_text,
                     last_thinking=thinking_text,

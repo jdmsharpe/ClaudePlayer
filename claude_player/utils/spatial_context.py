@@ -1783,6 +1783,22 @@ def extract_spatial_context(
         base_grid = None
         if terrain is not None:
             base_grid = [row[:] for row in terrain]
+            # Cross-reference with PyBoy collision: same fix applied in
+            # _format_spatial_text (line ~1362) but base_grid is built from
+            # raw terrain which misses it.  Without this, cave transition
+            # tiles rejected by the all-4-sub-tiles check stay as '#' in
+            # the world map even though PyBoy (and the display grid) know
+            # they're walkable.
+            if collision is not None:
+                bg_h = len(base_grid)
+                bg_w = len(base_grid[0]) if base_grid else 0
+                for y in range(min(bg_h, len(collision) // 2)):
+                    for x in range(min(bg_w, len(collision[0]) // 2) if collision else 0):
+                        if base_grid[y][x] == '#' and all(
+                            collision[y * 2 + dy][x * 2 + dx] != 0
+                            for dy in range(2) for dx in range(2)
+                        ):
+                            base_grid[y][x] = '.'
             # Overlay cut trees
             if cut_tree_pos:
                 for y in range(len(base_grid)):

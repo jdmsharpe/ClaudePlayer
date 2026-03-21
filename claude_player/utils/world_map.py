@@ -450,6 +450,16 @@ class WorldMap:
                 if cell in _STATIC_TILES:
                     abs_x = px_map + (gx - px_screen)
                     abs_y = py_map + (gy - py_screen)
+                    # Never downgrade a previously-observed walkable tile to a
+                    # wall.  The shelf-collapse post-processing in spatial_context
+                    # is viewport-relative: the same absolute tile can be marked
+                    # walkable when near the viewport centre but '#' when at the
+                    # edge (different neighbour context).  Since the game map is
+                    # static, a tile confirmed walkable once is always walkable.
+                    if cell == '#':
+                        existing = tile_map.get((abs_x, abs_y))
+                        if existing is not None and existing not in _BLOCKED_TILES:
+                            continue  # keep the walkable observation
                     tile_map[(abs_x, abs_y)] = cell
 
         # The player's own tile shows as '@' in the overlay grid and is never
@@ -459,11 +469,21 @@ class WorldMap:
         if (px_map, py_map) not in tile_map:
             tile_map[(px_map, py_map)] = "."
 
-        # Stamp tile pair collision edges (absolute coords)
+        # Stamp tile pair collision edges (absolute coords).
+        # Only keep edges where both endpoint tiles are confirmed walkable
+        # in the accumulated map.  Edges involving walls are redundant
+        # (movement already blocked), and edges from viewport-edge
+        # observations may be spurious due to shifted metatile sampling.
         if pair_blocked:
             if map_id not in self.pair_blocked_edges:
                 self.pair_blocked_edges[map_id] = set()
-            self.pair_blocked_edges[map_id].update(pair_blocked)
+            for edge in pair_blocked:
+                (x1, y1), (x2, y2) = edge
+                t1 = tile_map.get((x1, y1))
+                t2 = tile_map.get((x2, y2))
+                if (t1 is not None and t1 not in _BLOCKED_TILES
+                        and t2 is not None and t2 not in _BLOCKED_TILES):
+                    self.pair_blocked_edges[map_id].add(edge)
 
         # Record warps with destination names.
         # Rebuild from scratch each update to avoid stale duplicates.

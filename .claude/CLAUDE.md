@@ -1,60 +1,51 @@
 # ClaudePlayer
 
 AI agent that plays Pokemon Red via PyBoy emulator, controlled by Claude API.
-The emulator runs continuously in real-time; the AI observes via screenshots and RAM reads, then sends button inputs that execute asynchronously.
+The emulator runs in real-time; the AI observes via screenshots and RAM reads, then sends button inputs asynchronously.
 
 ## Setup & Run
 
 ```bash
-pipenv install          # Install dependencies
-pipenv shell            # Activate virtualenv
+pipenv install && pipenv shell
 python play.py          # Run the agent (accepts --config path)
 python emu_setup.py     # Manual save state creation utility
 ```
 
-Requires `.env` with `ANTHROPIC_API_KEY` and a Game Boy ROM (`red.gb`) in project root.
+Requires `.env` with `ANTHROPIC_API_KEY` and `red.gb` in project root.
 
 ## Project Structure
 
 ```text
 claude_player/
-  agent/          # Game loop (game_agent.py), KB subagent (memory_manager.py),
-                  #   knowledge base (knowledge_base.py), NAV planner (nav_planner.py),
-                  #   turn context builder (turn_context.py), goal deriver (goal_deriver.py)
-  config/         # TypedDict config schema, JSON loader with deep merge, GBC palettes
-  data/           # Static game data tables: pokemon.py (species, moves, types,
-                  #   RARE_POKEMON, SLEEP/PARALYZE_MOVE_IDS),
-                  #   items.py (inventory, badges, HMs), maps.py (map ID → name)
-  interface/      # Claude API: system prompt construction, streaming, prompt caching
-  state/          # Mutable game state: three-tier goals (strategic + tactical + side objectives), turn count, story progress
-  tools/          # Decorator-based tool registry + tool definitions (send_inputs, set_strategic_goal, set_tactical_goal, add_side_objective, place_marker, remove_marker, etc.)
-  utils/          # RAM readers (spatial, battle, party, bag, menu, text), world map, pathfinding,
-                  #   warp_overrides (position + dest_name per-warp corrections), cost tracker, sound output
-  web/            # Flask dashboard: MJPEG stream, state API, runs as daemon thread
+  agent/      # game_agent.py (main loop), memory_manager.py (KB subagent),
+              # knowledge_base.py, nav_planner.py, turn_context.py, goal_deriver.py
+  config/     # TypedDict config schema, JSON loader with deep merge, GBC palettes
+  data/       # Static tables: pokemon.py (species, moves, RARE_POKEMON, status move IDs),
+              # items.py (inventory, badges, HMs), maps.py (map ID → name)
+  interface/  # Claude API: system prompt, streaming, prompt caching
+  state/      # Mutable state: three-tier goals, turn count, story progress
+  tools/      # Decorator-based registry + definitions (send_inputs, goals, markers, etc.)
+  utils/      # RAM readers (spatial, battle, party, bag, menu, text), world_map.py,
+              # pathfinding.py, warp_overrides.py, cost_tracker.py, sound_output.py
+  web/        # Flask dashboard: MJPEG stream, state API, audio streaming
 ```
 
-Key entry: `play.py` -> `claude_player/main.py` -> `game_agent.py` main loop.
+Entry: `play.py` → `claude_player/main.py` → `game_agent.py` main loop.
 
 ## Code Conventions
 
-- **Python 3.12**, managed with Pipenv (no pyproject.toml/setup.py)
-- **Type hints** used throughout: `Dict[str, Any]`, `Optional[str]`, `TypedDict` for configs
-- **Google-style docstrings** with `Args:` and `Returns:` sections
-- **No linter/formatter configured** — match existing style when editing
-- **Constants**: UPPER_SNAKE_CASE; module-private constants use leading underscore (`_ADDR_MAP_HEIGHT`), shared constants are public (`ADDR_PLAYER_Y`, `POKEMON_NAMES`)
-- **RAM addresses**: prefixed with `ADDR_`, sourced from pret/pokered disassembly. Shared addresses live in `utils/ram_constants.py`; module-specific addresses stay local. Import the raw name — no `as _` aliasing.
-- **Game data**: static lookup tables (species, moves, items, maps) live in `claude_player/data/`; logic modules import from there
-- **Shared helpers**: `read_word()` and `decode_status()` in `ram_constants.py` — used by both `battle_context` and `party_context`
-- **Logging**: `logging` module everywhere; file=INFO+, console=WARNING+; rotating handler (5MB, 2 backups). Key log patterns for analysis:
-  - `TURN_SUMMARY: t=N map=0xHH(Name) pos=(x,y) hp=N% [stuck=N] [nav=METHOD] goal="..." cost=$N tokens=N tools=... actions="..." duration=Ns` — one grepable line per turn with all dimensions. `stuck` field only appears when >0; `nav` shows which NAV pipeline stage resolved (`explore`, `graph`, `cache`, `exhausted`, `frontier`, `compass`, `none`)
-  - `OUTCOME: t=N Executed: ... — moved/UNCHANGED/warped` — action result (logged at execution time, not next turn). UNCHANGED outcomes include accumulated blocked-direction tracking: `BLOCKED directions at (x,y): UP,LEFT | Untried: DOWN,RIGHT`
-  - `STATS: t=A-B blocked=P%(N/M) cost=$N thinking_only=N no_action=N session=$N` — periodic aggregate stats emitted every 25 turns
-  - `THINKING: N chars — preview...` — 1-line INFO summary of model thinking (full text at DEBUG level)
-  - `LOCATION: map=0xHH (Name) pos=(x,y)` — logged in turn header alongside GAME/GOAL/TURN
-  - `INTERRUPT: t=N ...`, `RECOVERY: t=N ...`, `THINKING-ONLY RESPONSE: t=N ...`, `NO-ACTION TURN: t=N ...` — all events tagged with turn number for correlation
-  - FPS metrics logged at DEBUG level only (not WARNING) — normal fluctuations during API calls are not actionable
-- **No test suite** — no pytest, unittest, or test files exist
-- **Imports**: stdlib -> third-party (pyboy, flask, anthropic) -> local (claude_player.*)
+- **Python 3.12**, Pipenv (no pyproject.toml/setup.py)
+- **Type hints**: `Dict[str, Any]`, `Optional[str]`, `TypedDict` for configs
+- **Google-style docstrings** with `Args:` / `Returns:`
+- **No linter** — match existing style
+- **Constants**: UPPER_SNAKE_CASE; module-private with `_` prefix (`_ADDR_MAP_HEIGHT`)
+- **RAM addresses**: prefixed `ADDR_`; shared in `utils/ram_constants.py`, module-specific stay local
+- **Game data**: static tables in `claude_player/data/`; logic modules import from there
+- **Shared helpers**: `read_word()` and `decode_status()` in `ram_constants.py`
+- **Logging**: `logging` module; file=INFO+, console=WARNING+; rotating (5MB, 2 backups)
+  - Key tags: `TURN_SUMMARY`, `OUTCOME`, `STATS` (every 25 turns), `INTERRUPT`, `RECOVERY`, `NO-ACTION TURN`, `THINKING-ONLY RESPONSE` — all include `t=N` for correlation
+- **No test suite**
+- **Imports**: stdlib → third-party → local (`claude_player.*`)
 
 ## Dependencies
 
@@ -62,84 +53,74 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 ## Architecture Notes
 
-- **Turn loop**: screenshot -> context extraction (RAM reads) -> API call -> tool execution -> repeat. Turn context assembly (injecting spatial, battle, party, bag, stuck warnings, etc.) is handled by `TurnContextBuilder` in `agent/turn_context.py`.
-- **Three-tier goal system**: `GameState` holds `strategic_goal` (milestone, e.g. "Beat Brock"), `tactical_goal` (map-specific action, e.g. "Enter Pewter Gym from north"), and `side_objectives` (persistent secondary tasks, e.g. "Heal at Pokémon Center", "Buy Potions"). Strategic goals are auto-set from `STORY_PROGRESSION` event flags — `set_strategic_goal` should NOT be used for temporary needs (use `add_side_objective` instead). Tactical goals are auto-derived each turn by `derive_tactical_goal()` in `agent/goal_deriver.py` from the `MAP_HINTS` table in `event_flags.py`, keyed by `(next_flag, current_map_id)`. When no hand-authored hint exists, `derive_nav_tactical_goal()` falls back to map-graph BFS routing, generating goals like "Navigate to Route 4 (toward Cerulean City)". Side objectives persist across map changes (unlike tactical goals) and are managed via `add_side_objective` / `complete_side_objective` tools (max 5). The agent can override tactical goals via `set_tactical_goal` tool (has a 1-map-change grace period so overrides survive dungeon floor transitions, then auto-clears). The `current_goal` property returns `tactical_goal or strategic_goal` for backward compatibility. NAV pipeline uses tactical goal for routing, with strategic as fallback for map-graph BFS matching. **Tactical goal cap**: goals are truncated to 200 chars with `"… (see location notes)"` suffix — detailed routing belongs in location knowledge files, not the goal string (saves ~100 tokens/turn uncached). **Auto-heal gate**: when total offensive PP across all alive party members drops to ≤10, a high-priority side objective ("URGENT: Heal at nearest Pokémon Center") is auto-injected (removed when PP > 20). Prevents softlock from PP depletion. **Level gates**: `MILESTONE_LEVEL_GATES` in `event_flags.py` maps each milestone flag to a recommended minimum level (sourced from pokered trainer data). When the party's max level is below the gate, a training side objective is auto-injected (e.g., "TRAIN: Level up party to Lv19+ before Misty"). Removed automatically when the party levels up past the threshold.
-- **Prompt caching**: three `cache_control` breakpoints in the system prompt: (1) static prompt text — always cache-hits, (2) KB block (party+strategy+lessons) — cache-hits for most turns until the KB subagent rewrites it every `MEMORY_INTERVAL` turns, (3) tool definitions — always cache-hits. The KB subagent (`MemoryManager`) also uses prompt caching — its system prompt is wrapped as a cached content block. Requires **2048+ tokens** in the system prompt when extended thinking is enabled (undocumented — thinking mode doubles the normal 1024 Sonnet minimum). Tool-level `cache_control` breakpoints do NOT work with thinking. KB staleness uses an absolute turn number (`updated_at_turn=N`) rather than a relative count so the text stays identical between KB updates and doesn't invalidate the cache.
-- **Movement feedback**: `send_inputs` records player position before/after execution and injects feedback at the start of the next turn ("moved (x,y)→(x,y)", "position UNCHANGED — blocked", or "map changed — warped"). UNCHANGED feedback includes **blocked-direction tracking**: accumulates which directions (U/D/L/R) have been tried and failed at the current position across turns, and shows untried directions (resets on successful move or map change). Only pure movement actions (containing only U/D/L/R tokens) update blocked-direction tracking — actions with A/B/W/T/S/X tokens (menu/battle interactions) are excluded to prevent false blocking from non-movement sequences like `run_from_battle`. Prevents the agent from retrying blocked paths. **Battle exclusion**: movement feedback is suppressed from the model's context during battle (position can't change), and battle turns are excluded from blocked/moved stats so the `blocked=N%` metric reflects actual navigation performance.
-- **Auto-dialog (T token)**: The `T` button token in `send_inputs` auto-advances all dialogue by pressing A until the text box closes. Uses `wStatusFlags5` bit 0 and WY register to detect active text. Includes stale-text detection (bails after 3 unchanged A presses — catches YES/NO prompts and shop menus that need directional input) and a 600-frame safety cap (~10s). Logs A-press count and frames used. Example: `"U32 L2 A T"` = walk up 2 tiles, face left, interact, auto-clear all dialogue. Replaces manual `A A A A A` sequences, saving turns and API cost on dialogue-heavy sequences.
-- **NO-ACTION / THINKING-ONLY recovery**: when the model produces a NO-ACTION turn (used tools but no `send_inputs`) or a THINKING-ONLY response (no output at all), a nudge message is appended and the turn is retried. NO-ACTION nudges remind the model to include `send_inputs`; THINKING-ONLY nudges prompt immediate action. Max retries prevent infinite loops.
-- **Screen text reader**: `text_context.py` decodes on-screen text (dialogue, signs, item pickups) directly from wTileMap (0xC3A0) using `_TEXT_CHARS` — an extended version of `G1_CHARS` with punctuation (0x9A-0x9F), accented é (0xBA), contractions (0xBB-0xC1), and symbols. Gated on wStatusFlags5 bit 0 or Window Y < 144.  Uses WY register to determine which tile rows to decode (WY < 8 = full screen, WY ≥ 8 = bottom overlay starting at row WY//8).  Detects the ▼ continuation arrow (0xEE) and hints "press A for more". Injected into turn context after menu context as `<screen_text>` block. No OCR dependency — tile indices map directly to characters.
-- **Post-battle menu skip**: Menu context has two defenses against stale battle cursor RAM (Y=14 X=15): (1) `_was_in_battle` flag suppresses menu injection on the first turn after battle, (2) `extract_menu_context()` rejects any state where `cursor > max_item` (impossible in a real menu, catches stale battle cursor indefinitely).
-- **Tool registry**: decorator pattern (`@registry.register(...)`) in `tool_registry.py`
-- **Knowledge Base**: categorized persistent memory in `saves/knowledge/` replaces the old flat `MEMORY.md`. Sections: `party.md` (team strategy, subjective only — RAM has facts), `strategy.md` (current plan), `lessons.md` (hard-won rules with `[CRITICAL]`/`[RULE]`/`[STRATEGY]` prefixes), and `locations/<map_name>.md` (per-map notes). Two-layer injection: (1) system prompt (cached): party + strategy + lessons via `KnowledgeBase.build_cached_block()` — changes every `MEMORY_INTERVAL` turns, gets cache-read pricing otherwise; (2) user message (per-turn): current map's `<location_notes>` — small, changes on map transition. Background subagent (`MemoryManager`) updates sections independently every `MEMORY_INTERVAL` turns, with section selection based on context (always updates strategy+party; lessons every 3rd cycle; location when map is known). Migration from old `MEMORY.md` runs automatically on first startup. **Thread-safe caching**: `KnowledgeBase` uses an in-memory `dict` + `threading.Lock()` to cache file contents — eliminates redundant disk reads between KB updates and prevents torn reads from the concurrent background writer. **Strategy validation**: `_sanitize_strategy()` post-processes subagent output to strip ephemeral battle state lines ("in wild battle", "in battle vs", etc.) that the model writes despite instructions. **Multi-location tracking**: `record_map_visit()` is called on every map transition; the visited-maps list is passed to the KB subagent so it can write `<location>` tags for all maps traversed since the last update, not just the current one. Existing notes for visited maps are also loaded into the subagent's context. **KB system prompt**: `KB_SYSTEM_PROMPT` in `memory_manager.py` must stay above **2048 tokens** for prompt caching (thinking is enabled). Contains full game reference: route knowledge (Pallet → Indigo Plateau), all 8 gym leaders + Elite Four with types/levels/counters, key items checklist. The subagent has generous thinking budget (default 10000+) to reason deeply about patterns. **Output headroom**: `max_tokens` is auto-adjusted to ensure at least 4096 tokens remain for XML output after the thinking budget.
-- **World map**: persistent per-map tile accumulator with A* pathfinding in `world_map.py`. Includes a **map connectivity graph** (`map_graph`) that records bidirectional edges between maps from warps and connections. BFS on this graph provides map-level pathfinding so the NAV pipeline can identify the correct next-hop map (e.g. "go to Mt. Moon 1F" instead of "go to Cerulean City" when ledges block the direct route). The graph builds incrementally as maps are visited and persists in `world_map.json`. `ensure_graph_edge()` guarantees bidirectional edges on every map transition (warp, connection, or walk-off), so even transitions without warp_data get recorded. Map 0xFF ("outside / last map") warps are resolved to the actual previous map ID via `last_map_id`. BFS `find_map_path` excludes maps only as the **first hop** (where A\* on the current map failed to reach their warps); excluded maps can still appear as the destination through longer alternate routes (e.g. Route 4 can't A\* east to Cerulean due to ledges, but Route 4 → Mt. Moon → … → Cerulean works). **Pathfinding variance**: `find_path_to()` accepts `variance` (0–3) which adds random per-tile cost jitter, causing A\* to explore alternate routes when the optimal path keeps failing. Escalated automatically from `stuck_count` in `turn_context.py` (1→1, 2→2, 3+→3). `stuck_count` only resets on confirmed player movement or leaving overworld — screen animations (cave water, grass) no longer reset it. **Verified route cache**: `route_cache` in WorldMap stores paths that successfully led to a warp (confirmed by map transition via `confirm_route()`). On future visits, `get_cached_route()` splices from the nearest point within 3 tiles of the player. Skipped when variance>0 (stuck = don't reuse failing route). Pending routes discarded after 3 stuck turns. `record_warp_transition()` accepts `arrival_pos` and auto-exhausts the arrival-side warp on the destination map (within 2 tiles) so NAV doesn't immediately route back through the entry warp. When WARP CYCLING is detected (requires 3+2 transitions in each direction — 2 full round-trips), route cache for cycling maps is invalidated (except the `from_map` whose route was just confirmed), and the cycling pair is recorded in `_cycling_maps`. Intra-map warps (same map stairs) are excluded from cycling detection. `_exhausted_warps` and `_warp_transitions` persist in `world_map.json` across restarts. **Cycling map exclusion**: `compute_nav()` pre-excludes maps in `_cycling_maps` from BFS hop selection via `get_cycling_maps()`, forcing alternate routes or frontier exploration. Cycling decays when all exhausted warps between the pair decay (30 turns). Exhausted warps use `setdefault` so cycling detection doesn't refresh their expiry — they decay naturally. **Tile pair collisions**: Pokemon Red blocks movement between specific tile pairs even though both tiles are individually walkable (e.g. cave platform edges ↔ ground floor). `_TILE_PAIR_COLLISIONS` in `spatial_context.py` hardcodes these from pokered's `pair_collision_tile_ids.asm` for CAVERN (tileset 17) and FOREST (tileset 3). `_extract_terrain_data()` computes blocked-transition edges as `Set[((x1,y1),(x2,y2))]` and threads them through all A\* calls (viewport `find_path`, world-map `find_path_to`, `find_frontier_path`). Elevated cave tiles are shown as `':'` in the grid for visual distinction; ground tiles remain `'.'`. Blocked edges are persisted in `pair_blocked_edges` in `world_map.json`. **Directionality**: pokered's `CheckForTilePairCollisions` is direction-agnostic at the instruction level, but the metatile system introduces effective directionality — each 2x2 metatile has 4 sub-tiles with different IDs, and N/S vs E/W movement samples different sub-tiles. Result: upper (`.`, 0x05) NORTH of lower (`:`, 0x20/etc) is passable (step down south, climb up north). Lower NORTH of upper is blocked both ways. E/W transitions always blocked. **Cross-map loop detection**: `get_cross_map_stuck_warning()` in `world_map.py` scans `_warp_transitions` for repetitive map pairs — if the same two maps account for 6+ transitions (3 round-trips) and only 2-3 distinct maps appear in the last 8 warps, a `CROSS-MAP LOOP` warning is injected into turn context by `turn_context.py`. Complements the existing per-map cycling/dead-end detection which resets on map change. Map-change detection uses `wCurMap` ID comparison only (position-jump heuristic removed — large caves caused false positives). **Map markers**: agent-placed POI annotations stored in `world_map.markers` (`map_id → {(x,y): label}`). Rendered as `'*'` on the expanded world map with a legend line (`Markers (*): (x,y): label`). Tools: `place_marker` (label + optional dx/dy offset from player), `remove_marker` (substring match). Max `MAX_MARKERS_PER_MAP` (8) per map. Markers persist in `world_map.json`. Warps (`W`) take render priority over markers. Current map markers are also injected as `MARKERS on this map:` into the spatial text each turn. **Frontier-first exploration**: `frontier_ratio()` computes the ratio of frontier tiles (walkable with unexplored neighbors) to total walkable tiles. When ratio > 0.3 and agent is not stuck (`variance == 0`), NAV Step 0 routes to the nearest frontier tile before attempting goal-directed graph routing. Uses `last_nav_method = "explore"`. Skipped when stuck to avoid fighting the variance-based recovery system.
-- **Web dashboard**: Flask in daemon thread, shares state via `TerminalDisplay` with thread locks. Browser audio streaming via `SoundOutput` (`utils/sound_output.py`) buffers PyBoy APU frames into WAV chunks served at `GET /audio/chunk`.
-- **Config**: `config.json` auto-created on first run; deep-merged with defaults from `config_loader.py`
+- **Turn loop**: screenshot → RAM reads → API call → tool execution → repeat. `TurnContextBuilder` in `agent/turn_context.py` assembles context (spatial, battle, party, stuck warnings, etc.).
+
+- **Three-tier goals**: `strategic_goal` (milestone, auto-set from story flags — don't use `set_strategic_goal` for temp needs), `tactical_goal` (map-specific, auto-derived by `goal_deriver.py`; 200-char cap with `"… (see location notes)"` suffix), `side_objectives` (persistent across map changes, max 5). Auto-heal gate: total offensive PP ≤10 injects "URGENT: Heal" objective (removed when PP > 20). Level gates: `MILESTONE_LEVEL_GATES` in `event_flags.py` auto-injects training objective when party is underleveled.
+
+- **Prompt caching**: 3 `cache_control` breakpoints: (1) static system prompt text, (2) KB block, (3) tool definitions. **System prompt must stay ≥2048 tokens** when extended thinking is enabled — undocumented requirement (thinking doubles the normal 1024 Sonnet minimum). KB staleness uses absolute turn number (not relative) so the text stays identical between updates and avoids cache invalidation. Tool-level `cache_control` does NOT work with thinking.
+
+- **Knowledge Base**: `saves/knowledge/` — `party.md`, `strategy.md`, `lessons.md` (`[CRITICAL]`/`[RULE]`/`[STRATEGY]` prefixes), `locations/<map>.md`. Two-layer injection: (1) cached system prompt block updated every `MEMORY_INTERVAL` turns by background `MemoryManager` subagent; (2) per-turn user message with current map's location notes. `KB_SYSTEM_PROMPT` must also stay ≥2048 tokens. `_sanitize_strategy()` strips ephemeral battle state lines the subagent writes despite instructions.
+
+- **World map** (`world_map.py`): persistent tile accumulator + A* + **map connectivity graph** (`map_graph`) for BFS hop routing. `ensure_graph_edge()` guarantees bidirectional edges on every map transition. **Pathfinding variance** (0–3): cost jitter forces alternate routes when stuck; escalated from `stuck_count` in `turn_context.py`. **Route cache**: paths confirmed by successful warp transition reused via `get_cached_route()`; skipped when variance>0. **Warp cycling**: detected after 3+2 transitions in both directions; cycling pair added to `_cycling_maps` (excluded from BFS); decays after 30 turns. **Frontier-first**: when `frontier_ratio() > 0.3` and not stuck, NAV routes to nearest frontier tile before goal-directed routing. **Map markers**: `place_marker`/`remove_marker` tools; max 8/map; rendered `*` with legend; injected into spatial text each turn. Persisted in `world_map.json`.
+
+- **NAV pipeline** (`nav_planner.py`, entry `compute_nav()`): (0) frontier-first, (0b) route cache, (1) map graph BFS → A\* to next-hop warp (retries up to 3× excluding failed first hops), (2a) frontier fallback when all hops exhausted or 2 consecutive "exhausted" results, (2b) COMPASS from goal text, (3) frontier exploration A\*, (4) ledge-aware path truncation. `last_nav_method` records which stage resolved.
+
+- **Warp dest_name overrides** (`warp_overrides.py`): disambiguates caves with multiple warps to same `dest_map`. When adding overrides: pokered ASM uses **1-based** warp indices; RAM uses **0-based**. `MAP_HINTS` in `event_flags.py` must use exact override name strings for NAV regex matching.
+
+- **Tile pair collisions** (from pokered `pair_collision_tile_ids.asm`): CAVERN (tileset 17) and FOREST (tileset 3) block movement between specific tile pairs even when tiles are individually walkable. `_TILE_PAIR_COLLISIONS` in `spatial_context.py`. Cave lower tiles (`:`) vs upper floor (`.`) — upper NORTH of lower is passable; lower NORTH of upper blocked; E/W always blocked. Persisted as `pair_blocked_edges` in `world_map.json`.
+
+- **Movement feedback**: position before/after injected at next turn start. UNCHANGED includes blocked-direction accumulation (dirs tried/failed at current pos, resets on move/warp). Only pure movement tokens (U/D/L/R) update tracking — A/B/W/T/S/X excluded. Suppressed during battle.
+
+- **T token** (auto-dialog): auto-advances all dialogue (A-presses until text closes). Stale-text detection bails after 3 unchanged A-presses; 600-frame safety cap. Example: `"U32 L2 A T"` = walk 2 up, face left, interact, clear all dialogue.
+
+- **NO-ACTION / THINKING-ONLY recovery**: nudge appended and turn retried. Max retries prevent loops.
+
+- **Screen text**: `text_context.py` decodes wTileMap (0xC3A0) tile indices → characters. No OCR. Gated on text-box-active flag or WY < 144.
+
+- **Post-battle menu skip**: `_was_in_battle` flag suppresses menu injection on first post-battle turn. `extract_menu_context()` rejects cursor > max_item (catches stale battle cursor Y=14 X=15 indefinitely).
+
+- **Web dashboard**: Flask in daemon thread. Audio at `GET /audio/chunk` (WAV chunks from PyBoy APU).
 
 ## Cost Tracking
 
-Per-turn and cumulative USD cost is estimated by `CostTracker` in `utils/cost_tracker.py`.
+`CostTracker` in `utils/cost_tracker.py`. Pricing per MTok:
 
-**What's tracked** (matches the Anthropic `usage` response object fields):
+| Model             | Input  | Output | Cache read | Cache write |
+| ----------------- | ------ | ------ | ---------- | ----------- |
+| Opus 4.5/4.6      | $5     | $25    | $0.50      | $6.25       |
+| Opus 4/4.1        | $15    | $75    | $1.50      | $18.75      |
+| Sonnet 4/4.5/4.6  | $3     | $15    | $0.30      | $3.75       |
+| Haiku 4.5         | $1     | $5     | $0.10      | $1.25       |
+| Haiku 3.5         | $0.80  | $4     | $0.08      | $1.00       |
+| Haiku 3           | $0.25  | $1.25  | $0.03      | $0.30       |
 
-- `input_tokens` — regular (non-cached) input tokens at the base input rate
-- `output_tokens` — all output tokens, **including extended thinking/reasoning tokens** (billed at output rate)
-- `cache_creation_input_tokens` — tokens written to prompt cache (5-min TTL tier, 1.25× input rate)
-- `cache_read_input_tokens` — tokens served from cache (0.1× input rate)
-
-Tool-use system prompt overhead (~346 tokens/call) is already included in `input_tokens` by the API.
-
-**Pricing table** (`_MODEL_PRICING` dict in `cost_tracker.py` — keys matched by substring, more-specific first):
-
-| Model family          | Input  | Output  | Cache read | Cache write (5m) |
-| --------------------- | ------ | ------- | ---------- | ---------------- |
-| Opus 4.5 / 4.6        | $5     | $25     | $0.50      | $6.25            |
-| Opus 4 / 4.1          | $15    | $75     | $1.50      | $18.75           |
-| Sonnet 4 / 4.5 / 4.6  | $3     | $15     | $0.30      | $3.75            |
-| Haiku 4.5             | $1     | $5      | $0.10      | $1.25            |
-| Haiku 3.5             | $0.80  | $4      | $0.08      | $1.00            |
-| Haiku 3               | $0.25  | $1.25   | $0.03      | $0.30            |
-
-All prices are per million tokens (MTok). The 1-hour cache write tier (2× input rate) is not distinguishable in the API response, so it is treated as 5-min writes — cost may be slightly underestimated if long-TTL caching is in use.
-
-Cumulative stats persist across runs in `saves/session_stats.json`.
+Cumulative stats persist in `saves/session_stats.json`.
 
 ## RAM / Emulation
 
-All RAM addresses reference the pret/pokered disassembly. Shared addresses (player pos, Pokédex, badges, money, event flags, menu cursor, battle detection) live in `utils/ram_constants.py`; module-specific addresses stay in their consumer files.
+Addresses from pret/pokered disassembly. Shared in `utils/ram_constants.py`; module-specific stay local.
 
-- Coordinates (`ADDR_PLAYER_Y`/`ADDR_PLAYER_X`) are in **block units** (1 block = 2×2 tiles = 16px step); warp entries and NPC sprite positions share this space (sprite state adds a constant +4 border offset)
-- `hTileAnimations` at `0xFFD7`: 0=indoor/building (no animations), 1=cave (water animated), 2=outdoor (water+flower animated) — sourced from annotated hram.asm
-- HRAM constants: `ADDR_TILE_PLAYER_ON` (FF93), `ADDR_DISABLE_JOYPAD` (FFF9)
-- Battle context reads Pokemon stats, moves (with `id` field for move ID matching), HP, PP, menu cursor, **stat stage modifiers** (CD1A–CD33, 0–12 where 7=neutral), **turn counter** (CCD5), **whose half-turn** (FFF3), and last confirmed move indices (CCDC/CCDD). `_read_party_levels()` reads alive party member levels via `_PARTY_LEVEL_OFFSET = 0x21` per party slot. TIP generation filters out moves with 0x type effectiveness (immunity) before recommending — if all damage moves are immune, falls through to RUN/switch advice. **Fixed-damage moves** (NIGHT SHADE, SEISMIC TOSS, DRAGON RAGE, etc.) bypass type immunity filtering in `_effective_power()` since they ignore the type chart in Gen 1. Fight-menu TIP compound sequences use `W32` (32 frames) settle wait after entering the fight submenu to ensure "No PP left!" text clears before cursor navigation. Fight TIPs include PP as `pp/base_pp PP` (e.g. `15/20PP`) so the agent can see remaining uses. Fight TIPs append `T` to auto-advance post-attack text (damage, EXP, level-up) in one action. Enemy-fainted TIP recommends `T` instead of manual A-presses. **Leveling TIP**: `_generate_battle_tip()` accepts `min_party_level`; when any alive party member is below the enemy's level in a wild battle, prepends "TRAIN: Team needs XP — FIGHT!" to the fight recommendation. System prompt directs the agent to fight when TIP says TRAIN and to use overworld START → POKEMON to put underleveled mons in the lead slot for full XP.
-- **Rare Pokemon catch system**: `RARE_POKEMON` set in `data/pokemon.py` defines ~25 species (low encounter rate, one-per-game, legendaries) that trigger aggressive catch TIPs. Multi-phase strategy in `_generate_battle_tip()`: (A) inflict sleep/paralysis for catch bonus using `SLEEP_MOVE_IDS`/`PARALYZE_MOVE_IDS`, (B) weaken with gentlest move via `_pick_catch_move()` + `_estimate_damage()` (Gen 1 formula, picks lowest max-damage move that won't KO), (C) switch to weaker party member if all moves would KO, (D) throw best ball via `_find_best_ball()` (prefers Ultra > Great > Poke, skips Master Ball). Standard (non-rare) catch logic unchanged: triggers at ≤40% HP with open party slot, or ≤20% HP, or enemy asleep/frozen. Rare encounters logged at WARNING level (`RARE ENCOUNTER:` prefix).
-- **Battle start settle**: `_BATTLE_START_SETTLE = 6.0s` in `game_agent.py` — analysis is gated until 6s after battle interrupt to let intro animations finish. `run_from_battle` preamble (A W64 × 3 + W64) provides additional safety for the "unknown" submenu case.
-- `0xCC2F` is dual-purpose: party index of sent-out Pokemon outside the fight submenu, last A-confirmed fight slot (0–3) inside it
-- Event flags at `ADDR_EVENT_FLAGS` track story progression milestones
-- Sprite data starts at `0xC100` with 16-byte stride per sprite
-- Direction constants (`DIR_BUTTONS`, `LEDGE_ALLOWED_DIR`, `NEIGHBORS`) are canonical in `pathfinding.py`; `world_map.py` imports from there
-- **Tile pair collisions** (hardcoded from pokered `data/tilesets/pair_collision_tile_ids.asm`): `_TILE_PAIR_COLLISIONS` in `spatial_context.py` maps tileset ID → list of (tile1, tile2) raw wTileMap values that block movement between them. CAVERN (17): `{(0x20,0x05), (0x41,0x05), (0x2A,0x05), (0x05,0x21)}` — elevated platform tiles vs ground. FOREST (3): 7 pairs involving tile 0x2E. Pre-computed as `_TILE_PAIR_SETS` (frozenset lookup). Lower CAVERN ground tiles (`_CAVE_LOWER_TILES = {0x20, 0x21, 0x2A, 0x41}`) are rendered as `':'` in the terrain grid; upper floor tile 0x05 stays `'.'`. `PairBlockedEdges` type alias in `pathfinding.py`
+- Coordinates (`ADDR_PLAYER_Y`/`ADDR_PLAYER_X`): **block units** (1 block = 2×2 tiles = 16px step)
+- `hTileAnimations` 0xFFD7: 0=indoor, 1=cave, 2=outdoor
+- `0xCC2F` dual-purpose: party index outside fight submenu; last A-confirmed fight slot (0–3) inside it
+- Battle context: stats, moves (with `id`), HP, PP, stat stages (CD1A–CD33, 0–12, 7=neutral), turn counter (CCD5), half-turn (FFF3), last move indices (CCDC/CCDD). Fight TIPs show PP as `pp/base_pp PP`; append `T` to auto-advance post-attack text.
+- **Rare Pokemon** (`RARE_POKEMON` in `data/pokemon.py`): triggers multi-phase catch TIP — (A) inflict sleep/paralysis, (B) weaken without KO, (C) switch if all moves would KO, (D) throw best ball. Logged at WARNING (`RARE ENCOUNTER:`).
+- Battle start settle: `_BATTLE_START_SETTLE = 6.0s` before analysis (lets intro animations finish)
+- Sprite data: 0xC100, 16-byte stride; player facing at 0xC109
+- Event flags: `ADDR_EVENT_FLAGS`; direction constants canonical in `pathfinding.py`
 
-When modifying RAM readers, verify addresses against <https://github.com/pret/pokered>.
+When modifying RAM readers, verify against <https://github.com/pret/pokered>.
 
 ## Config
 
-Runtime config in `config.json` — see `config/config_class.py` for the full TypedDict schema.
-Key sections: `MODEL_DEFAULTS` (default MAX_TOKENS=2048, THINKING_BUDGET=1024), `ACTION`, `MEMORY`, `STUCK` detection thresholds.
-`ENABLE_SOUND` (default `true`): when `false`, PyBoy skips APU sampling entirely (`tick(sound=False)`). Browser audio streaming via `SoundOutput` is also disabled.
+`config.json` — see `config/config_class.py` for full TypedDict schema.
+Key sections: `MODEL_DEFAULTS` (MAX_TOKENS=2048, THINKING_BUDGET=1024), `ACTION`, `MEMORY`, `STUCK`.
+`ENABLE_SOUND` (default true): disables PyBoy APU sampling and audio streaming when false.
 
-## System Prompt & Navigation
+## System Prompt
 
-The system prompt (`claude_interface.py: _build_system_prompt`) must stay **above 2048 tokens** for prompt caching to work with extended thinking enabled. It contains:
+`claude_interface.py: _build_system_prompt` — must stay **≥2048 tokens** for prompt caching with extended thinking.
 
-- `<notation>` — button input format rules
-- `<spatial_context>` — grid legend, movement rules, warp mechanics
-- `<navigation>` — **critical**: COMPASS vs NAV priority rules, ROUTE PLANNING (1-tile steps when no NAV), stuck recovery, warp pathing, dead-end behavior. Added to prevent the agent from converting compass bearings into frame inputs (e.g. "6 LEFT" → "L96") which walks into walls.
-- **NAV pipeline** (in `agent/nav_planner.py`, entry point `compute_nav()`): (0) **Frontier-first exploration** — when `frontier_ratio() > 0.3` (>30% of walkable tiles have unexplored neighbors) and agent is not stuck (`variance == 0`), routes to nearest frontier tile before goal-directed routing. Uses `last_nav_method = "explore"`. Prevents bee-lining to a warp and missing items/paths. (0b) **Route cache** — if a verified cached route exists for the destination and player is within 3 tiles of it, use the cached path (skipped when variance>0). (1) **Map graph** — extract target map from goal text (tactical first, then strategic fallback), BFS to find next hop, A\* to that hop's warp. If A\* fails (e.g. ledges block), exclude that hop as a **first hop only** and retry BFS up to 3 times — the excluded map can still appear as the destination through longer alternate routes. **Failed hop cache**: `_failed_hops` in `nav_planner.py` caches `(map_id, hop_id) → tile_count` for A\* failures; cached failures are pre-excluded from BFS until the map's tile count changes (new tiles explored), eliminating redundant A\* computations on repeated turns. (2a) **Frontier-first fallback** — when graph routing was tried but all hops unreachable (common in partially-explored caves), OR after 2 consecutive "exhausted" NAV results (cycling through bad warps), push into unexplored territory instead of routing backward to the previous floor. `_consecutive_exhausted` counter tracks this and resets on successful non-exhausted navigation. (2b) **COMPASS fallback** — parse direction from goal text, match against COMPASS entries. (3) **Frontier exploration** — A\* to nearest unexplored tile edge. (4) **Ledge-aware truncation** — before emitting buttons, scan the path for tiles adjacent to one-way ledges where the player is in the "launch position" (could accidentally jump). Truncates 1 step before the danger zone unless the path intentionally crosses the ledge. The computed button sequence is included in the spatial text for the model to use directly. Module-level `last_nav_method` records which stage resolved (`explore`, `graph`, `cache`, `exhausted`, `frontier`, `compass`, `none`) — read by `game_agent.py` for TURN_SUMMARY diagnostics.
-- **Warp dest_name disambiguation**: caves often have multiple warps to the same `dest_map` (e.g. all four Mt. Moon B2F warps point to B1F). `WARP_DEST_NAME_OVERRIDES` in `warp_overrides.py` assigns unique `dest_name` strings per `(map_id, warp_index)` so NAV can target specific warps. `_extract_warp_data()` applies overrides and also emits `dest_base_name` (the plain `MAP_NAMES` name) which `update_graph()` uses for canonical `map_names` — preventing qualifier strings from polluting BFS target matching. The NAV planner (`nav_planner.py`) regex-scans goal text for `"hop_name (qualifier)"` patterns, validates them against known override names (`_OVERRIDE_NAMES_LOWER`), and passes the refined `preferred_dest` to `find_nav_hint()`. When the preferred warp is unreachable (e.g. B2F has two disconnected zones), `find_nav_hint` falls back to any reachable warp rather than frontier exploration. **When adding new dest_name overrides**, always verify warp connections against the pokered ASM source at `https://github.com/pret/pokered/tree/master/data/maps/objects/` — pokered ASM uses **1-based** warp indices while RAM uses **0-based** (ASM `warp_event` 1 = RAM index 0). MAP_HINTS in `event_flags.py` must contain the exact override name string (e.g. `"Mt. Moon B2F (north zone)"`) for the NAV regex to match.
-- **Viewport warp pathing**: `find_path()` in `pathfinding.py` accepts `extra_passable` positions. When computing overshoot paths to warps, the target warp tile is marked passable so A\* routes *through* it (not around it). Without this, 'W' tiles are blocked in `DEFAULT_BLOCKED`, causing paths to circle around warps without triggering them.
-- `<battle_context>` — battle menu layout, RUN sequences, type matchups, healing thresholds
-- `<menu_context>` — menu navigation, Pokemon menu, save mechanics
-- `<authority>` / `<memory>` — data trust hierarchy, KB injection description
+Sections: `<notation>`, `<spatial_context>`, `<navigation>` (COMPASS vs NAV priority rules — prevents compass bearings being converted to frame counts like "6 LEFT" → `L96`), `<battle_context>`, `<menu_context>`, `<authority>`, `<memory>`.
 
-When editing the system prompt, verify the token count stays above 2048 using `client.messages.count_tokens()`.
+NAV planner outputs button sequence in spatial text for direct model use. Verify token count after edits: `client.messages.count_tokens()`.

@@ -92,6 +92,31 @@ STORY_PROGRESSION: List[Tuple[int, str, str]] = [
     (0x8C1, "Caught Mewtwo",                       "Go to Cerulean Cave (accessible from north Cerulean City after becoming Champion — need HM03 Surf) and catch Mewtwo"),
 ]
 
+# Recommended minimum party max-level for each milestone flag.
+# Keyed by flag number → (min_level, gym_leader_name_or_context).
+# Sourced from pokered trainer data: gym leaders' highest-level Pokemon.
+# The gate fires when the party's highest level is below min_level.
+MILESTONE_LEVEL_GATES: Dict[int, Tuple[int, str]] = {
+    0x077: (12, "Brock (Lv14 Onix)"),
+    -2:    (16, "Mt. Moon wild encounters Lv6-12"),
+    0x0BF: (19, "Misty (Lv21 Starmie)"),
+    -3:    (22, "Route 24-25 trainers"),
+    0x5E0: (22, "S.S. Anne trainers"),
+    0x167: (24, "Lt. Surge (Lv24 Raichu)"),
+    -4:    (28, "Rocket Hideout (Giovanni Lv25)"),
+    0x1A9: (29, "Erika (Lv29 Vileplume)"),
+    0x128: (30, "Pokémon Tower (Lv24-30 ghosts)"),
+    0x259: (38, "Koga (Lv43 Weezing)"),
+    0x880: (38, "Safari Zone"),
+    -8:    (40, "Silph Co. (Giovanni Lv41)"),
+    0x361: (43, "Sabrina (Lv43 Alakazam)"),
+    0x299: (47, "Blaine (Lv47 Arcanine)"),
+    0x051: (50, "Giovanni (Lv50 Rhydon)"),
+    -12:   (50, "Victory Road trainers"),
+    0x8FE: (55, "Elite Four (Lance Lv62 Dragonite)"),
+    0x901: (58, "Champion Blue (Lv65)"),
+}
+
 
 def is_event_set(memory_read_func: Callable[[int], int], flag_number: int) -> bool:
     """Check whether a specific event flag is set in RAM.
@@ -222,9 +247,9 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -2,  0x02): "Visit Pewter Mart first (Potions, Antidotes) — Mt. Moon has no shop. Mart is EAST of gym but a wall blocks direct access; follow the NAV path around the buildings. Then head EAST to Route 3.",
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
     (  -2,  0x44): "Pokémon Center rest stop.",
-    (  -2,  0x3B): "Navigate Mt. Moon 1F — head NORTH toward the cave interior to find stairs down to Mt. Moon B1F. Do NOT use W0/W1 warps (wrong exit, ledges block east).",
-    (  -2,  0x3C): "B1F has sections separated by walls. If B2F stairs are unreachable, take any 1F warp FIRST — return to Mt. Moon 1F and re-enter B1F from a different staircase to reach Mt. Moon B2F (north zone). Follow NAV even when it routes to 1F — it is an intermediate hop, not backtracking.",
-    (  -2,  0x3D): "B2F has two disconnected zones. Goal: reach W1 to Mt. Moon B1F (east exit) for Route 4. If stuck in the south zone, return to B1F and find a different route to B2F north zone.",
+    (  -2,  0x3B): "1F goal: reach the EAST SECTION stairs. Head NORTH then EAST through the cave interior. Avoid W0/W1 warps near the entrance (south exit, ledges block east on Route 4). Use stairs in the east half of 1F to descend to B1F east section.",
+    (  -2,  0x3C): "B1F has EAST and WEST sections separated by walls. EAST section contains the exit: W7 near (27,3) leads directly to Route 4. Also try W6 near (23,3) which leads to B2F north zone (correct zone for fossil/exit path). If stuck in WEST section, go UP to find a warp back to 1F, then re-enter B1F from a different 1F staircase to reach the east section. Follow NAV even when it routes to 1F — it is an intermediate hop, not backtracking.",
+    (  -2,  0x3D): "B2F has TWO DISCONNECTED ZONES separated by a wall at x≈12-13. SOUTH ZONE is a dead end — if you entered here, go back to B1F immediately. NORTH/WEST ZONE contains W1 at (21,17) → B1F east exit → Route 4. From B1F, use W6 near (23,3) or W4 near (21,17) to reach B2F north zone. Do NOT use W5 near (13,27) — it leads to the south dead end.",
     (  -2,  0x0F): "Route 4. If ledges (<) block eastward travel, you exited Mt. Moon from the WRONG side. Go back INTO Mt. Moon and progress through B1F→B2F→B1F to reach the correct Route 4 exit. If path east is clear, head EAST to Cerulean City.",
     # Beat Misty (0x0BF)
     (0x0BF, 0x03): "Enter Cerulean Gym (northeast area of Cerulean City) and defeat Misty.",

@@ -30,8 +30,10 @@ from claude_player.utils.pathfinding import LEDGE_ALLOWED_DIR, NEIGHBORS, DIR_BU
 _MAX_RENDER_SIZE = 40       # AI context (full exploration visible)
 _MAX_DISPLAY_SIZE = 20     # Web/terminal display — large enough to show full explored maps (panel scrolls)
 
-# Max steps in a world-map A* path before we truncate
-_MAX_PATH_STEPS = 30
+# Max steps in a world-map A* path before we truncate.
+# Kept near viewport range so the agent re-evaluates frequently
+# rather than blindly walking through unseen territory.
+_MAX_PATH_STEPS = 20
 
 # Warp exhaustion: how many turns before an exhausted warp becomes eligible again
 _WARP_EXHAUST_DECAY_TURNS = 30
@@ -114,6 +116,20 @@ class WorldMap:
                 self.map_graph[dest_mid].add(map_id)
                 if dest_mid not in self.map_names:
                     self.map_names[dest_mid] = conn.get("dest_name", "?")
+
+    def ensure_graph_edge(self, map_a: int, map_b: int) -> None:
+        """Ensure a bidirectional edge exists between two maps in the graph.
+
+        Called on any map transition (warp, connection, or walk-off) to
+        guarantee the graph captures all connectivity, even when warp_data
+        was unavailable.
+        """
+        if map_a not in self.map_graph:
+            self.map_graph[map_a] = set()
+        if map_b not in self.map_graph:
+            self.map_graph[map_b] = set()
+        self.map_graph[map_a].add(map_b)
+        self.map_graph[map_b].add(map_a)
 
     def record_warp_transition(
         self,

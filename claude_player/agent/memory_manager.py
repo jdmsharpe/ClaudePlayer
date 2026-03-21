@@ -45,8 +45,11 @@ Max 15 lines.
 <strategy>
 Current plan, priorities, milestone progress, next steps.
 Focus on DURABLE goals — not ephemeral battle state or menu cursor positions.
-WRONG: "Cursor on SCRATCH (0pp) — press D R A to reach LEER"
+NEVER include: player coordinates "(x,y)", exact PP counts, HP values, cursor positions, or "currently at/in" position snapshots. RAM provides these every turn — writing them here wastes lines and misleads when stale.
+WRONG: "B1F at (21,11), in wild battle. SCRATCH at 5pp."
+WRONG: "Current position (21,11) is in east section."
 RIGHT: "Clear Mt. Moon B2F, get fossil, exit via B1F east to Route 4"
+RIGHT: "SCRATCH PP critical — run from all wild battles, prioritize healing"
 Remove info that becomes stale after the current battle/menu ends.
 Max 20 lines.
 </strategy>
@@ -56,6 +59,9 @@ Hard-won rules that prevent repeating past failures. Each must be concrete and a
 Prefix with [CRITICAL] for rules that caused major setbacks when violated.
 Prefix with [RULE] for general best practices.
 Mark unverified claims with [VERIFY].
+NEVER include: player coordinates, exact PP/HP numbers, or position snapshots. Lessons must be general rules, not situational state.
+WRONG: "[CRITICAL] B1F W1 (17,11) → B2F lands at (28,11) DEAD END"
+RIGHT: "[CRITICAL] B1F W1 → B2F south zone DEAD END. Use W6 or W4 instead."
 Max 20 lines.
 </lessons>
 
@@ -140,7 +146,10 @@ class MemoryManager:
         user_block = [
             {"type": "text", "text": (
                 f"Update these KB sections: {', '.join(sections_to_update)}.\n"
-                f"Current turn: T{self.game_state.turn_count}."
+                f"Current turn: T{self.game_state.turn_count}.\n"
+                f"REMINDER: strategy and lessons must NOT contain coordinates, "
+                f"PP counts, HP values, or position snapshots — RAM provides those "
+                f"every turn. Only durable plans and general rules."
             )},
         ]
 

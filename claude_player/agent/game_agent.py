@@ -415,6 +415,10 @@ class GameAgent:
                     new_map_id is not None and new_map_id != self._current_map_id
                 )
                 if map_changed:
+                    # Ensure bidirectional graph edge exists for ANY map transition
+                    # (covers walking between routes, not just warps/connections)
+                    if prev_map_id is not None and new_map_id is not None:
+                        self._world_map.ensure_graph_edge(prev_map_id, new_map_id)
                     # Confirm pending route cache on successful warp
                     if prev_map_id is not None:
                         self._world_map.confirm_route(prev_map_id)
@@ -521,9 +525,11 @@ class GameAgent:
                         abs(cx - dz[0]) + abs(cy - dz[1]) <= 6
                         for dz in map_dead_ends
                     ):
-                        # Cap at 4 dead-end zones per map to prevent over-coverage
-                        _MAX_DEAD_ENDS_PER_MAP = 4
-                        if len(map_dead_ends) >= _MAX_DEAD_ENDS_PER_MAP:
+                        # Scale dead-end cap by map tile count: small maps (houses) get 4,
+                        # large maps (caves, routes) get up to 12
+                        _tile_count = len(self._world_map.tiles.get(_map_key, {}))
+                        _max_dead_ends = max(4, min(12, _tile_count // 100))
+                        if len(map_dead_ends) >= _max_dead_ends:
                             map_dead_ends.pop(0)  # evict oldest
                         map_dead_ends.append((cx, cy))
                         logging.info(f"DEAD-END ZONE recorded at ({cx},{cy})")
@@ -661,6 +667,7 @@ class GameAgent:
                         )
                     if self.game_state.tactical_goal != old_tactical:
                         logging.info(f"AUTO-TACTICAL-GOAL: {self.game_state.tactical_goal}")
+
             if spatial_data.get("text"):
                 logging.debug(f"Spatial context:\n{spatial_data['text']}")
 
@@ -691,6 +698,29 @@ class GameAgent:
                     f"{names} — {health.get('total_hp_pct', '?')}% HP"
                 )
 
+                # ── Auto-heal gate: inject side objective when PP critically low ──
+                # Prevents softlock by ensuring the agent heals before PP runs out.
+                _HEAL_OBJ = "URGENT: Heal at nearest Pokémon Center (PP critical)"
+                total_offensive_pp = sum(
+                    move["pp"]
+                    for mon in party_data["party"]
+                    if mon["hp"] > 0
+                    for move in mon["moves"]
+                    if move.get("power", 0) > 0
+                )
+                if (total_offensive_pp <= 10
+                        and in_overworld
+                        and _HEAL_OBJ not in self.game_state.side_objectives):
+                    self.game_state.side_objectives.insert(0, _HEAL_OBJ)
+                    logging.warning(
+                        f"AUTO-HEAL GATE: total offensive PP={total_offensive_pp}, "
+                        f"injecting heal side objective"
+                    )
+                elif (total_offensive_pp > 20
+                      and _HEAL_OBJ in self.game_state.side_objectives):
+                    self.game_state.side_objectives.remove(_HEAL_OBJ)
+                    logging.info("AUTO-HEAL GATE: PP recovered, removing heal objective")
+
         # Extract bag/inventory context
         bag_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT:
@@ -704,6 +734,42 @@ class GameAgent:
                 menu_data = extract_menu_context(
                     self.pyboy, party_data=party_data, bag_data=bag_data,
                 )
+
+        # ── Level gate: inject training side objective when underleveled ──
+        if (party_data and party_data.get("party")
+                and spatial_data and spatial_data.get("story_progress")):
+            story_progress = spatial_data["story_progress"]
+            next_milestone = story_progress.get("next")
+            next_flag = next_milestone[0] if next_milestone else None
+            from claude_player.utils.event_flags import MILESTONE_LEVEL_GATES
+            if next_flag is not None and next_flag in MILESTONE_LEVEL_GATES:
+                req_level, gate_context = MILESTONE_LEVEL_GATES[next_flag]
+                max_party_level = max(
+                    (m["level"] for m in party_data["party"] if m["hp"] > 0),
+                    default=0,
+                )
+                _TRAIN_PREFIX = "TRAIN: Level up party"
+                existing_train = next(
+                    (o for o in self.game_state.side_objectives
+                     if o.startswith(_TRAIN_PREFIX)),
+                    None,
+                )
+                if max_party_level < req_level:
+                    new_train = (
+                        f"{_TRAIN_PREFIX} to Lv{req_level}+ "
+                        f"before {gate_context}"
+                    )
+                    if existing_train != new_train:
+                        if existing_train:
+                            self.game_state.side_objectives.remove(existing_train)
+                        self.game_state.side_objectives.append(new_train)
+                        logging.info(
+                            f"LEVEL GATE: max_level={max_party_level} "
+                            f"< {req_level} for {gate_context}"
+                        )
+                elif existing_train:
+                    self.game_state.side_objectives.remove(existing_train)
+                    logging.info("LEVEL GATE: party leveled up, removing training objective")
 
         # Extract on-screen text (dialogue, signs, item pickups) from wTileMap
         text_data = extract_text_context(self.pyboy)
@@ -1741,7 +1807,10 @@ class GameAgent:
                         except Exception:
                             pass
                     last_action_time = time.time()
-                
+                    # Refresh current_time after potentially multi-second action
+                    # execution so all downstream timing checks use accurate values.
+                    current_time = last_action_time
+
                 # Check if it's time to run AI analysis and we're not already analyzing
                 time_since_last_analysis = current_time - last_analysis_time
                 time_since_last_action = current_time - last_action_time
@@ -1825,10 +1894,14 @@ class GameAgent:
                     reason = ", ".join(reason_parts)
                     tracked_battle_state = cur_battle
                     tracked_map_id = cur_map
+                    # Use fresh time.time() — not the loop-top current_time which
+                    # is stale after multi-second action execution (e.g. D32 L128).
+                    # Stale timestamps shorten the effective settle window.
+                    _now = time.time()
                     if map_changed:
-                        last_map_change_time = current_time
+                        last_map_change_time = _now
                     if battle_changed and cur_battle:
-                        last_battle_start_time = current_time
+                        last_battle_start_time = _now
 
                     # Abort any currently-running button sequence (e.g. D64 mid-walk)
                     state_change_event.set()

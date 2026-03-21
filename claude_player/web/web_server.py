@@ -273,7 +273,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ---------- Main grid ---------- */
   .main {
     display: grid;
-    grid-template-columns: 0.7fr 1.3fr 1.5fr;
+    grid-template-columns: 0.8fr 1.2fr 1.5fr;
     grid-template-rows: auto 1fr auto;
     gap: 0;
     flex: 1;
@@ -283,12 +283,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ---------- Game frame ---------- */
   .frame-panel {
     grid-row: 2;
-    grid-column: 1;
+    grid-column: 2;
     background: #010409;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-right: 1px solid #30363d;
     border-bottom: 1px solid #30363d;
     padding: 6px;
     overflow: hidden;
@@ -306,13 +305,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ---------- Left bottom (action + bag) ---------- */
   .left-bottom {
     grid-row: 3;
-    grid-column: 1;
+    grid-column: 2;
     display: flex;
     flex-direction: column;
     gap: 6px;
     padding: 8px 12px;
     border-top: 1px solid #30363d;
-    border-right: 1px solid #30363d;
     border-bottom: 1px solid #30363d;
     background: #0d1117;
     overflow: hidden;
@@ -329,15 +327,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .bag-section .info-label::before { background: #e3b341; }
   .bag-section { flex-shrink: 0; }
 
-  /* ---------- Right panels ---------- */
+  /* ---------- Map panels (left column) ---------- */
   .right-panels {
     grid-row: 2;
-    grid-column: 2;
+    grid-column: 1;
     display: flex;
     flex-direction: column;
     gap: 8px;
     padding: 10px;
     overflow: hidden;
+    border-right: 1px solid #30363d;
     border-bottom: 1px solid #30363d;
   }
 
@@ -350,13 +349,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
 
   .grid-panel .panel-label::before { background: #7ee787; }
+  .grid-panel .panel-label, .grid-panel #battle-view { align-self: flex-start; }
+  .grid-panel { flex: 2; min-height: 0; overflow: hidden; }
   .worldmap-panel .panel-label::before { background: #58a6ff; }
-  .worldmap-panel { flex-shrink: 0; overflow: auto; max-height: 300px; margin-top: auto; }
+  .worldmap-panel .panel-label { align-self: flex-start; }
+  .worldmap-panel { flex: 1; overflow: hidden; min-height: 0; margin-top: auto; display: flex; flex-direction: column; align-items: center; }
   #worldmap-grid {
     font-family: "Cascadia Mono", "Fira Code", "Consolas", monospace;
     font-size: 11px;
-    line-height: 1.2;
-    overflow-x: auto;
+    line-height: 1.1;
+    overflow: hidden;
+    white-space: pre;
   }
   .goal-bar {
     grid-row: 1;
@@ -387,7 +390,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
 
   /* Spatial grid */
-  .grid-panel { flex: 1; overflow: hidden; min-width: 0; }
+  .grid-panel { flex: 2; overflow: hidden; min-width: 0; display: flex; flex-direction: column; align-items: center; }
   #spatial-grid {
     font-family: "Cascadia Mono", "Fira Code", "Consolas", monospace;
     overflow: hidden;
@@ -703,7 +706,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ---------- Party bar (under battle/map view) ---------- */
   .party-bar {
     grid-row: 3;
-    grid-column: 2;
+    grid-column: 1;
     border-top: 1px solid #30363d;
     border-right: 1px solid #30363d;
     border-bottom: 1px solid #30363d;
@@ -848,7 +851,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div id="battle-view"></div>
     </div>
     <div class="panel worldmap-panel" id="worldmap-panel" style="display:none">
-      <div class="panel-label">Explored Map</div>
+      <div class="panel-label">Minimap</div>
       <div id="worldmap-grid"></div>
     </div>
     <div class="panel menu-panel" id="menu-panel" style="display:none">

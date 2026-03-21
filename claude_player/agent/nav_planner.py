@@ -18,6 +18,12 @@ _OVERRIDE_NAMES_LOWER = {v.lower() for v in WARP_DEST_NAME_OVERRIDES.values()}
 # Last NAV method used — set by compute_nav(), read by game_agent for TURN_SUMMARY
 last_nav_method: str = ""
 
+# Track consecutive "exhausted" results to trigger frontier earlier.
+# When graph routing repeatedly falls back to exhausted warps, the agent
+# is likely cycling through bad warps.  After 2 consecutive exhausted
+# results, force frontier exploration to discover new territory.
+_consecutive_exhausted: int = 0
+
 # Direction keyword mapping for COMPASS fallback NAV parsing
 _DIR_TO_COMPASS_KW = {
     "NORTH": "UP", "SOUTH": "DOWN",
@@ -224,12 +230,29 @@ def compute_nav(
             logging.info(f"NAV graph: {hop_name!r} unreachable via A*, excluding")
             exclude_maps.add(hop_id)
 
+    # ── Track consecutive exhausted results ──
+    # When graph routing repeatedly falls back to exhausted warps,
+    # the agent is cycling through bad warps.  Force frontier exploration.
+    global _consecutive_exhausted
+    if last_nav_method == "exhausted":
+        _consecutive_exhausted += 1
+        if _consecutive_exhausted >= 2:
+            logging.info(
+                f"NAV: {_consecutive_exhausted} consecutive exhausted results, "
+                f"overriding to frontier exploration"
+            )
+            wm_nav = None  # discard the exhausted-warp result
+            last_nav_method = ""
+    elif last_nav_method in ("graph", "cache", "frontier"):
+        _consecutive_exhausted = 0  # reset on successful non-exhausted nav
+
     # ── Step 2a: Frontier-first when graph routing was tried but failed ──
     # If the map graph FOUND a target but A* couldn't reach any hop's warp
     # (common in partially-explored caves), prefer pushing into unexplored
     # territory over compass fallback — compass often routes backward to the
     # previous floor (e.g. B1F → 1F instead of B1F → B2F → Route 4).
-    if not wm_nav and target_map_id is not None and exclude_maps:
+    # Also triggers when consecutive exhausted warps were detected above.
+    if not wm_nav and target_map_id is not None and (exclude_maps or _consecutive_exhausted >= 2):
         dead_end_tiles: set = set()
         if dead_end_zones:
             for dz_x, dz_y in dead_end_zones:

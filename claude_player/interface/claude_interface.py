@@ -52,7 +52,8 @@ Use toggle_thinking to turn thinking on/off. OFF = faster but less reasoning. On
         if has_spatial:
             static_parts.append("""
 <spatial_context>
-Grid legend: .=walkable #=blocked ,=grass ==water T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost s=sign P=PC. 1 cell=16 frames.
+Grid legend: .=walkable :=lower ground (cave) #=blocked ,=grass ==water T=cut tree B=boulder W=exit @=player 1-9=NPC i=item o=object g=ghost s=sign P=PC. 1 cell=16 frames.
+ELEVATION: In caves, . is upper platform and : is lower ground. EAST/WEST between . and : is ALWAYS blocked (invisible wall). NORTH/SOUTH: you CAN step from . (upper, north) down to : (lower, south) and climb back. You CANNOT cross if : is north of . — blocked both ways. NAV(map) accounts for these walls; trust it over manual pathing in caves.
 LEDGES: v=jump DOWN only (blocks UP), <=jump LEFT only (blocks RIGHT), >=jump RIGHT only (blocks LEFT). Ledges are one-way — you CANNOT move against the arrow. Plan routes around them.
 FOLLOW [path:] hints — they route around walls. NAV(map) = A* through explored map (best signal). If [no path found], try 1-tile steps.
 MAP EDGES: walk off edge (no W). WARPS: step ONTO W (no A).

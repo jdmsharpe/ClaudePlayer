@@ -398,14 +398,16 @@ def _extract_terrain_data(
             terrain.append(row_out)
 
         # ── Compute tile pair collision edges ──
-        # For each adjacent pair of tiles whose raw IDs form a collision pair,
-        # determine which transitions are blocked.  Cave elevation boundaries
-        # are DIRECTIONAL for north/south movement:
-        #   - Elevated tile NORTH of ground tile → passable both ways
-        #     (step down going south, climb up going north)
-        #   - Elevated tile SOUTH of ground tile → blocked both ways
-        #     (can't step off backward or push through from below)
-        #   - East/west transitions → always blocked
+        # pokered's CheckForTilePairCollisions checks (standing_on, in_front)
+        # against both orderings of each pair — direction-agnostic at the
+        # instruction level.  However, the METATILE system introduces
+        # effective directionality: each 2x2 metatile has 4 sub-tiles with
+        # potentially different IDs.  The game samples different sub-tiles
+        # depending on movement direction, so N/S vs E/W can yield different
+        # pair matches.  Platform-edge metatiles typically have 0x05 (upper)
+        # on top and 0x20 (lower) on bottom — N/S movement checks
+        # bottom↔top sub-tiles (often same-level, no pair match), while
+        # E/W checks side↔side (cross-level, pair match → blocked).
         pair_blocked: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
         if pair_set:
             for my in range(grid_h):
@@ -424,13 +426,15 @@ def _extract_terrain_data(
                                 pair_blocked.add(((nx, ny), (mx, my)))
                             else:
                                 # North/south transition (dy == 1: here=north, there=south)
-                                # Upper (0x05 = '.') NORTH of lower (0x20/etc = ':') → passable
-                                # Lower NORTH of upper → blocked
+                                # Metatile sub-tile sampling makes some N/S transitions
+                                # passable: upper (0x05) NORTH of lower (0x20/etc) →
+                                # game checks bottom sub-tile of upper metatile vs top
+                                # sub-tile of lower metatile (often same-level → no pair
+                                # match → passable).  Lower NORTH of upper → blocked.
                                 here_is_lower = raw_here in _CAVE_LOWER_TILES
                                 there_is_lower = raw_there in _CAVE_LOWER_TILES
                                 if not here_is_lower and there_is_lower:
                                     # Upper NORTH, lower SOUTH → passable
-                                    # (step down going south, climb up going north)
                                     pass
                                 elif here_is_lower and not there_is_lower:
                                     # Lower NORTH, upper SOUTH → blocked

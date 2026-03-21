@@ -1681,20 +1681,39 @@ pollState();
 let _streaming = false;
 let _streamThinking = '';
 let _streamText = '';
-let _thinkingHasContent = false;
 
-function appendToken(el, text) {
-  /* Append a delta chunk as a span with fade-in animation */
-  const span = document.createElement('span');
-  span.className = 'token-chunk';
-  /* Preserve newlines as <br> for readable streaming */
-  const parts = text.split('\n');
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) el.appendChild(document.createElement('br'));
-    if (parts[i]) span.appendChild(document.createTextNode(parts[i]));
+/* Batched token rendering — collect deltas per rAF, flush once per frame.
+   Avoids thousands of forced reflows on long thinking blocks. */
+const _pendingTokens = { thinking: [], text: [] };
+let _rafPending = false;
+
+function _flushTokens() {
+  _rafPending = false;
+  for (const kind of ['thinking', 'text']) {
+    const chunks = _pendingTokens[kind];
+    if (!chunks.length) continue;
+    const el = document.getElementById(kind === 'thinking' ? 'ai-thinking' : 'ai-response');
+    const joined = chunks.join('');
+    chunks.length = 0;
+    /* Build a single span per frame with <br> for newlines */
+    const span = document.createElement('span');
+    span.className = 'token-chunk';
+    const parts = joined.split('\n');
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) span.appendChild(document.createElement('br'));
+      if (parts[i]) span.appendChild(document.createTextNode(parts[i]));
+    }
+    el.appendChild(span);
+    el.scrollTop = el.scrollHeight;
   }
-  el.appendChild(span);
-  el.scrollTop = el.scrollHeight;
+}
+
+function queueToken(kind, text) {
+  _pendingTokens[kind].push(text);
+  if (!_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(_flushTokens);
+  }
 }
 
 function connectSSE() {
@@ -1708,7 +1727,6 @@ function connectSSE() {
         _streaming = true;
         _streamThinking = '';
         _streamText = '';
-        _thinkingHasContent = false;
         const thinkEl = document.getElementById('ai-thinking');
         const respEl = document.getElementById('ai-response');
         thinkEl.textContent = '';
@@ -1718,9 +1736,7 @@ function connectSSE() {
         respSec.classList.remove('stream-active');
       } else if (msg.type === 'thinking') {
         _streamThinking += msg.data;
-        _thinkingHasContent = true;
-        const el = document.getElementById('ai-thinking');
-        appendToken(el, msg.data);
+        queueToken('thinking', msg.data);
       } else if (msg.type === 'text') {
         _streamText += msg.data;
         // Move glow + cursor from thinking to response on first text token
@@ -1730,7 +1746,7 @@ function connectSSE() {
         thinkSec.classList.remove('stream-active');
         respEl.classList.add('streaming-cursor');
         respSec.classList.add('stream-active');
-        appendToken(respEl, msg.data);
+        queueToken('text', msg.data);
       } else if (msg.type === 'stream_end') {
         _streaming = false;
         const thinkEl = document.getElementById('ai-thinking');

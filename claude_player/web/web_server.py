@@ -104,6 +104,38 @@ class WebStreamer:
                 mimetype="multipart/x-mixed-replace; boundary=frame",
             )
 
+        @app.route("/api/stream-tokens")
+        def stream_tokens():
+            """SSE endpoint for live thinking/response token deltas."""
+            q, ev = self.display.subscribe_sse()
+
+            def generate():
+                try:
+                    while True:
+                        ev.wait(timeout=25)
+                        ev.clear()
+                        if not q:
+                            # SSE keepalive — prevents proxies/browsers
+                            # from closing idle connections
+                            yield ":keep\n\n"
+                            continue
+                        while q:
+                            payload = q.popleft()
+                            yield f"data: {payload}\n\n"
+                except GeneratorExit:
+                    pass
+                finally:
+                    self.display.unsubscribe_sse(q, ev)
+
+            return Response(
+                generate(),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         @app.route("/audio/chunk")
         def audio_chunk():
             if self._sound is None:
@@ -597,6 +629,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   .ai-response strong, .ai-thinking strong { color: #e6edf3; }
 
+  /* Streaming cursor blink */
+  .streaming-cursor::after {
+    content: '\u2588';
+    animation: blink 0.6s step-end infinite;
+    color: #58a6ff;
+    font-weight: 400;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
   /* Party */
   .party-bar > .panel { overflow-y: auto; }
   .party-panel .mon {
@@ -972,8 +1013,11 @@ async function pollState() {
       soSection.style.display = 'none';
     }
     _lastAction = d.last_action || '-';
-    renderMarkdown('ai-response', d.last_response || '-');
-    renderMarkdown('ai-thinking', d.last_thinking || '-');
+    // Skip overwriting thinking/response while SSE is actively streaming
+    if (!_streaming) {
+      renderMarkdown('ai-response', d.last_response || '-');
+      renderMarkdown('ai-thinking', d.last_thinking || '-');
+    }
 
     /* Analyzing pulse */
     const sp = document.getElementById('status-pill');
@@ -1604,6 +1648,54 @@ function setVolume(v) {
 
 setInterval(pollState, STATE_MS);
 pollState();
+
+/* ---- SSE live token streaming ---- */
+let _streaming = false;
+let _streamThinking = '';
+let _streamText = '';
+
+function connectSSE() {
+  const src = new EventSource('/api/stream-tokens');
+  src.onmessage = function(e) {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'stream_start') {
+        _streaming = true;
+        _streamThinking = '';
+        _streamText = '';
+        const thinkEl = document.getElementById('ai-thinking');
+        const respEl = document.getElementById('ai-response');
+        thinkEl.textContent = '';
+        thinkEl.classList.add('streaming-cursor');
+        respEl.textContent = '';
+      } else if (msg.type === 'thinking') {
+        _streamThinking += msg.data;
+        const el = document.getElementById('ai-thinking');
+        el.textContent = _streamThinking;
+        el.scrollTop = el.scrollHeight;
+      } else if (msg.type === 'text') {
+        _streamText += msg.data;
+        // Move cursor from thinking to response on first text token
+        const thinkEl = document.getElementById('ai-thinking');
+        const respEl = document.getElementById('ai-response');
+        thinkEl.classList.remove('streaming-cursor');
+        respEl.classList.add('streaming-cursor');
+        respEl.textContent = _streamText;
+        respEl.scrollTop = respEl.scrollHeight;
+      } else if (msg.type === 'stream_end') {
+        _streaming = false;
+        document.getElementById('ai-thinking').classList.remove('streaming-cursor');
+        document.getElementById('ai-response').classList.remove('streaming-cursor');
+      }
+    } catch (err) { /* ignore parse errors */ }
+  };
+  src.onerror = function() {
+    src.close();
+    _streaming = false;
+    setTimeout(connectSSE, 2000);
+  };
+}
+connectSSE();
 
 /* Fetch config once and populate badges */
 (async function loadConfig() {

@@ -79,7 +79,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 - **Post-battle menu skip**: `_was_in_battle` flag suppresses menu injection on first post-battle turn. `extract_menu_context()` rejects cursor > max_item (catches stale battle cursor Y=14 X=15 indefinitely).
 
-- **Web dashboard**: Flask in daemon thread. Audio at `GET /audio/chunk` (WAV chunks from PyBoy APU).
+- **Web dashboard**: Flask in daemon thread. Audio at `GET /audio/chunk` (WAV chunks from PyBoy APU). **Live token streaming**: `GET /api/stream-tokens` (SSE) pushes `thinking`/`text` deltas in real-time via `TerminalDisplay.push_sse()`. Browser uses `EventSource`; `pollState` skips overwriting thinking/response panes while `_streaming` is active. `on_stream_event` callback in `send_request()` is optional (memory manager doesn't use it).
 
 ## Cost Tracking
 

@@ -156,13 +156,17 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
             mode_config: Dict[str, Any],
             system_prompt,
             chat_history: List[Dict[str, Any]],
-            tools: List[Dict[str, Any]]
+            tools: List[Dict[str, Any]],
+            on_stream_event=None,
         ) -> Any:
         """Send a request to the Claude API using mode configuration.
 
         Args:
             system_prompt: Either a string (legacy) or a list of content blocks
                            with optional cache_control for prompt caching.
+            on_stream_event: Optional callback(event_type, data) for streaming
+                             token deltas to the web UI. event_type is one of
+                             'thinking', 'text', 'stream_start', 'stream_end'.
         """
         try:
             thinking_enabled = mode_config.get("THINKING", False)
@@ -207,6 +211,28 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
                     request_params["thinking"] = {"type": "adaptive"}
 
             with self.client.messages.stream(**request_params) as stream:
+                if on_stream_event is None:
+                    return stream.get_final_message()
+
+                # Event-by-event iteration for live token streaming.
+                # try/finally guarantees stream_end fires even on API errors,
+                # so the browser's _streaming flag never gets stuck true.
+                on_stream_event("stream_start", "")
+                try:
+                    for event in stream:
+                        etype = getattr(event, "type", None)
+                        if etype == "content_block_delta":
+                            delta = getattr(event, "delta", None)
+                            if delta is None:
+                                continue
+                            dtype = getattr(delta, "type", "")
+                            if dtype == "thinking_delta":
+                                on_stream_event("thinking", delta.thinking)
+                            elif dtype == "text_delta":
+                                on_stream_event("text", delta.text)
+                            # signature_delta and input_json_delta are ignored
+                finally:
+                    on_stream_event("stream_end", "")
                 return stream.get_final_message()
         except Exception as e:
             logging.error(f"ERROR in Claude API request: {str(e)}")

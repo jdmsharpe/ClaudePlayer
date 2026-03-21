@@ -1,8 +1,10 @@
 import io
+import json
 import os
 import sys
 import threading
 import time
+from collections import deque
 
 
 def _encode_jpeg(pil_image):
@@ -56,6 +58,10 @@ class TerminalDisplay:
         self._raw_frame = None   # latest raw PIL image (stored cheaply; encoding is off-thread)
         self._frame_seq = 0     # increments on each new frame, for MJPEG change detection
 
+        # SSE token streaming — cross-thread bridge for live token display
+        self._sse_subscribers = []  # list of (deque, threading.Event) per SSE client
+        self._sse_lock = threading.Lock()  # guards subscriber list only
+
     # --- public API ---
 
     def update(self, **kwargs):
@@ -92,6 +98,35 @@ class TerminalDisplay:
         if img is None:
             return None
         return _encode_jpeg(img)
+
+    # --- SSE token streaming ---
+
+    def subscribe_sse(self):
+        """Register an SSE client. Returns (queue, event) for the Flask generator."""
+        q = deque(maxlen=4096)
+        ev = threading.Event()
+        with self._sse_lock:
+            self._sse_subscribers.append((q, ev))
+        return q, ev
+
+    def unsubscribe_sse(self, q, ev):
+        """Remove an SSE client when the connection drops."""
+        with self._sse_lock:
+            self._sse_subscribers = [
+                (sq, se) for sq, se in self._sse_subscribers if sq is not q
+            ]
+
+    def push_sse(self, event_type: str, data: str):
+        """Push a token delta to all SSE subscribers.
+
+        event_type: 'thinking', 'text', 'stream_start', 'stream_end'
+        data: the delta text (or empty for start/end markers)
+        """
+        payload = json.dumps({"type": event_type, "data": data})
+        with self._sse_lock:
+            for q, ev in self._sse_subscribers:
+                q.append(payload)
+                ev.set()
 
     # --- internals ---
 

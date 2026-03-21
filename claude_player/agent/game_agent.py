@@ -1105,12 +1105,13 @@ class GameAgent:
                         action_config["THINKING"] = False
                         logging.warning(f"RECOVERY: t={self.game_state.turn_count} Disabling thinking to force output")
 
-                # Send request to Claude
+                # Send request to Claude (with live token streaming to web UI)
                 message = self.claude.send_request(
                     action_config,
                     system_prompt,
                     self.chat_history,
-                    tools
+                    tools,
+                    on_stream_event=self.display.push_sse,
                 )
 
                 # Get assistant response and add to chat history.

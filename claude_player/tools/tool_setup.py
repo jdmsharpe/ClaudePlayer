@@ -5,13 +5,13 @@ from pyboy import PyBoy
 from claude_player.state.game_state import GameState
 from claude_player.tools.tool_registry import ToolRegistry
 from claude_player.utils.game_utils import press_and_release_buttons
-from claude_player.utils.ram_constants import ADDR_IS_IN_BATTLE, ADDR_PLAYER_X, ADDR_PLAYER_Y
+from claude_player.utils.ram_constants import ADDR_IS_IN_BATTLE, ADDR_PLAYER_X, ADDR_PLAYER_Y, ADDR_CUR_MAP
 from claude_player.config.config_class import ConfigClass
 
 
-def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[ConfigClass] = None) -> ToolRegistry:
+def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[ConfigClass] = None, world_map=None) -> ToolRegistry:
     """Set up the tool registry with all available tools."""
-    registry = ToolRegistry(pyboy, game_state)
+    registry = ToolRegistry(pyboy, game_state, world_map=world_map)
     
     # Register send_inputs tool
     @registry.register(
@@ -155,6 +155,79 @@ def setup_tool_registry(pyboy: PyBoy, game_state: GameState, config: Optional[Co
             return [{"type": "text", "text": "Deletion not confirmed. Pass confirm=true to delete."}]
         _kb.delete_all()
         return [{"type": "text", "text": "Knowledge Base deleted."}]
+
+    # --- Map Marker tools ---
+    from claude_player.utils.world_map import MAX_MARKERS_PER_MAP
+
+    @registry.register(
+        name="place_marker",
+        description="Place a persistent marker on the current map at or near the player's position. Markers appear as '*' on the world map with a legend. Use to remember important locations: elevators, locked doors, items to return for, puzzle elements. Max 8 per map.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Short label (e.g. 'elevator', 'CUT tree', 'Lift Key door')"
+                },
+                "dx": {
+                    "type": "integer",
+                    "description": "Horizontal offset from player position (positive=right, negative=left). Default 0."
+                },
+                "dy": {
+                    "type": "integer",
+                    "description": "Vertical offset from player position (positive=down, negative=up). Default 0."
+                }
+            },
+            "required": ["label"]
+        }
+    )
+    def handle_place_marker(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if self.world_map is None:
+            return [{"type": "text", "text": "Error: world map not available"}]
+        label = tool_input["label"][:40]  # cap label length
+        dx = tool_input.get("dx", 0)
+        dy = tool_input.get("dy", 0)
+        map_id = self.pyboy.memory[ADDR_CUR_MAP]
+        marker_x = self.pyboy.memory[ADDR_PLAYER_X] + dx
+        marker_y = self.pyboy.memory[ADDR_PLAYER_Y] + dy
+        markers = self.world_map.markers.setdefault(map_id, {})
+        if len(markers) >= MAX_MARKERS_PER_MAP and (marker_x, marker_y) not in markers:
+            return [{"type": "text", "text": f"Error: max {MAX_MARKERS_PER_MAP} markers per map. Remove one first. Current: " +
+                     " | ".join(f"({x},{y}): {l}" for (x, y), l in markers.items())}]
+        markers[(marker_x, marker_y)] = label
+        logging.info(f"MARKER PLACED: map=0x{map_id:02X} pos=({marker_x},{marker_y}) label='{label}'")
+        return [{"type": "text", "text": f"Marker placed at ({marker_x},{marker_y}): {label}"}]
+
+    @registry.register(
+        name="remove_marker",
+        description="Remove a marker from the current map by label substring match.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Label text (or substring) of marker to remove"
+                }
+            },
+            "required": ["label"]
+        }
+    )
+    def handle_remove_marker(self, tool_input: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if self.world_map is None:
+            return [{"type": "text", "text": "Error: world map not available"}]
+        query = tool_input["label"].lower()
+        map_id = self.pyboy.memory[ADDR_CUR_MAP]
+        markers = self.world_map.markers.get(map_id, {})
+        removed = []
+        for pos, label in list(markers.items()):
+            if query in label.lower():
+                del markers[pos]
+                removed.append(f"{label} at ({pos[0]},{pos[1]})")
+        if removed:
+            logging.info(f"MARKERS REMOVED: {removed}")
+            return [{"type": "text", "text": f"Removed: {', '.join(removed)}"}]
+        return [{"type": "text", "text": f"No markers matching '{query}' on this map. " +
+                 ("Current: " + " | ".join(f"({x},{y}): {l}" for (x, y), l in markers.items()) if markers else "(no markers)")}]
 
     # Register run_from_battle tool — generates button sequence, queued by game_agent
     @registry.register(

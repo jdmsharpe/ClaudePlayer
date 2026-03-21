@@ -445,6 +445,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .tc-i  { background: #281e00; color: #e3b341; font-weight: bold; }
   .tc-o  { background: #0e141a; color: #6e7681; }
   .tc-gh { background: #110a28; color: #8957e5; font-weight: bold; }
+  .tc-mk { background: #0a1e1e; color: #39d2d2; font-weight: bold; box-shadow: inset 0 0 4px #39d2d230; }
   .tc-unk { background: #0d1117; color: #161b22; }
 
   /* World map table (smaller tiles for zoomed-out view) */
@@ -918,7 +919,7 @@ const TC = {
 /* Tile char -> table cell background class */
 const TCB = {
   '#':'tc-w','.':'tc-f',':':'tc-el',',':'tc-g','=':'tc-a','v':'tc-l','>':'tc-l','<':'tc-l','^':'tc-l',
-  'T':'tc-t','B':'tc-b','W':'tc-e','@':'tc-p','i':'tc-i','o':'tc-o','g':'tc-gh','?':'tc-unk'
+  'T':'tc-t','B':'tc-b','W':'tc-e','@':'tc-p','i':'tc-i','o':'tc-o','g':'tc-gh','?':'tc-unk','*':'tc-mk'
 };
 
 async function pollState() {
@@ -1124,8 +1125,23 @@ function renderWorldMap(text) {
   table.appendChild(tbody);
 
   let playerRow = null;
+  let gridWidth = 0;
   for (const line of text.split('\n')) {
     if (!line) continue;
+    // Legend/label lines (e.g. "Markers (*): ...") render as full-width text
+    if (line.startsWith('Markers')) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = gridWidth || line.length;
+      td.className = 'tc-mk';
+      td.style.textAlign = 'left';
+      td.style.fontSize = '10px';
+      td.style.padding = '2px 4px';
+      td.textContent = line;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      continue;
+    }
     const tr = document.createElement('tr');
     for (const ch of line) {
       const td = document.createElement('td');
@@ -1133,6 +1149,7 @@ function renderWorldMap(text) {
       td.textContent = ch;
       tr.appendChild(td);
     }
+    if (!gridWidth) gridWidth = line.length;
     tbody.appendChild(tr);
     if (line.includes('@')) playerRow = tr;
   }

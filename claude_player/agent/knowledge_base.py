@@ -25,6 +25,7 @@ Injection strategy (cache-friendly):
 import logging
 import os
 import re
+import threading
 from typing import Dict, Optional
 
 from claude_player.data.maps import MAP_NAMES
@@ -63,6 +64,10 @@ def _sanitize_map_name(name: str) -> str:
 class KnowledgeBase:
     """Categorized persistent knowledge store.
 
+    Thread-safe: all reads/writes go through an in-memory cache protected by
+    a lock.  The background KB subagent writes on a daemon thread while the
+    main game loop reads every turn — the lock prevents torn reads.
+
     Args:
         saves_dir: Path to saves/ directory.
     """
@@ -71,6 +76,12 @@ class KnowledgeBase:
         self.knowledge_dir = os.path.join(saves_dir, "knowledge")
         self.locations_dir = os.path.join(self.knowledge_dir, LOCATIONS_DIR)
         os.makedirs(self.locations_dir, exist_ok=True)
+        # In-memory cache: path → content string.  Eliminates redundant disk
+        # reads between KB updates (3 file reads/turn × 20 turns = 60 reads
+        # saved per KB interval).  Also prevents torn reads from concurrent
+        # background writes.
+        self._cache: Dict[str, str] = {}
+        self._lock = threading.Lock()
 
     # ── Reading ──────────────────────────────────────────────────────
 
@@ -125,7 +136,7 @@ class KnowledgeBase:
 
     # ── Injection helpers ────────────────────────────────────────────
 
-    def build_cached_block(self, turn_count: int, memory_turn: int) -> str:
+    def build_cached_block(self, turn_count: int, memory_turn: int) -> str:  # noqa: ARG002 — turn_count kept for API compat
         """Build the system-prompt-cached memory block.
 
         Includes: party + strategy + lessons (changes rarely → cache-friendly).
@@ -301,6 +312,8 @@ class KnowledgeBase:
             shutil.rmtree(self.knowledge_dir)
             logging.warning("Knowledge base DELETED")
         os.makedirs(self.locations_dir, exist_ok=True)
+        with self._lock:
+            self._cache.clear()
 
     def delete_section(self, section: str) -> bool:
         """Delete a single section file."""
@@ -309,6 +322,8 @@ class KnowledgeBase:
         path = os.path.join(self.knowledge_dir, SECTION_FILES[section])
         if os.path.exists(path):
             os.remove(path)
+            with self._lock:
+                self._cache.pop(path, None)
             logging.warning(f"KB section '{section}' deleted")
             return True
         return False
@@ -322,19 +337,24 @@ class KnowledgeBase:
             return f"map_0x{map_id:02x}"
         return _sanitize_map_name(name)
 
-    @staticmethod
-    def _read_file(path: str) -> str:
-        """Read a file, returning '' if missing."""
+    def _read_file(self, path: str) -> str:
+        """Read a file, returning '' if missing. Uses in-memory cache."""
+        with self._lock:
+            if path in self._cache:
+                return self._cache[path]
+        # Cache miss — read from disk (outside lock to avoid blocking)
         if not os.path.exists(path):
             return ""
         try:
             with open(path, "r") as f:
-                return f.read().strip()
+                content = f.read().strip()
+            with self._lock:
+                self._cache[path] = content
+            return content
         except OSError:
             return ""
 
-    @staticmethod
-    def _write_file(path: str, content: str, line_limit: int) -> int:
+    def _write_file(self, path: str, content: str, line_limit: int) -> int:
         """Write content to file, enforcing a line limit. Returns line count."""
         lines = content.strip().split("\n")
         if len(lines) > line_limit:
@@ -347,5 +367,9 @@ class KnowledgeBase:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(content + "\n")
+
+        # Update cache atomically
+        with self._lock:
+            self._cache[path] = content
 
         return len(lines)

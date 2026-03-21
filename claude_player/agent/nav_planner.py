@@ -157,10 +157,42 @@ def compute_nav(
     Returns:
         The spatial_text string, potentially with a NAV hint injected.
     """
-    global last_nav_method
+    global last_nav_method, _consecutive_exhausted
     last_nav_method = ""
     dead_end_zones = world_map.dead_ends.get(map_id, [])
     wm_nav = None
+
+    # ── Step 0: Frontier-first exploration ──
+    # When the map is barely explored (>30% frontier tiles), prioritize
+    # exploring before goal-directed routing.  This prevents the agent from
+    # bee-lining to a warp and missing items, NPCs, or alternate paths.
+    _FRONTIER_RATIO_THRESHOLD = 0.3
+    fr = world_map.frontier_ratio(map_id)
+    if fr > _FRONTIER_RATIO_THRESHOLD and variance == 0:
+        dead_end_tiles: set = set()
+        if dead_end_zones:
+            for dz_x, dz_y in dead_end_zones:
+                for dy in range(-2, 3):
+                    for dx in range(-2, 3):
+                        dead_end_tiles.add((dz_x + dx, dz_y + dy))
+        npc_blocked: set = set(npc_positions) if npc_positions else set()
+        frontier_path = world_map.find_frontier_path(
+            map_id, player_pos,
+            dead_end_tiles=dead_end_tiles,
+            blocked=npc_blocked,
+        )
+        if frontier_path and len(frontier_path) > 1:
+            buttons = WorldMap._path_to_buttons(frontier_path)
+            if buttons:
+                total_dist = len(frontier_path) - 1
+                wm_nav = (
+                    f"NAV(explore): map {int(fr*100)}% unexplored — "
+                    f"explore first ({total_dist} tiles): {buttons}"
+                )
+                last_nav_method = "explore"
+                _consecutive_exhausted = 0  # reset stale counter
+                logging.info(f"NAV frontier-first (ratio={fr:.2f}): {wm_nav}")
+                return _inject_nav_hint(spatial_text, wm_nav)
 
     # ── Step 1: Map graph lookup ──
     # Find target map by longest substring match in goal text.
@@ -257,7 +289,6 @@ def compute_nav(
     # ── Track consecutive exhausted results ──
     # When graph routing repeatedly falls back to exhausted warps,
     # the agent is cycling through bad warps.  Force frontier exploration.
-    global _consecutive_exhausted
     if last_nav_method == "exhausted":
         _consecutive_exhausted += 1
         if _consecutive_exhausted >= 2:
@@ -267,7 +298,7 @@ def compute_nav(
             )
             wm_nav = None  # discard the exhausted-warp result
             last_nav_method = ""
-    elif last_nav_method in ("graph", "cache", "frontier"):
+    elif last_nav_method in ("graph", "cache", "frontier", "explore"):
         _consecutive_exhausted = 0  # reset on successful non-exhausted nav
 
     # ── Step 2a: Frontier-first when graph routing was tried but failed ──

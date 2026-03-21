@@ -9,9 +9,10 @@ class ToolRegistry:
     Uses a decorator pattern to register tool handlers.
     """
     
-    def __init__(self, pyboy: PyBoy, game_state: GameState):
+    def __init__(self, pyboy: PyBoy, game_state: GameState, world_map=None):
         self.pyboy = pyboy
         self.game_state = game_state
+        self.world_map = world_map  # Optional: WorldMap for marker tools
         self.tools_definitions = []
         self.handlers = {}
     

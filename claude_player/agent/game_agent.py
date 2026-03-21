@@ -208,7 +208,7 @@ class GameAgent:
         self._load_visited_maps()
 
         # Initialize tool registry
-        self.tool_registry = setup_tool_registry(self.pyboy, self.game_state, self.config)
+        self.tool_registry = setup_tool_registry(self.pyboy, self.game_state, self.config, world_map=self._world_map)
         
         # Initialize Claude interface
         self.claude = ClaudeInterface(self.config)
@@ -442,6 +442,9 @@ class GameAgent:
                         else:
                             self.game_state._tactical_goal_override = False
                             self.game_state.tactical_goal = None
+                    # Record visited map for multi-location KB updates
+                    if self._current_map_name and prev_map_id is not None:
+                        self.memory_manager.record_map_visit(prev_map_id, self._current_map_name)
                     # Snapshot the name of the map we just left for orientation context
                     if self._current_map_name:
                         self._last_map_name = self._current_map_name

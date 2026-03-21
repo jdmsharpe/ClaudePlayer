@@ -38,6 +38,9 @@ _MAX_PATH_STEPS = 20
 # Warp exhaustion: how many turns before an exhausted warp becomes eligible again
 _WARP_EXHAUST_DECAY_TURNS = 30
 
+# Max agent-placed markers per map (keeps legend readable)
+MAX_MARKERS_PER_MAP = 8
+
 
 class WorldMap:
     """Accumulates explored tiles across turns, keyed by map ID."""
@@ -70,6 +73,9 @@ class WorldMap:
         # map_id → set of ((x1,y1),(x2,y2)) edges blocked by tile pair collisions
         # (e.g. cave elevation boundaries).  Accumulated from viewport data.
         self.pair_blocked_edges: Dict[int, Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = {}
+        # Agent-placed map markers: map_id → {(abs_x, abs_y): label}
+        # Persistent POI annotations rendered on the expanded world map as '*'.
+        self.markers: Dict[int, Dict[Tuple[int, int], str]] = {}
 
     def update_graph(
         self,
@@ -545,6 +551,11 @@ class WorldMap:
             "warp_transitions": [
                 [fm, list(wp), tm] for fm, wp, tm in self._warp_transitions
             ],
+            "markers": {
+                str(mid): {f"{x},{y}": label for (x, y), label in marks.items()}
+                for mid, marks in self.markers.items()
+                if marks
+            },
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -604,6 +615,13 @@ class WorldMap:
             for entry in data.get("warp_transitions", []):
                 fm, wp, tm = entry[0], tuple(entry[1]), entry[2]
                 self._warp_transitions.append((fm, wp, tm))
+            for mid_str, marks in data.get("markers", {}).items():
+                mid = int(mid_str)
+                if mid not in self.markers:
+                    self.markers[mid] = {}
+                for key, label in marks.items():
+                    x, y = map(int, key.split(","))
+                    self.markers[mid][(x, y)] = label
             logger.info(
                 f"WorldMap loaded: {sum(len(t) for t in self.tiles.values())} tiles "
                 f"across {len(self.tiles)} maps, {len(self.map_graph)} graph nodes, "
@@ -647,6 +665,7 @@ class WorldMap:
         # center on the player within the max window.
         px, py = player_pos
         warp_map = self.warps.get(map_id, {})
+        marker_map = self.markers.get(map_id, {})
         all_positions = set(tile_map.keys()) | set(warp_map.keys()) | {(px, py)}
         exp_min_x = min(p[0] for p in all_positions) - 1
         exp_max_x = max(p[0] for p in all_positions) + 1
@@ -667,6 +686,8 @@ class WorldMap:
                     row_chars.append("@")
                 elif (x, y) in warp_map:
                     row_chars.append("W")
+                elif (x, y) in marker_map:
+                    row_chars.append("*")
                 elif (x, y) in tile_map:
                     ch = tile_map[(x, y)]
                     # Mark walkable dead-end tiles with X (walls stay as #)
@@ -677,6 +698,16 @@ class WorldMap:
                 else:
                     row_chars.append("?")
             lines.append("".join(row_chars))
+
+        # Append marker legend if any markers are within the rendered bounds
+        visible_markers = {
+            pos: label for pos, label in marker_map.items()
+            if min_x <= pos[0] <= max_x and min_y <= pos[1] <= max_y
+        }
+        if visible_markers:
+            lines.append("Markers (*):  " + " | ".join(
+                f"({x},{y}): {label}" for (x, y), label in sorted(visible_markers.items())
+            ))
 
         return "\n".join(lines)
 
@@ -805,6 +836,34 @@ class WorldMap:
                     counter += 1
 
         return None
+
+    def frontier_ratio(self, map_id: int) -> float:
+        """Ratio of frontier tiles to total walkable tiles on this map.
+
+        Frontier = walkable tile with at least one unexplored neighbor.
+        Returns 0.0 if map has fewer than 15 explored tiles (too early to judge).
+        High ratio (>0.3) means the map is barely explored.
+        """
+        tile_map = self.tiles.get(map_id)
+        if not tile_map or len(tile_map) < 15:
+            return 0.0
+        _WALKABLE = frozenset(".,:")
+        walkable = 0
+        frontier = 0
+        dead = set()
+        for dz_x, dz_y in self.dead_ends.get(map_id, []):
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    dead.add((dz_x + dx, dz_y + dy))
+        for (tx, ty), ch in tile_map.items():
+            if ch not in _WALKABLE:
+                continue
+            walkable += 1
+            if (tx, ty) in dead:
+                continue
+            if any((tx + ox, ty + oy) not in tile_map for ox, oy in NEIGHBORS):
+                frontier += 1
+        return frontier / walkable if walkable > 0 else 0.0
 
     def find_frontier_path(
         self,

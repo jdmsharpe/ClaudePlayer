@@ -800,7 +800,7 @@ def _generate_battle_tip(
                 compound = f"B {_ABS_NAV_FIGHT} A W32 {nav} A"
                 label = "Put it to SLEEP" if strategy == "sleep" else "PARALYZE it"
                 return (f"RARE: {enemy['name']}! {label} first for catch bonus! "
-                        f"Use {m['name']} — send: {compound}")
+                        f"Use {m['name']} ({m['pp']}/{m['base_pp']}PP) — send: {compound}")
 
             # Phase B: Enemy has status or no status moves available.
             # If HP is high, weaken with gentlest move.
@@ -810,7 +810,7 @@ def _generate_battle_tip(
                 compound = f"B {_ABS_NAV_FIGHT} A W32 {nav} A"
                 status_tag = f" [{enemy_status}]" if enemy_status != "OK" else ""
                 return (f"RARE: {enemy['name']}! Weaken gently{status_tag} — "
-                        f"use {m['name']} ({m['power']}pwr, won't KO) "
+                        f"use {m['name']} ({m['power']}pwr, {m['pp']}/{m['base_pp']}PP, won't KO) "
                         f"— send: {compound}")
 
             # Phase C: No safe weakening move — all attacks would KO.
@@ -936,7 +936,8 @@ def _generate_battle_tip(
                 and min_party_level < enemy.get("level", 99)):
             train_tag = f"TRAIN: Team needs XP (min Lv{min_party_level} vs enemy Lv{enemy['level']}) — FIGHT! "
 
-        return (f"{train_tag}Use {best_move['name']} ({best_move['power']}pwr, {cat}{stab_tag}{eff_tag}{burn_tag})"
+        pp_tag = f", {best_move['pp']}/{best_move['base_pp']}PP"
+        return (f"{train_tag}Use {best_move['name']} ({best_move['power']}pwr{pp_tag}, {cat}{stab_tag}{eff_tag}{burn_tag})"
                 f"{spd_note}{estatus_note} — send: {compound} T")
 
     if menu_type in ("main", "fight") and not damage_moves:

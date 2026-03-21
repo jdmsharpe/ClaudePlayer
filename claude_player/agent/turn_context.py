@@ -196,6 +196,14 @@ class TurnContextBuilder:
                 ) or ""
             if world_map_text:
                 spatial_text += "\n" + world_map_text
+            # Inject marker summary for current map (always, even without world map)
+            current_markers = world_map.markers.get(map_id, {})
+            if current_markers:
+                marker_lines = " | ".join(
+                    f"({x},{y}): {label}" for (x, y), label in sorted(current_markers.items())
+                )
+                spatial_text += f"\nMARKERS on this map: {marker_lines}"
+
             # World-map A* NAV: map graph BFS → compass fallback → inject hint
             # Use tactical goal for NAV routing (more precise map match),
             # with strategic goal as fallback for map-graph BFS.

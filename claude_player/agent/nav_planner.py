@@ -18,6 +18,9 @@ _OVERRIDE_NAMES_LOWER = {v.lower() for v in WARP_DEST_NAME_OVERRIDES.values()}
 # Last NAV method used — set by compute_nav(), read by game_agent for TURN_SUMMARY
 last_nav_method: str = ""
 
+# Last NAV suggestion buttons — for compliance logging in game_agent
+last_nav_suggestion: str = ""
+
 # Track consecutive "exhausted" results to trigger frontier earlier.
 # When graph routing repeatedly falls back to exhausted warps, the agent
 # is likely cycling through bad warps.  After 2 consecutive exhausted
@@ -157,8 +160,9 @@ def compute_nav(
     Returns:
         The spatial_text string, potentially with a NAV hint injected.
     """
-    global last_nav_method, _consecutive_exhausted
+    global last_nav_method, last_nav_suggestion, _consecutive_exhausted
     last_nav_method = ""
+    last_nav_suggestion = ""
     dead_end_zones = world_map.dead_ends.get(map_id, [])
     wm_nav = None
 
@@ -362,5 +366,10 @@ def compute_nav(
     # ── Step 3: Inject into spatial text ──
     if wm_nav:
         spatial_text = _inject_nav_hint(spatial_text, wm_nav)
+        # Extract button sequence for compliance logging
+        # Format: "... (N tiles): U16 L32 D8 — re-evaluate..." or "... : U16 L32"
+        _btn_match = re.search(r':\s*([UDLRW][\dUDLRW ]+?)(?:\s*[—(+]|$)', wm_nav)
+        if _btn_match:
+            last_nav_suggestion = _btn_match.group(1).strip()
 
     return spatial_text

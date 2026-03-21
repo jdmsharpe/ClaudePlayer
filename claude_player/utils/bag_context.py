@@ -296,7 +296,7 @@ def extract_bag_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         )
 
         item_count = len(items)
-        logger.info(
+        logger.debug(
             f"Bag: {item_count} items, {assessment['badge_count']} badges, "
             f"${money}"
         )

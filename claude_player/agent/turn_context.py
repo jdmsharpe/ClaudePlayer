@@ -36,6 +36,7 @@ class TurnContextBuilder:
     ):
         self.kb = knowledge_base
         self._grid_in_prompt = grid_in_prompt
+        self._cross_map_loop_logged = False  # dedup: WARNING once, then DEBUG
 
     def build(
         self,
@@ -132,7 +133,15 @@ class TurnContextBuilder:
             cross_map_warning = world_map.get_cross_map_stuck_warning()
             if cross_map_warning:
                 user_content.append({"type": "text", "text": cross_map_warning})
-                logging.warning(f"CROSS-MAP LOOP: detected by warp history")
+                if not self._cross_map_loop_logged:
+                    logging.warning(f"CROSS-MAP LOOP: detected by warp history")
+                    self._cross_map_loop_logged = True
+                else:
+                    logging.debug(f"CROSS-MAP LOOP: still active")
+            elif self._cross_map_loop_logged:
+                # Loop resolved — reset so next occurrence gets WARNING again
+                logging.info("CROSS-MAP LOOP: resolved")
+                self._cross_map_loop_logged = False
 
         # ── Timing header (inserted at position 0) ──
         current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

@@ -53,7 +53,7 @@ class GameState:
 
     def log_state(self, map_id=None, map_name=None, player_pos=None,
                    in_battle=False):
-        """Log the current game state.
+        """Log the current game state as a compact single line.
 
         Args:
             map_id: Current map ID (hex), or None if unknown.
@@ -61,26 +61,28 @@ class GameState:
             player_pos: (x, y) player position tuple, or None.
             in_battle: Whether the agent is currently in battle.
         """
-        logging.info(f"GAME: {self.identified_game or 'Not identified'}")
-        logging.info(f"STRATEGIC GOAL: {self.strategic_goal or 'Not set'}")
-        if self.tactical_goal:
-            logging.info(f"TACTICAL GOAL: {self.tactical_goal}")
-        if self.side_objectives:
-            logging.info(f"SIDE OBJECTIVES: {' | '.join(self.side_objectives)}")
-        # Location context: map + position in one line for easy grepping
-        loc_parts = []
+        # Compact single-line header
+        parts = [f"t={self.turn_count}"]
         if map_id is not None:
-            loc_parts.append(f"map=0x{map_id:02X}")
-        if map_name:
-            loc_parts.append(f"({map_name})")
+            parts.append(f"map=0x{map_id:02X}({map_name or '?'})")
+        elif map_name:
+            parts.append(f"map=({map_name})")
         if player_pos:
-            loc_parts.append(f"pos=({player_pos[0]},{player_pos[1]})")
+            parts.append(f"pos=({player_pos[0]},{player_pos[1]})")
         if in_battle:
-            loc_parts.append("IN_BATTLE")
-        if loc_parts:
-            logging.info(f"LOCATION: {' '.join(loc_parts)}")
-        logging.info(f"TURN: {self.turn_count}")
-        logging.info(f"MEMORY LAST WRITTEN: turn {self.memory_turn}")
+            parts.append("IN_BATTLE")
+        parts.append(f"mem=t{self.memory_turn}")
+        logging.info(f"TURN: {' '.join(parts)}")
+
+        # Log goals only on change (avoid repeating identical lines every turn)
+        _goal_key = (self.strategic_goal, self.tactical_goal, tuple(self.side_objectives))
+        if _goal_key != getattr(self, '_last_logged_goals', None):
+            self._last_logged_goals = _goal_key
+            logging.info(f"STRATEGIC GOAL: {self.strategic_goal or 'Not set'}")
+            if self.tactical_goal:
+                logging.info(f"TACTICAL GOAL: {self.tactical_goal}")
+            if self.side_objectives:
+                logging.info(f"SIDE OBJECTIVES: {' | '.join(self.side_objectives)}")
 
     def increment_turn(self):
         """Increment the turn counter."""

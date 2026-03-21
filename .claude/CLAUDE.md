@@ -43,7 +43,7 @@ Entry: `play.py` → `claude_player/main.py` → `game_agent.py` main loop.
 - **Game data**: static tables in `claude_player/data/`; logic modules import from there
 - **Shared helpers**: `read_word()` and `decode_status()` in `ram_constants.py`
 - **Logging**: `logging` module; file=INFO+, console=WARNING+; rotating (5MB, 2 backups)
-  - Key tags: `TURN_SUMMARY`, `OUTCOME`, `STATS` (every 25 turns), `INTERRUPT`, `RECOVERY`, `NO-ACTION TURN`, `THINKING-ONLY RESPONSE` — all include `t=N` for correlation
+  - Key tags: `TURN_SUMMARY`, `OUTCOME`, `STATS` (every 25 turns), `INTERRUPT`, `RECOVERY`, `NO-ACTION TURN`, `THINKING-ONLY RESPONSE`, `NAV COMPLIANCE` — all include `t=N` for correlation
 - **No test suite**
 - **Imports**: stdlib → third-party → local (`claude_player.*`)
 
@@ -65,7 +65,9 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 - **NAV pipeline** (`nav_planner.py`, entry `compute_nav()`): (0) frontier-first, (0b) route cache, (1) map graph BFS → A\* to next-hop warp (retries up to 3× excluding failed first hops), (2a) frontier fallback when all hops exhausted or 2 consecutive "exhausted" results, (2b) COMPASS from goal text, (3) frontier exploration A\*, (4) ledge-aware path truncation. `last_nav_method` records which stage resolved.
 
-- **Warp dest_name overrides** (`warp_overrides.py`): disambiguates caves with multiple warps to same `dest_map`. When adding overrides: pokered ASM uses **1-based** warp indices; RAM uses **0-based**. `MAP_HINTS` in `event_flags.py` must use exact override name strings for NAV regex matching.
+- **Warp dest_name overrides** (`warp_overrides.py`): disambiguates caves with multiple warps to same `dest_map`. When adding overrides: pokered ASM uses **1-based** warp indices; RAM uses **0-based**. `MAP_HINTS` in `event_flags.py` must use exact override name strings for NAV regex matching. **MAP_HINTS style**: keep hints short (~60 chars) — directional nudges, not turn-by-turn routing. Detailed warp/path info belongs in location notes files, not the goal string. Overly prescriptive hints compete with NAV and cause the model to ignore computed paths.
+
+- **NAV compliance logging**: `game_agent.py` compares the first directional token of the model's action vs NAV's suggestion and logs `NAV COMPLIANCE: followed=true/false`. `last_nav_suggestion` in `nav_planner.py` holds the button sequence extracted from the last NAV result.
 
 - **Tile pair collisions** (from pokered `pair_collision_tile_ids.asm`): CAVERN (tileset 17) and FOREST (tileset 3) block movement between specific tile pairs even when tiles are individually walkable. `_TILE_PAIR_COLLISIONS` in `spatial_context.py`. Cave lower tiles (`:`) vs upper floor (`.`) — upper NORTH of lower is passable; lower NORTH of upper blocked; E/W always blocked. Persisted as `pair_blocked_edges` in `world_map.json`.
 
@@ -114,7 +116,7 @@ When modifying RAM readers, verify against <https://github.com/pret/pokered>.
 ## Config
 
 `config.json` — see `config/config_class.py` for full TypedDict schema.
-Key sections: `MODEL_DEFAULTS` (MAX_TOKENS=4096, EFFORT="medium"), `ACTION`, `MEMORY`, `STUCK`.
+Key sections: `MODEL_DEFAULTS` (MAX_TOKENS=16000, EFFORT="medium"), `ACTION`, `MEMORY`, `STUCK`.
 `EFFORT`: "low"/"medium"/"high"/"max" — controls thinking depth, tool call frequency, response length. Default "medium". "max" is Opus 4.6 only. Always sent via `output_config`.
 `THINKING_BUDGET` (optional): if set, uses `budget_tokens` thinking (for Sonnet); if absent, uses `adaptive` thinking (for Opus 4.6). Haiku has no thinking support.
 `ENABLE_SOUND` (default true): disables PyBoy APU sampling and audio streaming when false.

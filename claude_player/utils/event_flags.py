@@ -247,9 +247,9 @@ MAP_HINTS: Dict[Tuple[int, int], str] = {
     (  -2,  0x02): "Visit Pewter Mart first (Potions, Antidotes) — Mt. Moon has no shop. Mart is EAST of gym but a wall blocks direct access; follow the NAV path around the buildings. Then head EAST to Route 3.",
     (  -2,  0x0E): "Continue EAST through Route 3; Mt. Moon entrance is at the far east end.",
     (  -2,  0x44): "Pokémon Center rest stop.",
-    (  -2,  0x3B): "1F goal: explore the cave for items and trainers, then find the TOP-LEFT staircase near (5,5) — it leads to B1F WEST section which connects to the correct B2F exit path. The east stairs near (17,11) also work but are less direct. Avoid W0/W1 warps near the entrance (south exit).",
-    (  -2,  0x3C): "B1F: explore for items and trainers. W7 at (27,3) is the Route 4 exit but it's in an UPPER CORRIDOR (y≤3) walled off from below (y=4 is all walls). You CANNOT walk to W7 from any section below. The ONLY way: go to B2F north zone (via W1 at (17,11) from east corridor, or W4 at (21,17) from west section), then in B2F take W3 at (5,7) which exits to B1F W6 at (23,3) — walk RIGHT 4 tiles to W7 at (27,3) → Route 4. Follow NAV even when it routes to 1F — it is an intermediate hop, not backtracking.",
-    (  -2,  0x3D): "B2F: the exit ladder W3 is at (5,7) in the northwest (near fossils). From the east section, go SOUTH then wind WEST through corridors — the map is one connected loop. Do NOT go north from the east section (dead end). W3 exits to B1F upper corridor at (23,3), right next to W7 → Route 4. W0 at (25,9) and W1 at (21,17) loop back to B1F lower sections — avoid them.",
+    (  -2,  0x3B): "Find stairs to B1F. Explore east corridors for the path down.",
+    (  -2,  0x3C): "Reach B2F, then find W3(5,7) to exit to upper corridor → Route 4.",
+    (  -2,  0x3D): "Exit is W3 at northwest (5,7). Avoid W0/W1 — they loop back.",
     (  -2,  0x0F): "Route 4. If ledges (<) block eastward travel, you exited Mt. Moon from the WRONG side. Go back INTO Mt. Moon and progress through B1F→B2F→B1F to reach the correct Route 4 exit. If path east is clear, head EAST to Cerulean City.",
     # Beat Misty (0x0BF)
     (0x0BF, 0x03): "Enter Cerulean Gym (northeast area of Cerulean City) and defeat Misty.",

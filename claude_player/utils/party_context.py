@@ -485,7 +485,7 @@ def extract_party_context(pyboy: PyBoy) -> Optional[Dict[str, Any]]:
         text = _format_party_text(party, health, strategy)
 
         names = ", ".join(f"{m['name']} Lv{m['level']}" for m in party)
-        logger.info(f"Party: {names} — {health['total_hp_pct']}% HP")
+        logger.debug(f"Party: {names} — {health['total_hp_pct']}% HP")
 
         return {
             "text": text,

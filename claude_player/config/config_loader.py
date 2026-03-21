@@ -68,7 +68,7 @@ def load_config(config_file='config.json') -> ConfigClass:
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,
-            "MAX_TOKENS": 4096,
+            "MAX_TOKENS": 16000,
             "EFFORT": "medium",
         },
 

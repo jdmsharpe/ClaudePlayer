@@ -155,6 +155,9 @@ class GameAgent:
         # Per-turn token/cost stash for TURN_SUMMARY logging
         self._last_turn_tokens = 0
         self._last_turn_cost = 0.0
+        self._last_thinking_tokens = 0
+        self._last_cache_read = 0
+        self._last_total_input = 0
 
         # Periodic aggregate stats (emitted every _STATS_INTERVAL turns)
         self._stats_interval = 25
@@ -164,6 +167,20 @@ class GameAgent:
         self._stats_thinking_only = 0  # THINKING-ONLY burns since last stats
         self._stats_no_action = 0      # NO-ACTION turns since last stats
         self._stats_last_turn = 0      # turn number at last stats emission
+        self._stats_thinking_tokens = 0  # thinking tokens since last stats
+        self._stats_total_duration = 0.0  # total analysis seconds since last stats
+        self._stats_cache_read = 0       # cache read tokens since last stats
+        self._stats_cache_total_input = 0  # total input tokens since last stats
+        self._stats_thinking_only_cost = 0.0  # cost wasted on THINKING-ONLY turns
+        self._stats_maps_visited: set = set()  # distinct maps visited since last stats
+
+        # Turns-on-map counter (consecutive turns on same map_id)
+        self._turns_on_map = 0
+        self._turns_on_map_id: int | None = None
+
+        # Inventory change detection
+        self._last_bag_snapshot = None  # (items_tuple, money, badge_count)
+        self._last_party_summary: str | None = None  # for change-only logging
 
         # Cumulative token/cost tracking (deferred until after _save_dir is set)
 
@@ -448,6 +465,12 @@ class GameAgent:
                     # Snapshot the name of the map we just left for orientation context
                     if self._current_map_name:
                         self._last_map_name = self._current_map_name
+                # Track consecutive turns on same map
+                if map_changed:
+                    self._turns_on_map = 1
+                    self._turns_on_map_id = new_map_id
+                else:
+                    self._turns_on_map += 1
                 # Keep current map name in sync (spatial_data reflects latest RAM read)
                 self._current_map_name = spatial_data.get("map_name")
                 if new_map_id is not None:
@@ -734,6 +757,40 @@ class GameAgent:
         bag_data = None
         if self.config.ENABLE_SPATIAL_CONTEXT:
             bag_data = extract_bag_context(self.pyboy)
+
+        # ── Change-only Party/Bag logging (suppress identical repeats) ──
+        _party_str = self.game_state.party_summary or ""
+        if _party_str != self._last_party_summary:
+            logging.info(f"Party: {_party_str}" if _party_str else "Party: (no data)")
+            self._last_party_summary = _party_str
+        _bag_snap = bag_data.get("snapshot") if bag_data else None
+        if _bag_snap is not None and _bag_snap != self._last_bag_snapshot:
+            _bag_items = bag_data.get("items", [])
+            _bag_money = bag_data.get("money", 0)
+            _bag_badges = bag_data.get("assessment", {}).get("badge_count", 0)
+            logging.info(f"Bag: {len(_bag_items)} items, {_bag_badges} badges, ${_bag_money}")
+            # Inventory diff: detect pickups, uses, money changes
+            if self._last_bag_snapshot is not None:
+                _old_items = dict(self._last_bag_snapshot[0])  # {id: qty}
+                _new_items = dict(_bag_snap[0])
+                for item_id, new_qty in _new_items.items():
+                    old_qty = _old_items.get(item_id, 0)
+                    if new_qty > old_qty:
+                        _name = next((i["name"] for i in _bag_items if i["id"] == item_id), f"#{item_id}")
+                        logging.info(f"PICKUP: {_name} x{new_qty - old_qty}")
+                for item_id, old_qty in _old_items.items():
+                    new_qty = _new_items.get(item_id, 0)
+                    if new_qty < old_qty:
+                        _name = next((i["name"] for i in _bag_items if i["id"] == item_id), None)
+                        if not _name:
+                            from claude_player.data.items import ITEM_NAMES
+                            _name = ITEM_NAMES.get(item_id, f"#{item_id}")
+                        logging.info(f"USED: {_name} x{old_qty - new_qty}")
+                _old_money = self._last_bag_snapshot[1]
+                if _bag_money != _old_money:
+                    _diff = _bag_money - _old_money
+                    logging.info(f"MONEY: ${_old_money} → ${_bag_money} ({'+' if _diff > 0 else ''}{_diff})")
+            self._last_bag_snapshot = _bag_snap
 
         # Extract overworld menu context (dialogue/menu state, not battle)
         menu_data = None
@@ -1154,19 +1211,27 @@ class GameAgent:
 
                     total_input = cache_create + cache_read + input_tok
                     pct = (cache_read / total_input * 100) if total_input else 0
+                    # Break down thinking vs response tokens for cost visibility
+                    thinking_tok = getattr(usage, 'thinking_tokens', 0) or 0
+                    response_tok = output_tok - thinking_tok
+                    thinking_str = f" (thinking={thinking_tok} response={response_tok})" if thinking_tok else ""
                     logging.info(
-                        f"TOKENS: in={input_tok} out={output_tok} "
+                        f"TOKENS: in={input_tok} out={output_tok}{thinking_str} "
                         f"cache_read={cache_read} cache_create={cache_create} ({pct:.0f}% cached) "
                         f"| turn=${turn_cost:.4f} session=${self.cost_tracker.cost_usd:.4f}"
                     )
-                    # Stash for TURN_SUMMARY (emitted at end of analysis cycle)
+                    # Stash for TURN_SUMMARY and STATS (emitted at end of analysis cycle)
                     self._last_turn_tokens = input_tok + output_tok + cache_read + cache_create
                     self._last_turn_cost = turn_cost
+                    self._last_thinking_tokens = thinking_tok
+                    self._last_cache_read = cache_read
+                    self._last_total_input = cache_create + cache_read + input_tok
 
                 # Detect thinking-only responses (no text or tool output)
                 if not message_content["text_blocks"] and not message_content["tool_use_blocks"]:
                     self._consecutive_thinking_only += 1
                     self._stats_thinking_only += 1
+                    self._stats_thinking_only_cost += self._last_turn_cost
                     logging.warning(
                         f"THINKING-ONLY RESPONSE: t={self.game_state.turn_count} "
                         f"(#{self._consecutive_thinking_only}, "
@@ -1514,6 +1579,21 @@ class GameAgent:
                 # Process tools (don't execute send_inputs immediately)
                 actions = self.process_tool_results(message_content)
 
+                # NAV compliance: compare model's action to NAV suggestion
+                from claude_player.agent.nav_planner import last_nav_suggestion as _nav_sug
+                if _nav_sug and actions and not self._in_battle:
+                    _model_action = actions[0] if actions else ""
+                    # Extract first directional token from each for comparison
+                    _nav_first = re.match(r'[UDLR]\d+', _nav_sug)
+                    _act_first = re.match(r'[UDLR]\d+', _model_action)
+                    _followed = (_nav_first and _act_first
+                                 and _nav_first.group()[0] == _act_first.group()[0])
+                    if not _followed:
+                        logging.info(
+                            f"NAV COMPLIANCE: followed=false"
+                            f" model=\"{_model_action}\" nav=\"{_nav_sug}\""
+                        )
+
                 # Detect no-action turns (model used tools but forgot send_inputs)
                 no_action = False
                 if not actions and message_content and message_content.get("tool_use_blocks"):
@@ -1559,7 +1639,11 @@ class GameAgent:
                 # Structured TURN_SUMMARY — one grepable line per turn
                 _sd = captured_state.get("spatial_data") or {}
                 _map_id = _sd.get("map_number", self._current_map_id)
-                _map_name = _sd.get("map_name") or self._current_map_name or "?"
+                _map_name = _sd.get("map_name") or self._current_map_name
+                if not _map_name and _map_id is not None:
+                    from claude_player.data.maps import MAP_NAMES
+                    _map_name = MAP_NAMES.get(_map_id, "?")
+                _map_name = _map_name or "?"
                 _map_str = f"0x{_map_id:02X}({_map_name})" if _map_id is not None else f"?({_map_name})"
                 _pos = _sd.get("player_pos")
                 _pos_str = f"({_pos[0]},{_pos[1]})" if _pos else "?"
@@ -1581,6 +1665,7 @@ class GameAgent:
                 # Gather stuck + NAV diagnostics for TURN_SUMMARY
                 from claude_player.agent.nav_planner import last_nav_method as _nav_method
                 _stuck_str = f" stuck={self._stuck_count}" if self._stuck_count > 0 else ""
+                _map_turns_str = f" map_turns={self._turns_on_map}" if self._turns_on_map > 1 else ""
                 _nav_str = f" nav={_nav_method}" if _nav_method else ""
                 _side_str = ""
                 if self.game_state.side_objectives:
@@ -1588,7 +1673,7 @@ class GameAgent:
                 logging.info(
                     f"TURN_SUMMARY: t={self.game_state.turn_count}"
                     f" map={_map_str} pos={_pos_str}{_hp_str}{_flags}"
-                    f"{_stuck_str}{_nav_str}"
+                    f"{_stuck_str}{_map_turns_str}{_nav_str}"
                     f" goal=\"{self.game_state.current_goal or 'None'}\""
                     f"{_side_str}"
                     f" cost=${self._last_turn_cost:.4f} tokens={self._last_turn_tokens}"
@@ -1598,16 +1683,31 @@ class GameAgent:
 
                 # Accumulate periodic stats
                 self._stats_cost += self._last_turn_cost
+                self._stats_thinking_tokens += self._last_thinking_tokens
+                self._stats_total_duration += last_analysis_duration
+                self._stats_cache_read += getattr(self, '_last_cache_read', 0)
+                self._stats_cache_total_input += getattr(self, '_last_total_input', 0)
+                if _map_id is not None:
+                    self._stats_maps_visited.add(_map_id)
                 _cur_turn = self.game_state.turn_count
                 if _cur_turn - self._stats_last_turn >= self._stats_interval:
                     _total_moves = self._stats_blocked + self._stats_moved
                     _block_pct = (self._stats_blocked / _total_moves * 100) if _total_moves > 0 else 0
+                    _n_turns = _cur_turn - self._stats_last_turn
+                    _avg_dur = self._stats_total_duration / _n_turns if _n_turns else 0
+                    _cache_pct = (self._stats_cache_read / self._stats_cache_total_input * 100) if self._stats_cache_total_input else 0
+                    _tiles = sum(len(self._world_map.tiles.get(m, {})) for m in self._stats_maps_visited)
                     logging.info(
                         f"STATS: t={self._stats_last_turn + 1}-{_cur_turn}"
                         f" blocked={_block_pct:.0f}%({self._stats_blocked}/{_total_moves})"
                         f" cost=${self._stats_cost:.2f}"
                         f" thinking_only={self._stats_thinking_only}"
+                        f" (wasted=${self._stats_thinking_only_cost:.2f})"
                         f" no_action={self._stats_no_action}"
+                        f" thinking_tok={self._stats_thinking_tokens}"
+                        f" avg_dur={_avg_dur:.1f}s"
+                        f" cache={_cache_pct:.0f}%"
+                        f" maps={len(self._stats_maps_visited)} tiles={_tiles}"
                         f" session=${self.cost_tracker.cost_usd:.2f}"
                     )
                     self._stats_blocked = 0
@@ -1616,6 +1716,12 @@ class GameAgent:
                     self._stats_thinking_only = 0
                     self._stats_no_action = 0
                     self._stats_last_turn = _cur_turn
+                    self._stats_thinking_tokens = 0
+                    self._stats_total_duration = 0.0
+                    self._stats_cache_read = 0
+                    self._stats_cache_total_input = 0
+                    self._stats_thinking_only_cost = 0.0
+                    self._stats_maps_visited.clear()
 
                 logging.info(f"======= END ANALYSIS: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =======")
                 timing_parts = f"total={last_analysis_duration:.2f}s (prep={prep_duration:.2f}s, action={action_duration:.2f}s)"
@@ -1803,7 +1909,47 @@ class GameAgent:
                             f"BLOCKED directions at ({_post_x},{_post_y}): {_blocked_str} | Untried: {_untried_str}"
                         )
                     else:
-                        self._last_action_feedback = f"Executed: {action} — moved ({_pre_x},{_pre_y})→({_post_x},{_post_y})"
+                        # Per-direction movement analysis: which directions succeeded/failed?
+                        _dx = _post_x - _pre_x
+                        _dy = _post_y - _pre_y
+                        _dir_tokens = re.findall(r'([UDLR])(\d+)', action.upper())
+                        _dir_details = []
+                        if _dir_tokens and len(_dir_tokens) > 1:
+                            # Multi-direction command — decompose expected vs actual movement
+                            _expected = {"U": 0, "D": 0, "L": 0, "R": 0}
+                            for _d, _f in _dir_tokens:
+                                _expected[_d] += int(_f) // 16  # frames to tiles
+                            # Actual movement per axis
+                            _actual_x = _dx  # positive = right
+                            _actual_y = _dy  # positive = down
+                            for _d, _f in _dir_tokens:
+                                _tiles_requested = int(_f) // 16
+                                if _d == "U":
+                                    _tiles_moved = min(_tiles_requested, max(0, -_actual_y))
+                                    _actual_y += _tiles_moved  # consume
+                                elif _d == "D":
+                                    _tiles_moved = min(_tiles_requested, max(0, _actual_y))
+                                    _actual_y -= _tiles_moved
+                                elif _d == "L":
+                                    _tiles_moved = min(_tiles_requested, max(0, -_actual_x))
+                                    _actual_x += _tiles_moved
+                                elif _d == "R":
+                                    _tiles_moved = min(_tiles_requested, max(0, _actual_x))
+                                    _actual_x -= _tiles_moved
+                                else:
+                                    continue
+                                if _tiles_moved < _tiles_requested:
+                                    _dir_details.append(
+                                        f"{_d}{int(_f)}: {_tiles_moved}/{_tiles_requested} tiles"
+                                        f"{' (blocked)' if _tiles_moved == 0 else ''}"
+                                    )
+                        _detail_str = ""
+                        if _dir_details:
+                            _detail_str = f"\n  Per-direction: {', '.join(_dir_details)}"
+                        self._last_action_feedback = (
+                            f"Executed: {action} — moved ({_pre_x},{_pre_y})→({_post_x},{_post_y})"
+                            f"{_detail_str}"
+                        )
                         self._blocked_directions.clear()
                         self._blocked_at_pos = None
                     logging.info(f"OUTCOME: t={self.game_state.turn_count} {self._last_action_feedback}")

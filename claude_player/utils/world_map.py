@@ -925,19 +925,34 @@ class WorldMap:
         if not frontiers:
             return None
 
+        # Pre-compute frontier density: count unexplored tiles within Manhattan dist 3
+        _DENSITY_RADIUS = 3
+        density: Dict[Tuple[int, int], int] = {}
+        for fx, fy in frontiers:
+            count = 0
+            for ddx in range(-_DENSITY_RADIUS, _DENSITY_RADIUS + 1):
+                for ddy in range(-_DENSITY_RADIUS, _DENSITY_RADIUS + 1):
+                    if abs(ddx) + abs(ddy) > _DENSITY_RADIUS:
+                        continue
+                    nb = (fx + ddx, fy + ddy)
+                    if nb not in tile_map:  # unexplored
+                        count += 1
+            density[(fx, fy)] = count
+
         # Direction bias: prefer frontiers in the compass direction of the goal
         _DIR_BIAS = {"NORTH": (0, -1), "SOUTH": (0, 1), "WEST": (-1, 0), "EAST": (1, 0)}
         bias_dx, bias_dy = _DIR_BIAS.get(preferred_direction or "", (0, 0))
 
-        def _h(x: int, y: int) -> int:
-            """Heuristic: distance to nearest frontier, biased by direction."""
-            # Bias: subtract a bonus for tiles in the preferred direction
+        def _h(x: int, y: int) -> float:
+            """Heuristic: direction bias + density tie-breaker for frontier tiles."""
             bonus = 0
             if bias_dx or bias_dy:
                 dx = x - start[0]
                 dy = y - start[1]
-                bonus = dx * bias_dx + dy * bias_dy  # positive = in preferred dir
-            return -min(bonus, 10)  # cap so it doesn't dominate
+                bonus = dx * bias_dx + dy * bias_dy
+            # Density bonus: prefer frontier tiles with more unexplored neighbors
+            d_bonus = density.get((x, y), 0) / 10
+            return -min(bonus, 10) - d_bonus
 
         def _passable(x: int, y: int, dx: int, dy: int) -> bool:
             if (x, y) == start:

@@ -177,6 +177,11 @@ class TurnContextBuilder:
     ) -> str:
         """Build spatial context text with world map, goals, and NAV hint."""
         spatial_text = spatial_data["text"] if self._grid_in_prompt else spatial_data.get("api_text", spatial_data["text"])
+
+        # Extract map info once for use in nudge and NAV blocks
+        map_id = spatial_data.get("map_number")
+        player_pos = spatial_data.get("player_pos")
+
         # Prepend "entered from" note for orientation after warps
         if last_map_name:
             spatial_text = f"[Entered from: {last_map_name}]\n" + spatial_text
@@ -193,9 +198,30 @@ class TurnContextBuilder:
                 goal_header += f"\nSIDE OBJECTIVES: {' | '.join(side_objs)}"
             spatial_text = goal_header + "\n" + spatial_text
 
+        # Inject exploration nudge when map is largely unexplored
+        # Suppressed when stuck (stuck recovery takes priority)
+        if map_id is not None and stuck_count < 5:
+            fr = world_map.frontier_ratio(map_id)
+            if fr > 0.5:
+                pct = int(fr * 100)
+                explore_nudge = (
+                    f"⚑ EXPLORE: This area is {pct}% unexplored. Build your "
+                    f"mental map before routing to exits. Look for paths, items, "
+                    f"NPCs, and warps you haven't visited."
+                )
+                # Insert after goal header lines, before spatial data
+                split_lines = spatial_text.split("\n")
+                insert_idx = 0
+                for i, line in enumerate(split_lines):
+                    if line.startswith(("STRATEGIC GOAL:", "TACTICAL GOAL:", "SIDE OBJECTIVES:")):
+                        insert_idx = i + 1
+                    else:
+                        if insert_idx > 0:
+                            break
+                split_lines.insert(insert_idx, explore_nudge)
+                spatial_text = "\n".join(split_lines)
+
         # Append accumulated world map and run NAV pipeline
-        map_id = spatial_data.get("map_number")
-        player_pos = spatial_data.get("player_pos")
         if map_id is not None and player_pos is not None:
             # Use pre-rendered world map from captured_state if available
             if world_map_text is None:

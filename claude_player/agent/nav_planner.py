@@ -167,10 +167,10 @@ def compute_nav(
     wm_nav = None
 
     # ── Step 0: Frontier-first exploration ──
-    # When the map is barely explored (>30% frontier tiles), prioritize
+    # When the map is barely explored (>50% frontier tiles), prioritize
     # exploring before goal-directed routing.  This prevents the agent from
     # bee-lining to a warp and missing items, NPCs, or alternate paths.
-    _FRONTIER_RATIO_THRESHOLD = 0.3
+    _FRONTIER_RATIO_THRESHOLD = 0.5
     fr = world_map.frontier_ratio(map_id)
     if fr > _FRONTIER_RATIO_THRESHOLD and variance == 0:
         dead_end_tiles: set = set()

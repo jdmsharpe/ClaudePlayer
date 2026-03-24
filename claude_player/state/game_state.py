@@ -84,6 +84,20 @@ class GameState:
             if self.side_objectives:
                 logging.info(f"SIDE OBJECTIVES: {' | '.join(self.side_objectives)}")
 
+    def check_tactical_override_expiry(self) -> None:
+        """Consume one grace period on map change; clear override when exhausted.
+
+        Called by game_agent on map transitions. The grace period lets
+        overrides like "skip fossil, exit cave" survive one floor hop.
+        """
+        if not self._tactical_goal_override:
+            return
+        if self._tactical_override_grace > 0:
+            self._tactical_override_grace -= 1
+        else:
+            self._tactical_goal_override = False
+            self.tactical_goal = None
+
     def increment_turn(self):
         """Increment the turn counter."""
         self.turn_count += 1

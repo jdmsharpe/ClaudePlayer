@@ -6,6 +6,7 @@ import time
 import signal
 import threading
 from collections import Counter, deque
+from dataclasses import dataclass, field
 import re
 from datetime import datetime
 from pyboy import PyBoy
@@ -78,6 +79,55 @@ def _is_fatal_error(error: Exception) -> bool:
     """Check if an error is non-recoverable and should stop the game loop."""
     error_str = str(error)
     return any(pattern in error_str for pattern in FATAL_ERROR_PATTERNS)
+
+@dataclass
+class _PeriodicStats:
+    """Aggregate stats emitted every N turns, then reset."""
+    interval: int = 25
+    blocked: int = 0
+    moved: int = 0
+    cost: float = 0.0
+    thinking_only: int = 0
+    no_action: int = 0
+    last_turn: int = 0
+    thinking_tokens: int = 0
+    total_duration: float = 0.0
+    cache_read: int = 0
+    cache_total_input: int = 0
+    thinking_only_cost: float = 0.0
+    maps_visited: set = field(default_factory=set)
+    nav_suggested: int = 0
+    nav_followed: int = 0
+    nav_forced: int = 0
+
+    def reset(self, turn: int) -> None:
+        """Reset all counters for the next stats window."""
+        self.blocked = 0
+        self.moved = 0
+        self.cost = 0.0
+        self.thinking_only = 0
+        self.no_action = 0
+        self.last_turn = turn
+        self.thinking_tokens = 0
+        self.total_duration = 0.0
+        self.cache_read = 0
+        self.cache_total_input = 0
+        self.thinking_only_cost = 0.0
+        self.maps_visited.clear()
+        self.nav_suggested = 0
+        self.nav_followed = 0
+        self.nav_forced = 0
+
+
+@dataclass
+class _TurnTokens:
+    """Per-turn token/cost stash for TURN_SUMMARY logging."""
+    tokens: int = 0
+    cost: float = 0.0
+    thinking_tokens: int = 0
+    cache_read: int = 0
+    total_input: int = 0
+
 
 class GameAgent:
     """Main game agent class that orchestrates the AI gameplay."""
@@ -179,29 +229,10 @@ class GameAgent:
         self._last_battle_snapshot = None  # (player_hp, enemy_hp, menu_type, cursor)
 
         # Per-turn token/cost stash for TURN_SUMMARY logging
-        self._last_turn_tokens = 0
-        self._last_turn_cost = 0.0
-        self._last_thinking_tokens = 0
-        self._last_cache_read = 0
-        self._last_total_input = 0
+        self._turn_tokens = _TurnTokens()
 
-        # Periodic aggregate stats (emitted every _STATS_INTERVAL turns)
-        self._stats_interval = 25
-        self._stats_blocked = 0  # UNCHANGED outcomes since last stats
-        self._stats_moved = 0    # successful moves since last stats
-        self._stats_cost = 0.0   # cost since last stats
-        self._stats_thinking_only = 0  # THINKING-ONLY burns since last stats
-        self._stats_no_action = 0      # NO-ACTION turns since last stats
-        self._stats_last_turn = 0      # turn number at last stats emission
-        self._stats_thinking_tokens = 0  # thinking tokens since last stats
-        self._stats_total_duration = 0.0  # total analysis seconds since last stats
-        self._stats_cache_read = 0       # cache read tokens since last stats
-        self._stats_cache_total_input = 0  # total input tokens since last stats
-        self._stats_thinking_only_cost = 0.0  # cost wasted on THINKING-ONLY turns
-        self._stats_maps_visited: set = set()  # distinct maps visited since last stats
-        self._stats_nav_suggested = 0  # turns with NAV suggestion + action
-        self._stats_nav_followed = 0   # turns where model followed NAV first direction
-        self._stats_nav_forced = 0     # turns where NAV guard overrode model action
+        # Periodic aggregate stats (emitted every N turns, then reset)
+        self._stats = _PeriodicStats()
         self._nav_noncompliance_streak = 0  # consecutive NAV divergence turns
 
         # Turns-on-map counter (consecutive turns on same map_id)
@@ -399,6 +430,52 @@ class GameAgent:
         if removed:
             logging.info(f"Sanitized chat history: removed {removed} invalid leading message(s)")
 
+    def _handle_map_transition(
+        self,
+        current_pos,
+        new_map_id,
+        spatial_data,
+    ) -> bool:
+        """Detect and process map transitions. Returns True if map changed."""
+        if current_pos is None:
+            return False
+        prev_map_id = self._current_map_id
+        map_changed = (
+            new_map_id is not None and new_map_id != self._current_map_id
+        )
+        if map_changed:
+            if prev_map_id is not None and new_map_id is not None:
+                self._world_map.ensure_graph_edge(prev_map_id, new_map_id)
+            if prev_map_id is not None:
+                self._world_map.confirm_route(prev_map_id)
+            if (prev_map_id is not None
+                    and new_map_id is not None
+                    and self._visited_positions):
+                last_pos_on_old_map = self._visited_positions[-1]
+                self._world_map.record_warp_transition(
+                    prev_map_id, last_pos_on_old_map,
+                    new_map_id, self.game_state.turn_count,
+                    arrival_pos=current_pos,
+                )
+            self._visited_positions.clear()
+            self.game_state.check_tactical_override_expiry()
+            if self._current_map_name and prev_map_id is not None:
+                self.memory_manager.record_map_visit(prev_map_id, self._current_map_name)
+            if self._current_map_name:
+                self._last_map_name = self._current_map_name
+        # Track consecutive turns on same map
+        if map_changed:
+            self._turns_on_map = 1
+            self._turns_on_map_id = new_map_id
+        else:
+            self._turns_on_map += 1
+        # Keep current map name in sync
+        self._current_map_name = spatial_data.get("map_name")
+        if new_map_id is not None:
+            self._current_map_id = new_map_id
+        self._visited_positions.append(current_pos)
+        return map_changed
+
     def capture_pyboy_state(self):
         """Capture PyBoy screen data on the main thread (thread-safe).
 
@@ -450,62 +527,12 @@ class GameAgent:
             elif current_pos is not None:
                 self._stuck_count = 0
             self._previous_player_pos = current_pos
-            # Track visited positions for exploration analysis
+            # Track visited positions and detect map transitions
             new_map_id = spatial_data.get("map_number")
-            map_changed = False
-            prev_map_id = self._current_map_id  # for graph 0xFF resolution
-            if current_pos is not None:
-                # Detect map change: map_id changed (position-jump heuristic
-                # removed — large caves like Mt. Moon B1F are 28x28 and
-                # routine movement easily exceeds 10 tiles, causing false
-                # warp transitions and spurious cycling detection)
-                map_changed = (
-                    new_map_id is not None and new_map_id != self._current_map_id
-                )
-                if map_changed:
-                    # Ensure bidirectional graph edge exists for ANY map transition
-                    # (covers walking between routes, not just warps/connections)
-                    if prev_map_id is not None and new_map_id is not None:
-                        self._world_map.ensure_graph_edge(prev_map_id, new_map_id)
-                    # Confirm pending route cache on successful warp
-                    if prev_map_id is not None:
-                        self._world_map.confirm_route(prev_map_id)
-                    # Record warp transition for ping-pong detection
-                    if (prev_map_id is not None
-                            and new_map_id is not None
-                            and self._visited_positions):
-                        last_pos_on_old_map = self._visited_positions[-1]
-                        self._world_map.record_warp_transition(
-                            prev_map_id, last_pos_on_old_map,
-                            new_map_id, self.game_state.turn_count,
-                            arrival_pos=current_pos,
-                        )
-                    self._visited_positions.clear()
-                    # Tactical override gets a 1-map-change grace period so
-                    # goals like "skip fossil, exit cave" survive floor hops
-                    if self.game_state._tactical_goal_override:
-                        if self.game_state._tactical_override_grace > 0:
-                            self.game_state._tactical_override_grace -= 1
-                        else:
-                            self.game_state._tactical_goal_override = False
-                            self.game_state.tactical_goal = None
-                    # Record visited map for multi-location KB updates
-                    if self._current_map_name and prev_map_id is not None:
-                        self.memory_manager.record_map_visit(prev_map_id, self._current_map_name)
-                    # Snapshot the name of the map we just left for orientation context
-                    if self._current_map_name:
-                        self._last_map_name = self._current_map_name
-                # Track consecutive turns on same map
-                if map_changed:
-                    self._turns_on_map = 1
-                    self._turns_on_map_id = new_map_id
-                else:
-                    self._turns_on_map += 1
-                # Keep current map name in sync (spatial_data reflects latest RAM read)
-                self._current_map_name = spatial_data.get("map_name")
-                if new_map_id is not None:
-                    self._current_map_id = new_map_id
-                self._visited_positions.append(current_pos)
+            prev_map_id = self._current_map_id
+            map_changed = self._handle_map_transition(
+                current_pos, new_map_id, spatial_data,
+            )
 
             # Accumulate tiles into persistent world map.
             # Skip the first turn after a map transition — the base_grid may
@@ -724,7 +751,6 @@ class GameAgent:
                         )
                     # Cap tactical goal length — detailed routing belongs in
                     # location notes, not the goal string (saves ~100 tokens/turn)
-                    _MAX_TACTICAL_LEN = 200
                     if self.game_state.tactical_goal and len(self.game_state.tactical_goal) > _MAX_TACTICAL_LEN:
                         self.game_state.tactical_goal = self.game_state.tactical_goal[:_MAX_TACTICAL_LEN].rsplit(" ", 1)[0] + "… (see location notes)"
                     if self.game_state.tactical_goal != old_tactical:
@@ -770,7 +796,7 @@ class GameAgent:
                     for move in mon["moves"]
                     if move.get("power", 0) > 0
                 )
-                if (total_offensive_pp <= 10
+                if (total_offensive_pp <= _PP_HEAL_INJECT
                         and in_overworld
                         and _HEAL_OBJ not in self.game_state.side_objectives):
                     self.game_state.side_objectives.insert(0, _HEAL_OBJ)
@@ -778,7 +804,7 @@ class GameAgent:
                         f"AUTO-HEAL GATE: total offensive PP={total_offensive_pp}, "
                         f"injecting heal side objective"
                     )
-                elif (total_offensive_pp > 20
+                elif (total_offensive_pp > _PP_HEAL_REMOVE
                       and _HEAL_OBJ in self.game_state.side_objectives):
                     self.game_state.side_objectives.remove(_HEAL_OBJ)
                     logging.info("AUTO-HEAL GATE: PP recovered, removing heal objective")
@@ -1252,17 +1278,17 @@ class GameAgent:
                         f"| turn=${turn_cost:.4f} session=${self.cost_tracker.cost_usd:.4f}"
                     )
                     # Stash for TURN_SUMMARY and STATS (emitted at end of analysis cycle)
-                    self._last_turn_tokens = input_tok + output_tok + cache_read + cache_create
-                    self._last_turn_cost = turn_cost
-                    self._last_thinking_tokens = thinking_tok
-                    self._last_cache_read = cache_read
-                    self._last_total_input = cache_create + cache_read + input_tok
+                    self._turn_tokens.tokens = input_tok + output_tok + cache_read + cache_create
+                    self._turn_tokens.cost = turn_cost
+                    self._turn_tokens.thinking_tokens = thinking_tok
+                    self._turn_tokens.cache_read = cache_read
+                    self._turn_tokens.total_input = cache_create + cache_read + input_tok
 
                 # Detect thinking-only responses (no text or tool output)
                 if not message_content["text_blocks"] and not message_content["tool_use_blocks"]:
                     self._consecutive_thinking_only += 1
-                    self._stats_thinking_only += 1
-                    self._stats_thinking_only_cost += self._last_turn_cost
+                    self._stats.thinking_only += 1
+                    self._stats.thinking_only_cost += self._turn_tokens.cost
                     logging.warning(
                         f"THINKING-ONLY RESPONSE: t={self.game_state.turn_count} "
                         f"(#{self._consecutive_thinking_only}, "
@@ -1708,7 +1734,7 @@ class GameAgent:
                 _nav_sug = _nav_result.nav_suggestion if _nav_result else ""
                 _nav_forced = False
                 if _nav_sug and actions and not self._in_battle:
-                    self._stats_nav_suggested += 1
+                    self._stats.nav_suggested += 1
                     _model_action = actions[0] if actions else ""
                     # Extract first directional token from each for comparison
                     _nav_first = re.match(r'[UDLR]\d+', _nav_sug)
@@ -1716,7 +1742,7 @@ class GameAgent:
                     _followed = (_nav_first and _act_first
                                  and _nav_first.group()[0] == _act_first.group()[0])
                     if _followed:
-                        self._stats_nav_followed += 1
+                        self._stats.nav_followed += 1
                         self._nav_noncompliance_streak = 0
                     else:
                         self._nav_noncompliance_streak += 1
@@ -1728,13 +1754,13 @@ class GameAgent:
                         # Guardrail: repeated NAV divergence while stuck on a map
                         # burns many turns. Force one NAV step to break loops.
                         if (
-                            self._nav_noncompliance_streak >= 3
-                            and (self._stuck_count >= 1 or self._turns_on_map >= 8)
+                            self._nav_noncompliance_streak >= _NAV_NONCOMPLIANCE_LIMIT
+                            and (self._stuck_count >= 1 or self._turns_on_map >= _NAV_GUARD_MIN_MAP_TURNS)
                         ):
                             forced_action, force_notes = self._normalize_action_inputs(_nav_sug)
                             if forced_action:
                                 actions[0] = forced_action
-                                self._stats_nav_forced += 1
+                                self._stats.nav_forced += 1
                                 self._nav_noncompliance_streak = 0
                                 _nav_forced = True
                                 note_suffix = (
@@ -1754,7 +1780,7 @@ class GameAgent:
                 if not actions and message_content and message_content.get("tool_use_blocks"):
                     if any(t.name != "send_inputs" for t in message_content["tool_use_blocks"]):
                         no_action = True
-                        self._stats_no_action += 1
+                        self._stats.no_action += 1
                         logging.warning(
                             f"NO-ACTION TURN: t={self.game_state.turn_count} "
                             f"Model used tools but didn't send_inputs — nudging"
@@ -1833,62 +1859,48 @@ class GameAgent:
                     f"{_stuck_str}{_map_turns_str}{_nav_str}"
                     f" goal=\"{self.game_state.current_goal or 'None'}\""
                     f"{_side_str}"
-                    f" cost=${self._last_turn_cost:.4f} tokens={self._last_turn_tokens}"
+                    f" cost=${self._turn_tokens.cost:.4f} tokens={self._turn_tokens.tokens}"
                     f"{_tools_str}{_actions_str}"
                     f" duration={last_analysis_duration:.1f}s"
                 )
 
                 # Accumulate periodic stats
-                self._stats_cost += self._last_turn_cost
-                self._stats_thinking_tokens += self._last_thinking_tokens
-                self._stats_total_duration += last_analysis_duration
-                self._stats_cache_read += getattr(self, '_last_cache_read', 0)
-                self._stats_cache_total_input += getattr(self, '_last_total_input', 0)
+                self._stats.cost += self._turn_tokens.cost
+                self._stats.thinking_tokens += self._turn_tokens.thinking_tokens
+                self._stats.total_duration += last_analysis_duration
+                self._stats.cache_read += self._turn_tokens.cache_read
+                self._stats.cache_total_input += self._turn_tokens.total_input
                 if _map_id is not None:
-                    self._stats_maps_visited.add(_map_id)
+                    self._stats.maps_visited.add(_map_id)
                 _cur_turn = self.game_state.turn_count
-                if _cur_turn - self._stats_last_turn >= self._stats_interval:
-                    _total_moves = self._stats_blocked + self._stats_moved
-                    _block_pct = (self._stats_blocked / _total_moves * 100) if _total_moves > 0 else 0
-                    _n_turns = _cur_turn - self._stats_last_turn
-                    _avg_dur = self._stats_total_duration / _n_turns if _n_turns else 0
-                    _cache_pct = (self._stats_cache_read / self._stats_cache_total_input * 100) if self._stats_cache_total_input else 0
+                if _cur_turn - self._stats.last_turn >= self._stats.interval:
+                    _total_moves = self._stats.blocked + self._stats.moved
+                    _block_pct = (self._stats.blocked / _total_moves * 100) if _total_moves > 0 else 0
+                    _n_turns = _cur_turn - self._stats.last_turn
+                    _avg_dur = self._stats.total_duration / _n_turns if _n_turns else 0
+                    _cache_pct = (self._stats.cache_read / self._stats.cache_total_input * 100) if self._stats.cache_total_input else 0
                     _nav_follow_pct = (
-                        self._stats_nav_followed / self._stats_nav_suggested * 100
-                        if self._stats_nav_suggested > 0 else 0
+                        self._stats.nav_followed / self._stats.nav_suggested * 100
+                        if self._stats.nav_suggested > 0 else 0
                     )
-                    _tiles = sum(len(self._world_map.tiles.get(m, {})) for m in self._stats_maps_visited)
+                    _tiles = sum(len(self._world_map.tiles.get(m, {})) for m in self._stats.maps_visited)
                     logging.info(
-                        f"STATS: t={self._stats_last_turn + 1}-{_cur_turn}"
-                        f" blocked={_block_pct:.0f}%({self._stats_blocked}/{_total_moves})"
-                        f" cost=${self._stats_cost:.2f}"
-                        f" thinking_only={self._stats_thinking_only}"
-                        f" (wasted=${self._stats_thinking_only_cost:.2f})"
-                        f" no_action={self._stats_no_action}"
+                        f"STATS: t={self._stats.last_turn + 1}-{_cur_turn}"
+                        f" blocked={_block_pct:.0f}%({self._stats.blocked}/{_total_moves})"
+                        f" cost=${self._stats.cost:.2f}"
+                        f" thinking_only={self._stats.thinking_only}"
+                        f" (wasted=${self._stats.thinking_only_cost:.2f})"
+                        f" no_action={self._stats.no_action}"
                         f" nav_follow={_nav_follow_pct:.0f}%"
-                        f"({self._stats_nav_followed}/{self._stats_nav_suggested})"
-                        f" nav_forced={self._stats_nav_forced}"
-                        f" thinking_tok={self._stats_thinking_tokens}"
+                        f"({self._stats.nav_followed}/{self._stats.nav_suggested})"
+                        f" nav_forced={self._stats.nav_forced}"
+                        f" thinking_tok={self._stats.thinking_tokens}"
                         f" avg_dur={_avg_dur:.1f}s"
                         f" cache={_cache_pct:.0f}%"
-                        f" maps={len(self._stats_maps_visited)} tiles={_tiles}"
+                        f" maps={len(self._stats.maps_visited)} tiles={_tiles}"
                         f" session=${self.cost_tracker.cost_usd:.2f}"
                     )
-                    self._stats_blocked = 0
-                    self._stats_moved = 0
-                    self._stats_cost = 0.0
-                    self._stats_thinking_only = 0
-                    self._stats_no_action = 0
-                    self._stats_nav_suggested = 0
-                    self._stats_nav_followed = 0
-                    self._stats_nav_forced = 0
-                    self._stats_last_turn = _cur_turn
-                    self._stats_thinking_tokens = 0
-                    self._stats_total_duration = 0.0
-                    self._stats_cache_read = 0
-                    self._stats_cache_total_input = 0
-                    self._stats_thinking_only_cost = 0.0
-                    self._stats_maps_visited.clear()
+                    self._stats.reset(_cur_turn)
 
                 logging.info(f"======= END ANALYSIS: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =======")
                 timing_parts = f"total={last_analysis_duration:.2f}s (prep={prep_duration:.2f}s, action={action_duration:.2f}s)"
@@ -2130,9 +2142,9 @@ class GameAgent:
                     # (position can't change during battle, so UNCHANGED is expected)
                     if not self._in_battle:
                         if _pre_x == _post_x and _pre_y == _post_y and _pre_map == _post_map:
-                            self._stats_blocked += 1
+                            self._stats.blocked += 1
                         else:
-                            self._stats_moved += 1
+                            self._stats.moved += 1
                     # Refresh battle context after action so the web/terminal cursor
                     # matches the live game state (cursor RAM updates immediately on button press)
                     if self._in_battle:

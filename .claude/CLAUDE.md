@@ -107,7 +107,7 @@ Addresses from pret/pokered disassembly. Shared in `utils/ram_constants.py`; mod
 - `0xCC2F` dual-purpose: party index outside fight submenu; last A-confirmed fight slot (0–3) inside it
 - Battle context: stats, moves (with `id`), HP, PP, stat stages (CD1A–CD33, 0–12, 7=neutral), turn counter (CCD5), half-turn (FFF3), last move indices (CCDC/CCDD). Fight TIPs show PP as `pp/base_pp PP`; append `T` to auto-advance post-attack text.
 - **Rare Pokemon** (`RARE_POKEMON` in `data/pokemon.py`): triggers multi-phase catch TIP — (A) inflict sleep/paralysis, (B) weaken without KO, (C) switch if all moves would KO, (D) throw best ball. Logged at WARNING (`RARE ENCOUNTER:`).
-- Battle start settle: `_BATTLE_START_SETTLE = 6.0s` before analysis (lets intro animations finish)
+- Battle start settle: `_BATTLE_START_SETTLE = 6.0s` before analysis. During settle, auto-presses A at 1.5s/3.0s/4.5s to advance intro text ("Wild X appeared!", "Go! POKEMON!") — these require button input to dismiss, they don't auto-advance.
 - Sprite data: 0xC100, 16-byte stride; player facing at 0xC109
 - Event flags: `ADDR_EVENT_FLAGS`; direction constants canonical in `pathfinding.py`
 

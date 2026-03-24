@@ -9,6 +9,7 @@ from collections import Counter, deque
 import re
 from datetime import datetime
 from pyboy import PyBoy
+from pyboy.utils import WindowEvent
 
 from claude_player.config.config_class import ConfigClass
 from claude_player.config.config_loader import setup_logging
@@ -1515,12 +1516,14 @@ class GameAgent:
         self.cost_tracker.save()
 
     def run_continuous(self):
-        """Run the game agent in continuous mode where the emulator runs at 1x speed continuously."""
+        """Run the game agent in continuous mode with configured emulation speed."""
         logging.info("Starting continuous emulation mode")
         self.display.update(status="Continuous mode")
         
-        # Set emulation speed to 1x (real-time)
-        self.pyboy.set_emulation_speed(target_speed=1)
+        # Respect configured emulation speed in continuous mode.
+        speed = max(1, int(getattr(self.config, "EMULATION_SPEED", 1)))
+        self.pyboy.set_emulation_speed(target_speed=speed)
+        logging.info(f"Continuous mode emulation speed set to {speed}x")
         
         # Variables to track time for AI analysis
         last_analysis_time = time.time()
@@ -1551,13 +1554,13 @@ class GameAgent:
         last_map_change_time = 0.0
         _MAP_TRANSITION_SETTLE = 1.5  # seconds
         # Minimum settle time after battle START before re-analyzing.
-        # Battle intro animations ("Wild X appeared!", "Go! POKEMON!") take ~5-6s;
-        # analyzing too early produces stale submenu detection and wasted turns.
-        # With 6s settle + ~2-3s API latency, first inputs land at ~8-9s — well
-        # past the intro.  Previous value of 4.0s caused run_from_battle to fire
-        # during animations, sending D R A into the fight menu instead of RUN.
+        # Battle intro text ("Wild X appeared!", "Go! POKEMON!") requires A
+        # presses to advance — it does NOT auto-dismiss.  During settle we
+        # auto-press A at intervals to clear the intro (see post-tick block).
+        # By the time settle ends, the main battle menu is actually visible.
         last_battle_start_time = 0.0
         _BATTLE_START_SETTLE = 6.0  # seconds
+        _intro_advance_frames = 360  # frames since battle start (init above settle threshold)
 
         # Add threading lock for shared variables
         lock = threading.Lock()
@@ -1893,7 +1896,7 @@ class GameAgent:
                         # Extract directions — only track blocking for pure movement actions
                         # (non-movement tokens like A/B/W/T/S/X indicate menu/battle actions
                         # whose UNCHANGED outcome doesn't mean directional blocking)
-                        _has_non_dir = bool(re.search(r'[ABWTSTX]', action.upper()))
+                        _has_non_dir = bool(re.search(r'[ABWTSX]', action.upper()))
                         _dirs_tried = set(re.findall(r'[UDLR]', action.upper())) if not _has_non_dir else set()
                         _dir_names = {"U": "UP", "D": "DOWN", "L": "LEFT", "R": "RIGHT"}
                         _cur_pos = (_post_x, _post_y)
@@ -1905,10 +1908,16 @@ class GameAgent:
                         _untried = _all_dirs - self._blocked_directions
                         _blocked_str = ",".join(sorted(_dir_names[d] for d in self._blocked_directions))
                         _untried_str = ",".join(sorted(_dir_names[d] for d in _untried)) if _untried else "NONE"
-                        self._last_action_feedback = (
-                            f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}). Path was blocked.\n"
-                            f"BLOCKED directions at ({_post_x},{_post_y}): {_blocked_str} | Untried: {_untried_str}"
-                        )
+                        if self._in_battle or _has_non_dir:
+                            context = "battle/menu state unchanged" if self._in_battle else "state unchanged"
+                            self._last_action_feedback = (
+                                f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}); {context}."
+                            )
+                        else:
+                            self._last_action_feedback = (
+                                f"Executed: {action} — position UNCHANGED at ({_post_x},{_post_y}). Path was blocked.\n"
+                                f"BLOCKED directions at ({_post_x},{_post_y}): {_blocked_str} | Untried: {_untried_str}"
+                            )
                     else:
                         # Per-direction movement analysis: which directions succeeded/failed?
                         _dx = _post_x - _pre_x
@@ -2066,6 +2075,7 @@ class GameAgent:
                         last_map_change_time = _now
                     if battle_changed and cur_battle:
                         last_battle_start_time = _now
+                        _intro_advance_frames = 0  # start auto-advancing intro text
 
                     # Abort any currently-running button sequence (e.g. D64 mid-walk)
                     state_change_event.set()
@@ -2103,6 +2113,16 @@ class GameAgent:
                             self.display.update(spatial_grid="", status="Transitioning...")
                     except Exception:
                         pass  # display refresh is best-effort
+
+                # Auto-advance battle intro text during settle period.
+                # "Wild X appeared!" / "Go! POKEMON!" need A presses to dismiss;
+                # press A at ~1.5s, 3.0s, 4.5s and release 8 frames later.
+                if cur_battle and _intro_advance_frames < 360:
+                    _intro_advance_frames += 1
+                    if _intro_advance_frames in (90, 180, 270):
+                        self.pyboy.send_input(WindowEvent.PRESS_BUTTON_A)
+                    elif _intro_advance_frames in (98, 188, 278):
+                        self.pyboy.send_input(WindowEvent.RELEASE_BUTTON_A)
 
                 # Feed web stream every 2nd tick (~30fps — plenty for the dashboard)
                 if self.web_streamer and fps_frame_count % 2 == 0:

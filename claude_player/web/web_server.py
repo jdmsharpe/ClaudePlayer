@@ -79,12 +79,20 @@ class WebStreamer:
                 return jsonify({})
             action = getattr(cfg, "ACTION", {}) or {}
             memory = getattr(cfg, "MEMORY", {}) or {}
-            return jsonify({
-                "model": action.get("MODEL", ""),
+            model = action.get("MODEL", "")
+            result = {
+                "model": model,
                 "max_tokens": action.get("MAX_TOKENS", ""),
-                "effort": action.get("EFFORT", "medium"),
                 "memory_interval": memory.get("MEMORY_INTERVAL", ""),
-            })
+            }
+            # Haiku doesn't support effort; show thinking_budget instead
+            if "haiku" in model.lower():
+                budget = action.get("THINKING_BUDGET")
+                if budget:
+                    result["thinking_budget"] = budget
+            else:
+                result["effort"] = action.get("EFFORT", "medium")
+            return jsonify(result)
 
         @app.route("/api/frame")
         def api_frame():
@@ -1781,9 +1789,10 @@ connectSSE();
     const defs = [
       ['model',        c.model],
       ['max_tokens',   c.max_tokens],
-      ['effort',       c.effort],
+      c.effort          ? ['effort',          c.effort]          : null,
+      c.thinking_budget ? ['thinking_budget', c.thinking_budget] : null,
       ['memory interval', c.memory_interval],
-    ];
+    ].filter(Boolean);
     defs.forEach(function([key, val]) {
       if (val === '' || val === null || val === undefined) return;
       const display = val;

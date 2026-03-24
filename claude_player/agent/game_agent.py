@@ -1034,9 +1034,10 @@ class GameAgent:
             player_pos = spatial_data.get("player_pos")
             if map_id is not None and player_pos is not None:
                 dead_ends = self._world_map.dead_ends.get(map_id, [])
-                # AI context render (full size) — passed to turn_context to avoid re-rendering
-                world_map_text_ai = self._world_map.render(
+                # AI context: compact structured summary (token-efficient)
+                world_map_text_ai = self._world_map.render_summary(
                     map_id, player_pos, dead_end_zones=dead_ends,
+                    current_turn=self.game_state.turn_count,
                 ) or ""
                 # Dashboard render (smaller cap)
                 from claude_player.utils.world_map import _MAX_DISPLAY_SIZE

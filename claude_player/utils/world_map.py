@@ -731,6 +731,116 @@ class WorldMap:
 
         return "\n".join(lines)
 
+    def render_summary(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        dead_end_zones: Optional[List[Tuple[int, int]]] = None,
+        current_turn: int = 0,
+    ) -> Optional[str]:
+        """Compact structured text summary of the explored map for AI context.
+
+        Replaces the ASCII grid with a token-efficient description (~50-100
+        tokens vs 500-1000 for the grid).  The model already gets per-tile
+        walkability from WALKABLE: and A* routing from NAV(map), so the
+        summary focuses on strategic information: warps, dead-ends, frontiers.
+
+        Args:
+            map_id: Map to summarise.
+            player_pos: (x, y) absolute position.
+            dead_end_zones: Dead-end centre points (same as render()).
+            current_turn: For warp exhaustion decay check.
+
+        Returns:
+            Compact summary string, or None if <15 tiles explored.
+        """
+        tile_map = self.tiles.get(map_id)
+        if not tile_map or len(tile_map) < 15:
+            return None
+
+        px, py = player_pos
+        _WALKABLE = frozenset(".,:")
+
+        # ── Dead-end tile set ──
+        dead_tiles: set = set()
+        if dead_end_zones:
+            for dz_x, dz_y in dead_end_zones:
+                for dy in range(-2, 3):
+                    for dx in range(-2, 3):
+                        dead_tiles.add((dz_x + dx, dz_y + dy))
+
+        # ── Map stats ──
+        walkable = 0
+        frontier = 0
+        for (tx, ty), ch in tile_map.items():
+            if ch not in _WALKABLE:
+                continue
+            walkable += 1
+            if (tx, ty) not in dead_tiles and any(
+                (tx + ox, ty + oy) not in tile_map for ox, oy in NEIGHBORS
+            ):
+                frontier += 1
+        fr_pct = int(frontier / walkable * 100) if walkable else 0
+        lines = [f"MAP: {len(tile_map)} tiles ({walkable} walkable, {fr_pct}% frontier)"]
+
+        # ── Warps (grouped by dest_name, closest per destination) ──
+        warp_map = self.warps.get(map_id, {})
+        if warp_map:
+            exhausted = self.get_active_exhausted_warps(map_id, current_turn)
+            # Group warps by dest_name → pick closest to player
+            by_dest: Dict[str, Tuple[int, Tuple[int, int]]] = {}
+            for (wx, wy), dest_name in warp_map.items():
+                dist = abs(wx - px) + abs(wy - py)
+                if dest_name not in by_dest or dist < by_dest[dest_name][0]:
+                    by_dest[dest_name] = (dist, (wx, wy))
+            warp_parts = []
+            for dest_name, (dist, wpos) in sorted(by_dest.items(), key=lambda kv: kv[1][0]):
+                tag = ""
+                if "dead-end" in dest_name.lower():
+                    tag = " [dead-end]"
+                elif wpos in exhausted:
+                    tag = " [exhausted]"
+                warp_parts.append(f"{dest_name} ({wpos[0]},{wpos[1]})d={dist}{tag}")
+            lines.append("WARPS: " + " | ".join(warp_parts))
+
+        # ── Dead-end zones ──
+        if dead_end_zones:
+            de_parts = []
+            for dz_x, dz_y in dead_end_zones:
+                dist = abs(dz_x - px) + abs(dz_y - py)
+                de_parts.append(f"({dz_x},{dz_y})d={dist}")
+            lines.append("DEAD-ENDS: " + " ".join(de_parts))
+
+        # ── Frontier clusters by cardinal direction ──
+        counts: Dict[str, int] = {"NORTH": 0, "SOUTH": 0, "EAST": 0, "WEST": 0}
+        for (tx, ty), ch in tile_map.items():
+            if ch not in _WALKABLE:
+                continue
+            if (tx, ty) in dead_tiles:
+                continue
+            if not any((tx + ox, ty + oy) not in tile_map for ox, oy in NEIGHBORS):
+                continue
+            # Bucket by primary direction from player
+            dx, dy = tx - px, ty - py
+            if abs(dy) >= abs(dx):
+                counts["NORTH" if dy < 0 else "SOUTH"] += 1
+            else:
+                counts["EAST" if dx > 0 else "WEST"] += 1
+        frontier_parts = [f"{d}({c})" for d, c in sorted(counts.items(), key=lambda kv: -kv[1]) if c > 0]
+        if frontier_parts:
+            lines.append("FRONTIER: " + " ".join(frontier_parts))
+
+        # ── Markers ──
+        marker_map = self.markers.get(map_id, {})
+        if marker_map:
+            m_parts = []
+            for (mx, my), label in sorted(marker_map.items()):
+                dist = abs(mx - px) + abs(my - py)
+                m_parts.append(f"({mx},{my})d={dist} \"{label}\"")
+            lines.append("MARKERS: " + " | ".join(m_parts))
+
+        return "\n".join(lines)
+
     def find_path_to(
         self,
         map_id: int,

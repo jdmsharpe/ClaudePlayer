@@ -66,7 +66,7 @@ NAV ASSISTANCE: Once you've explored enough of an area, NAV(map) provides A* rou
 STUCK RECOVERY: If your position is unchanged after a move, you walked into a wall. Do NOT retry the same direction. Try perpendicular directions or follow NAV(map) detour suggestions. If STUCK warnings appear, you are looping — pick a direction you have NOT tried in the last 5 turns.
 WARP PATHING: Warps often require indirect paths through corridors. A warp that is "3 DOWN, 6 LEFT" may require going UP first. Trust NAV(map) for warp routing.
 DEAD ENDS: If the context says "dead-end" or "looping", leave immediately in the suggested direction. Do not attempt to reach a compass target through a dead-end area.
-EXPLORED MAP: The large map shows all tiles you've visited with @ as your position. Use it to identify corridors you haven't explored yet. Head toward unexplored edges to discover new paths.
+EXPLORED MAP: A structured summary shows tile count, frontier %, warps (with distance, dead-end/exhausted labels), dead-end zones, and frontier direction clusters. Use FRONTIER counts to choose exploration direction. Warps tagged [dead-end] should be avoided. Follow NAV(map) for routing — do not attempt manual pathfinding.
 DUNGEONS: Caves have multiple floors connected by ladder warps. Explore each floor to discover the connections. The exit may require going deeper before you can go up.
 CONNECTIONS: Map edges marked in COMPASS as connections are reached by walking off the map edge — no warp tile needed.
 GOALS: Three tiers. STRATEGIC GOAL = milestone objective (auto-set from story flags) — do NOT override for temporary needs. TACTICAL GOAL = immediate map-specific action (auto-derived from your location). SIDE OBJECTIVES = persistent secondary tasks. NAV routes toward the TACTICAL GOAL when present. Use set_tactical_goal for in-map sub-tasks; use add_side_objective for temporary missions. Tactical goals auto-clear on map change; side objectives persist until completed.
@@ -195,8 +195,12 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
                 "tools": self._prepare_tools_cached(tools),
                 "system": system_value,
                 "messages": chat_history,
-                "output_config": {"effort": effort},
             }
+
+            # Haiku doesn't support the effort parameter
+            model_name = mode_config["MODEL"].lower()
+            if "haiku" not in model_name:
+                request_params["output_config"] = {"effort": effort}
 
             if thinking_enabled:
                 # Use budget_tokens if THINKING_BUDGET is set (Sonnet), else adaptive (Opus 4.6)

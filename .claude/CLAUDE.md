@@ -57,7 +57,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 - **Three-tier goals**: `strategic_goal` (milestone, auto-set from story flags — don't use `set_strategic_goal` for temp needs), `tactical_goal` (map-specific, auto-derived by `goal_deriver.py`; 200-char cap with `"… (see location notes)"` suffix), `side_objectives` (persistent across map changes, max 5). Auto-heal gate: total offensive PP ≤10 injects "URGENT: Heal" objective (removed when PP > 20). Level gates: `MILESTONE_LEVEL_GATES` in `event_flags.py` auto-injects training objective when party is underleveled.
 
-- **Prompt caching**: 3 `cache_control` breakpoints: (1) static system prompt text, (2) KB block, (3) tool definitions. **System prompt must stay ≥2048 tokens** when extended thinking is enabled — undocumented requirement (thinking doubles the normal 1024 Sonnet minimum); may differ with adaptive thinking on Opus 4.6. KB staleness uses absolute turn number (not relative) so the text stays identical between updates and avoids cache invalidation. Tool-level `cache_control` does NOT work with thinking.
+- **Prompt caching**: 3 `cache_control` breakpoints: (1) static system prompt text, (2) KB block, (3) tool definitions. **System prompt must stay ≥2048 tokens** when extended thinking is enabled — undocumented requirement (thinking doubles the normal 1024 Sonnet minimum). KB staleness uses absolute turn number (not relative) so the text stays identical between updates and avoids cache invalidation. Tool-level `cache_control` does NOT work with thinking.
 
 - **Knowledge Base**: `saves/knowledge/` — `party.md`, `strategy.md`, `lessons.md` (`[CRITICAL]`/`[RULE]`/`[STRATEGY]` prefixes), `locations/<map>.md`. Two-layer injection: (1) cached system prompt block updated every `MEMORY_INTERVAL` turns by background `MemoryManager` subagent; (2) per-turn user message with current map's location notes. `KB_SYSTEM_PROMPT` must also stay ≥2048 tokens. `_sanitize_strategy()` strips ephemeral battle state lines the subagent writes despite instructions.
 
@@ -116,9 +116,9 @@ When modifying RAM readers, verify against <https://github.com/pret/pokered>.
 ## Config
 
 `config.json` — see `config/config_class.py` for full TypedDict schema.
-Key sections: `MODEL_DEFAULTS` (MAX_TOKENS=16000, EFFORT="medium"), `ACTION`, `MEMORY`, `STUCK`.
+Key sections: `MODEL_DEFAULTS` (MAX_TOKENS=16834, EFFORT="medium"), `ACTION`, `MEMORY`, `STUCK`.
 `EFFORT`: "low"/"medium"/"high"/"max" — controls thinking depth, tool call frequency, response length. Default "medium". "max" is Opus 4.6 only. Always sent via `output_config`.
-`THINKING_BUDGET` (optional): if set, uses `budget_tokens` thinking (for Sonnet); if absent, uses `adaptive` thinking (for Opus 4.6). Haiku has no thinking support.
+`THINKING_BUDGET` (optional): if set, uses `budget_tokens` thinking; if absent, uses `adaptive` thinking (Opus 4.6 only). Current config: Haiku 4.5 with THINKING_BUDGET=11111.
 `ENABLE_SOUND` (default true): disables PyBoy APU sampling and audio streaming when false.
 
 ## System Prompt

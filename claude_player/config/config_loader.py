@@ -64,24 +64,26 @@ def load_config(config_file='config.json') -> ConfigClass:
         "WEB_PORT": 0,
 
         "MODEL_DEFAULTS": {
-            "MODEL": "claude-opus-4-6",
+            "MODEL": "claude-sonnet-4-6",
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,
-            "MAX_TOKENS": 16000,
+            "MAX_TOKENS": 16384,
+            "THINKING_BUDGET": 11111,
             "EFFORT": "medium",
         },
 
         "ACTION": {},
 
         "MEMORY": {
-            "MEMORY_INTERVAL": 20,
+            "MEMORY_INTERVAL": 25,
             "MODEL": "claude-opus-4-6",
             "THINKING": True,
             "DYNAMIC_THINKING": True,
             "EFFICIENT_TOOLS": True,
-            "MAX_TOKENS": 16000,
-            "EFFORT": "medium",
+            "MAX_TOKENS": 16384,
+            "THINKING_BUDGET": 11111,
+            "EFFORT": "high",
         },
 
         "STUCK": {

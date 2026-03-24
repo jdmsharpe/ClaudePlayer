@@ -225,19 +225,21 @@ class TurnContextBuilder:
         if map_id is not None and player_pos is not None:
             # Use pre-rendered world map from captured_state if available
             if world_map_text is None:
-                world_map_text = world_map.render(
+                world_map_text = world_map.render_summary(
                     map_id, player_pos,
                     dead_end_zones=world_map.dead_ends.get(map_id, []),
+                    current_turn=game_state.turn_count,
                 ) or ""
             if world_map_text:
                 spatial_text += "\n" + world_map_text
-            # Inject marker summary for current map (always, even without world map)
-            current_markers = world_map.markers.get(map_id, {})
-            if current_markers:
-                marker_lines = " | ".join(
-                    f"({x},{y}): {label}" for (x, y), label in sorted(current_markers.items())
-                )
-                spatial_text += f"\nMARKERS on this map: {marker_lines}"
+            # Inject marker summary only when render_summary didn't include it
+            if not world_map_text:
+                current_markers = world_map.markers.get(map_id, {})
+                if current_markers:
+                    marker_lines = " | ".join(
+                        f"({x},{y}): {label}" for (x, y), label in sorted(current_markers.items())
+                    )
+                    spatial_text += f"\nMARKERS on this map: {marker_lines}"
 
             # World-map A* NAV: map graph BFS → compass fallback → inject hint
             # Use tactical goal for NAV routing (more precise map match),

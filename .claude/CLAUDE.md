@@ -69,7 +69,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 - **NAV compliance logging**: `game_agent.py` compares the first directional token of the model's action vs NAV's suggestion and logs `NAV COMPLIANCE: followed=true/false`. `last_nav_suggestion` in `nav_planner.py` holds the button sequence extracted from the last NAV result.
 
-- **Tile pair collisions** (from pokered `pair_collision_tile_ids.asm`): CAVERN (tileset 17) and FOREST (tileset 3) block movement between specific tile pairs even when tiles are individually walkable. `_TILE_PAIR_COLLISIONS` in `spatial_context.py`. Cave lower tiles (`:`) vs upper floor (`.`) — upper NORTH of lower is passable; lower NORTH of upper blocked; E/W always blocked. Persisted as `pair_blocked_edges` in `world_map.json`.
+- **Tile pair collisions** (from pokered `pair_collision_tile_ids.asm`): CAVERN (tileset 17) and FOREST (tileset 3) block movement between specific tile pairs even when tiles are individually walkable. `_TILE_PAIR_COLLISIONS` in `spatial_context.py`. Cave lower tiles (`:`) vs upper floor (`.`) — upper NORTH of lower is passable; lower NORTH of upper blocked; E/W always blocked. **N/S uses boundary sub-tiles**: the game checks bottom row of north metatile vs top row of south metatile, not the representative tile. Stair metatiles have mixed sub-tiles (upper platform at bottom, lower transition at top) — boundary check finds same-level tiles → no collision → passable. Persisted as `pair_blocked_edges` in `world_map.json`.
 
 - **Movement feedback**: position before/after injected at next turn start. UNCHANGED includes blocked-direction accumulation (dirs tried/failed at current pos, resets on move/warp). Only pure movement tokens (U/D/L/R) update tracking — A/B/W/T/S/X excluded. Suppressed during battle.
 
@@ -81,7 +81,7 @@ pyboy, pillow, anthropic, flask, python-dotenv (see Pipfile)
 
 - **Post-battle menu skip**: `_was_in_battle` flag suppresses menu injection on first post-battle turn. `extract_menu_context()` rejects cursor > max_item (catches stale battle cursor Y=14 X=15 indefinitely).
 
-- **Web dashboard**: Flask in daemon thread. Audio at `GET /audio/chunk` (WAV chunks from PyBoy APU). **Live token streaming**: `GET /api/stream-tokens` (SSE) pushes `thinking`/`text` deltas in real-time via `TerminalDisplay.push_sse()`. Browser uses `EventSource`; `pollState` skips overwriting thinking/response panes while `_streaming` is active. `on_stream_event` callback in `send_request()` is optional (memory manager doesn't use it).
+- **Web dashboard**: Flask in daemon thread. Audio at `GET /audio/chunk` (WAV chunks from PyBoy APU). **Live token streaming**: `GET /api/stream-tokens` (SSE) pushes `thinking`/`text` deltas in real-time via `TerminalDisplay.push_sse()`. Browser uses `EventSource`; `pollState` skips overwriting thinking/response panes while `_streaming` is active. `on_stream_event` callback in `send_request()` is optional — when `None`, `send_request()` uses `messages.create()` (non-streaming) for proper prompt cache stats; when provided, uses `messages.stream()` for live token deltas.
 
 ## Cost Tracking
 

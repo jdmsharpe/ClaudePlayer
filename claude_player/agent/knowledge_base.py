@@ -101,12 +101,6 @@ class KnowledgeBase:
         path = os.path.join(self.locations_dir, f"{name}.md")
         return self._read_file(path)
 
-    def read_location_by_name(self, map_name: str) -> str:
-        """Read location notes by human-readable map name."""
-        name = _sanitize_map_name(map_name)
-        path = os.path.join(self.locations_dir, f"{name}.md")
-        return self._read_file(path)
-
     # ── Writing ──────────────────────────────────────────────────────
 
     def write_section(self, section: str, content: str) -> int:
@@ -314,19 +308,6 @@ class KnowledgeBase:
         os.makedirs(self.locations_dir, exist_ok=True)
         with self._lock:
             self._cache.clear()
-
-    def delete_section(self, section: str) -> bool:
-        """Delete a single section file."""
-        if section not in SECTION_FILES:
-            return False
-        path = os.path.join(self.knowledge_dir, SECTION_FILES[section])
-        if os.path.exists(path):
-            os.remove(path)
-            with self._lock:
-                self._cache.pop(path, None)
-            logging.warning(f"KB section '{section}' deleted")
-            return True
-        return False
 
     # ── Internal ─────────────────────────────────────────────────────
 

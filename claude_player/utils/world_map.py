@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import random
+import threading
 from collections import deque
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
@@ -46,6 +47,11 @@ class WorldMap:
     """Accumulates explored tiles across turns, keyed by map ID."""
 
     def __init__(self) -> None:
+        # Threading lock: protects all mutable state from concurrent access.
+        # Main thread writes (update, ensure_graph_edge, record_warp_transition),
+        # analysis thread reads (render_summary, frontier_ratio, find_nav_hint).
+        # RLock allows internal method calls (e.g. update→update_graph) without deadlock.
+        self._lock = threading.RLock()
         # map_id → {(abs_x, abs_y): tile_char}
         self.tiles: Dict[int, Dict[Tuple[int, int], str]] = {}
         # map_id → {(abs_x, abs_y): dest_name}
@@ -94,6 +100,16 @@ class WorldMap:
             last_map_id: Previous map ID, used to resolve 0xFF ("outside /
                 last map") warps into real map IDs.
         """
+        with self._lock:
+            self._update_graph_unlocked(map_id, warp_data, last_map_id)
+
+    def _update_graph_unlocked(
+        self,
+        map_id: int,
+        warp_data: Optional[Dict[str, Any]],
+        last_map_id: Optional[int] = None,
+    ) -> None:
+        """Internal graph update — caller must hold self._lock."""
         if not warp_data:
             return
         if "map_name" in warp_data:
@@ -133,12 +149,13 @@ class WorldMap:
         guarantee the graph captures all connectivity, even when warp_data
         was unavailable.
         """
-        if map_a not in self.map_graph:
-            self.map_graph[map_a] = set()
-        if map_b not in self.map_graph:
-            self.map_graph[map_b] = set()
-        self.map_graph[map_a].add(map_b)
-        self.map_graph[map_b].add(map_a)
+        with self._lock:
+            if map_a not in self.map_graph:
+                self.map_graph[map_a] = set()
+            if map_b not in self.map_graph:
+                self.map_graph[map_b] = set()
+            self.map_graph[map_a].add(map_b)
+            self.map_graph[map_b].add(map_a)
 
     def record_warp_transition(
         self,
@@ -165,6 +182,20 @@ class WorldMap:
                 to from_map is auto-exhausted to prevent immediate
                 backtracking.
         """
+        with self._lock:
+            self._record_warp_transition_unlocked(
+                from_map, player_pos, to_map, turn, arrival_pos,
+            )
+
+    def _record_warp_transition_unlocked(
+        self,
+        from_map: int,
+        player_pos: Tuple[int, int],
+        to_map: int,
+        turn: int,
+        arrival_pos: Optional[Tuple[int, int]] = None,
+    ) -> None:
+        """Internal warp transition recording — caller must hold self._lock."""
         # Find the warp on from_map closest to player_pos that leads to to_map
         warp_map = self.warps.get(from_map, {})
         to_map_name = self.map_names.get(to_map, "")
@@ -259,19 +290,25 @@ class WorldMap:
         Returns:
             Set of (x, y) warp positions still within the exhaustion window.
         """
-        exhausted = self._exhausted_warps.get(map_id, {})
-        if not exhausted:
-            return set()
-        return {
-            pos for pos, exhaust_turn in exhausted.items()
-            if current_turn - exhaust_turn < _WARP_EXHAUST_DECAY_TURNS
-        }
+        with self._lock:
+            exhausted = self._exhausted_warps.get(map_id, {})
+            if not exhausted:
+                return set()
+            return {
+                pos for pos, exhaust_turn in exhausted.items()
+                if current_turn - exhaust_turn < _WARP_EXHAUST_DECAY_TURNS
+            }
 
     def get_cycling_maps(self, map_id: int, current_turn: int) -> Set[int]:
         """Return set of map IDs currently in a cycling relationship with map_id.
 
         Cycling decays when all exhausted warps between the pair have decayed.
         """
+        with self._lock:
+            return self._get_cycling_maps_unlocked(map_id, current_turn)
+
+    def _get_cycling_maps_unlocked(self, map_id: int, current_turn: int) -> Set[int]:
+        """Internal cycling map lookup — caller must hold self._lock."""
         cycling = self._cycling_maps.get(map_id, set())
         if not cycling:
             return set()
@@ -294,6 +331,11 @@ class WorldMap:
         Returns:
             Warning string if cross-map looping detected, else None.
         """
+        with self._lock:
+            return self._get_cross_map_stuck_warning_unlocked()
+
+    def _get_cross_map_stuck_warning_unlocked(self) -> Optional[str]:
+        """Internal cross-map warning — caller must hold self._lock."""
         transitions = self._warp_transitions
         if len(transitions) < 6:
             return None
@@ -352,9 +394,10 @@ class WorldMap:
         If the player subsequently transitions to a new map, the route
         is confirmed and cached.  Only paths ≥5 tiles are worth caching.
         """
-        if len(path) < 5:
-            return
-        self._pending_route = (map_id, dest_name, path)
+        with self._lock:
+            if len(path) < 5:
+                return
+            self._pending_route = (map_id, dest_name, path)
 
     def confirm_route(self, from_map: int) -> None:
         """Confirm and cache the pending route after a successful map transition.
@@ -363,24 +406,26 @@ class WorldMap:
         pending route's map_id matches from_map, the route is cached
         as verified.
         """
-        if self._pending_route is None:
-            return
-        p_map_id, dest_name, path = self._pending_route
-        self._pending_route = None
-        if p_map_id != from_map:
-            return
-        # Cache the route (overwrite any previous route to same dest)
-        if p_map_id not in self.route_cache:
-            self.route_cache[p_map_id] = {}
-        self.route_cache[p_map_id][dest_name] = path
-        logger.info(
-            f"ROUTE CACHED: map 0x{p_map_id:02X} → {dest_name} "
-            f"({len(path)} tiles)"
-        )
+        with self._lock:
+            if self._pending_route is None:
+                return
+            p_map_id, dest_name, path = self._pending_route
+            self._pending_route = None
+            if p_map_id != from_map:
+                return
+            # Cache the route (overwrite any previous route to same dest)
+            if p_map_id not in self.route_cache:
+                self.route_cache[p_map_id] = {}
+            self.route_cache[p_map_id][dest_name] = path
+            logger.info(
+                f"ROUTE CACHED: map 0x{p_map_id:02X} → {dest_name} "
+                f"({len(path)} tiles)"
+            )
 
     def discard_pending_route(self) -> None:
         """Discard the pending route (e.g. player got stuck, didn't reach warp)."""
-        self._pending_route = None
+        with self._lock:
+            self._pending_route = None
 
     def get_cached_route(
         self,
@@ -402,6 +447,19 @@ class WorldMap:
             Sub-path from the nearest cached waypoint to the destination,
             or None if no cache hit or player is too far from the route.
         """
+        with self._lock:
+            return self._get_cached_route_unlocked(
+                map_id, dest_name, player_pos, max_splice_dist,
+            )
+
+    def _get_cached_route_unlocked(
+        self,
+        map_id: int,
+        dest_name: str,
+        player_pos: Tuple[int, int],
+        max_splice_dist: int = 3,
+    ) -> Optional[List[Tuple[int, int]]]:
+        """Internal cached route lookup — caller must hold self._lock."""
         routes = self.route_cache.get(map_id, {})
         if dest_name not in routes:
             return None
@@ -438,6 +496,23 @@ class WorldMap:
         pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
     ) -> None:
         """Stamp the current viewport grid into the accumulated map."""
+        with self._lock:
+            self._update_unlocked(
+                map_id, player_pos, player_screen_pos, grid,
+                warp_data, last_map_id, pair_blocked,
+            )
+
+    def _update_unlocked(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        player_screen_pos: Tuple[int, int],
+        grid: List[List[str]],
+        warp_data: Optional[Dict[str, Any]] = None,
+        last_map_id: Optional[int] = None,
+        pair_blocked: Optional[Set[Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
+    ) -> None:
+        """Internal tile update — caller must hold self._lock."""
         if map_id not in self.tiles:
             self.tiles[map_id] = {}
         tile_map = self.tiles[map_id]
@@ -494,7 +569,7 @@ class WorldMap:
             mh = warp_data.get("map_height", 0)
 
             # Record graph edges (shared with update_graph)
-            self.update_graph(map_id, warp_data, last_map_id=last_map_id)
+            self._update_graph_unlocked(map_id, warp_data, last_map_id=last_map_id)
 
             for w in warp_data.get("warps", []):
                 warp_map[(w["map_x"], w["map_y"])] = w.get("dest_name", "?")
@@ -528,6 +603,11 @@ class WorldMap:
 
     def save(self, path: str) -> None:
         """Serialize explored map to JSON."""
+        with self._lock:
+            self._save_unlocked(path)
+
+    def _save_unlocked(self, path: str) -> None:
+        """Internal save — caller must hold self._lock."""
         data = {
             "tiles": {
                 str(mid): {f"{x},{y}": ch for (x, y), ch in tmap.items()}
@@ -584,6 +664,11 @@ class WorldMap:
 
     def load(self, path: str) -> None:
         """Load explored map from JSON, merging into current state."""
+        with self._lock:
+            self._load_unlocked(path)
+
+    def _load_unlocked(self, path: str) -> None:
+        """Internal load — caller must hold self._lock."""
         if not os.path.exists(path):
             return
         try:
@@ -666,6 +751,17 @@ class WorldMap:
 
         Returns None if fewer than 15 tiles explored (viewport already covers it).
         """
+        with self._lock:
+            return self._render_unlocked(map_id, player_pos, dead_end_zones, max_size)
+
+    def _render_unlocked(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        dead_end_zones: Optional[List[Tuple[int, int]]] = None,
+        max_size: Optional[int] = None,
+    ) -> Optional[str]:
+        """Internal render — caller must hold self._lock."""
         tile_map = self.tiles.get(map_id)
         if not tile_map or len(tile_map) < 15:
             return None
@@ -754,6 +850,19 @@ class WorldMap:
         Returns:
             Compact summary string, or None if <15 tiles explored.
         """
+        with self._lock:
+            return self._render_summary_unlocked(
+                map_id, player_pos, dead_end_zones, current_turn,
+            )
+
+    def _render_summary_unlocked(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        dead_end_zones: Optional[List[Tuple[int, int]]] = None,
+        current_turn: int = 0,
+    ) -> Optional[str]:
+        """Internal render_summary — caller must hold self._lock."""
         tile_map = self.tiles.get(map_id)
         if not tile_map or len(tile_map) < 15:
             return None
@@ -972,6 +1081,14 @@ class WorldMap:
 
         Frontier = walkable tile with at least one unexplored neighbor.
         Returns 0.0 if map has fewer than 15 explored tiles (too early to judge).
+
+        Thread-safe: acquires self._lock.
+        """
+        with self._lock:
+            return self._frontier_ratio_unlocked(map_id)
+
+    def _frontier_ratio_unlocked(self, map_id: int) -> float:
+        """Internal frontier_ratio — caller must hold self._lock.
         High ratio (>0.3) means the map is barely explored.
         """
         tile_map = self.tiles.get(map_id)
@@ -1009,6 +1126,25 @@ class WorldMap:
         Frontier tiles in the *preferred_direction* from start are prioritised
         via a heuristic bonus.  Dead-end tiles are penalised heavily so the
         path avoids known traps.
+
+        Thread-safe: acquires self._lock.
+        """
+        with self._lock:
+            return self._find_frontier_path_unlocked(
+                map_id, start, preferred_direction,
+                dead_end_tiles, blocked, max_steps,
+            )
+
+    def _find_frontier_path_unlocked(
+        self,
+        map_id: int,
+        start: Tuple[int, int],
+        preferred_direction: Optional[str] = None,
+        dead_end_tiles: Optional[Set[Tuple[int, int]]] = None,
+        blocked: Optional[Set[Tuple[int, int]]] = None,
+        max_steps: int = _MAX_PATH_STEPS,
+    ) -> Optional[List[Tuple[int, int]]]:
+        """Internal find_frontier_path — caller must hold self._lock.
 
         Returns path list or None.
         """
@@ -1138,15 +1274,33 @@ class WorldMap:
     ) -> Optional[str]:
         """Find A* path from player to a known warp, or nearest frontier.
 
-        If *preferred_dest* is given (substring match on warp name), only
-        warps matching it are tried.  Exhausted warps (from ping-pong
-        cycling detection) are deprioritized: non-exhausted warps are tried
-        first, and exhausted warps are used only as a fallback to prevent
-        getting stuck.  If no warp is reachable, falls back to the nearest
-        unexplored frontier in *preferred_direction*, avoiding
-        *dead_end_zones*.  *npc_positions* are treated as temporary obstacles.
+        Thread-safe: acquires self._lock.
 
         Returns a NAV hint string with button commands, or None.
+        """
+        with self._lock:
+            return self._find_nav_hint_unlocked(
+                map_id, player_pos, preferred_dest, preferred_direction,
+                dead_end_zones, npc_positions, max_steps, current_turn, variance,
+            )
+
+    def _find_nav_hint_unlocked(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        preferred_dest: Optional[str] = None,
+        preferred_direction: Optional[str] = None,
+        dead_end_zones: Optional[List[Tuple[int, int]]] = None,
+        npc_positions: Optional[List[Tuple[int, int]]] = None,
+        max_steps: int = _MAX_PATH_STEPS,
+        current_turn: int = 0,
+        variance: int = 0,
+    ) -> Optional[str]:
+        """Internal find_nav_hint — caller must hold self._lock.
+
+        If *preferred_dest* is given (substring match on warp name), only
+        warps matching it are tried.  Exhausted warps are deprioritized.
+        Falls back to the nearest unexplored frontier.
         """
         warp_map = self.warps.get(map_id)
         tile_map = self.tiles.get(map_id)
@@ -1358,18 +1512,17 @@ class WorldMap:
         dst_map: int,
         exclude_maps: Optional[Set[int]] = None,
     ) -> Optional[List[int]]:
-        """BFS on the map connectivity graph.
+        """BFS on the map connectivity graph. Thread-safe: acquires self._lock."""
+        with self._lock:
+            return self._find_map_path_unlocked(src_map, dst_map, exclude_maps)
 
-        Args:
-            src_map: Starting map ID.
-            dst_map: Target map ID.
-            exclude_maps: Map IDs to skip during BFS (for retry when
-                the first-hop map is reachable in the graph but not
-                via tile-level A* due to terrain like ledges).
-
-        Returns list of map IDs from src to dst (inclusive), or None if
-        no path exists in the explored graph.
-        """
+    def _find_map_path_unlocked(
+        self,
+        src_map: int,
+        dst_map: int,
+        exclude_maps: Optional[Set[int]] = None,
+    ) -> Optional[List[int]]:
+        """Internal BFS — caller must hold self._lock."""
         if src_map == dst_map:
             return [src_map]
         if src_map not in self.map_graph:
@@ -1396,23 +1549,6 @@ class WorldMap:
                 visited.add(neighbor)
                 queue.append((neighbor, path + [neighbor]))
         return None
-
-    def next_map_toward(
-        self,
-        src_map: int,
-        dst_map: int,
-        exclude_maps: Optional[Set[int]] = None,
-    ) -> Optional[str]:
-        """Return the name of the next map to visit on the way to dst_map.
-
-        Uses BFS on the map connectivity graph.  Returns None if no path
-        exists or src == dst.
-        """
-        path = self.find_map_path(src_map, dst_map, exclude_maps=exclude_maps)
-        if not path or len(path) < 2:
-            return None
-        next_id = path[1]
-        return self.map_names.get(next_id)
 
     @staticmethod
     def _path_to_buttons(
@@ -1477,14 +1613,18 @@ class WorldMap:
     ) -> Optional[str]:
         """Return a directional exploration hint based on unexplored frontiers.
 
-        Scans explored walkable tiles within *radius* of the player.  A tile is
-        a "frontier" if it is walkable ('.') and at least one of its 4 neighbours
-        has never been seen.  Frontiers are bucketed by cardinal direction
-        relative to the player, and a hint string is returned ranking directions
-        by frontier count.
-
-        Returns None if not enough data or no frontiers detected.
+        Thread-safe: acquires self._lock.
         """
+        with self._lock:
+            return self._frontier_dirs_unlocked(map_id, player_pos, radius)
+
+    def _frontier_dirs_unlocked(
+        self,
+        map_id: int,
+        player_pos: Tuple[int, int],
+        radius: int = 20,
+    ) -> Optional[str]:
+        """Internal frontier_dirs — caller must hold self._lock."""
         tile_map = self.tiles.get(map_id)
         if not tile_map or len(tile_map) < 30:
             return None

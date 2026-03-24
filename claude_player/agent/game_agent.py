@@ -32,6 +32,7 @@ from claude_player.utils.ram_constants import (
     ADDR_PLAYER_Y, ADDR_PLAYER_X,
     ADDR_PLAYER_NAME, ADDR_PLAYER_ID,
     ADDR_POKEDEX_OWNED, ADDR_POKEDEX_SEEN,
+    ADDR_PLAY_TIME_HOURS, ADDR_PLAY_TIME_MINS,
 )
 from claude_player.utils.cost_tracker import CostTracker
 from claude_player.agent.turn_context import TurnContextBuilder
@@ -39,6 +40,30 @@ from claude_player.agent.memory_manager import MemoryManager
 from claude_player.agent.goal_deriver import derive_tactical_goal, derive_nav_tactical_goal
 
 from claude_player.data.pokemon import G1_CHARS
+
+# ---------------------------------------------------------------------------
+# Gameplay thresholds (named for readability; tunable via config.STUCK overrides)
+# ---------------------------------------------------------------------------
+# Screen change detection: min tile differences to count as "changed"
+# (text scroll = 20+ tiles, idle anim = ~2-4)
+_SCREEN_CHANGE_THRESHOLD = 8
+
+# Auto-heal PP gate: inject/remove heal side objective at these bounds
+_PP_HEAL_INJECT = 10   # total offensive PP ≤ this → inject heal objective
+_PP_HEAL_REMOVE = 20   # total offensive PP > this → remove heal objective
+
+# NAV compliance guardrail: force NAV after this many consecutive divergences
+_NAV_NONCOMPLIANCE_LIMIT = 3
+# Min turns on map before NAV guard can trigger
+_NAV_GUARD_MIN_MAP_TURNS = 8
+
+# Min visited positions before computing navigation hints
+_MIN_POSITIONS_FOR_NAV = 10
+# Min visited positions for small-area detection
+_MIN_POSITIONS_FOR_SMALL_AREA = 15
+
+# Max tactical goal length before truncation
+_MAX_TACTICAL_LEN = 200
 
 # Error strings that indicate non-recoverable failures (no point retrying)
 FATAL_ERROR_PATTERNS = [
@@ -174,6 +199,10 @@ class GameAgent:
         self._stats_cache_total_input = 0  # total input tokens since last stats
         self._stats_thinking_only_cost = 0.0  # cost wasted on THINKING-ONLY turns
         self._stats_maps_visited: set = set()  # distinct maps visited since last stats
+        self._stats_nav_suggested = 0  # turns with NAV suggestion + action
+        self._stats_nav_followed = 0   # turns where model followed NAV first direction
+        self._stats_nav_forced = 0     # turns where NAV guard overrode model action
+        self._nav_noncompliance_streak = 0  # consecutive NAV divergence turns
 
         # Turns-on-map counter (consecutive turns on same map_id)
         self._turns_on_map = 0
@@ -407,7 +436,7 @@ class GameAgent:
                     for x in range(min(len(current_tilemap[y]), len(old_tilemap[y])))
                     if current_tilemap[y][x] != old_tilemap[y][x]
                 )
-                screen_changed = changes > 8  # text scroll = 20+ tiles, idle anim = ~2-4
+                screen_changed = changes > _SCREEN_CHANGE_THRESHOLD
 
             current_pos = spatial_data.get("player_pos")
             detected_state = spatial_data.get("game_state")
@@ -510,7 +539,7 @@ class GameAgent:
             # Instead of layering multiple independent warnings (CYCLING,
             # LOOPING, THRASHING, DEAD END, EXPLORATION) that can
             # contradict each other, compute ONE coherent directive.
-            if (len(self._visited_positions) >= 10
+            if (len(self._visited_positions) >= _MIN_POSITIONS_FOR_NAV
                     and current_pos is not None
                     and in_overworld
                     and spatial_data.get("text")):
@@ -532,9 +561,9 @@ class GameAgent:
 
                 is_cycling = (len(self._visited_positions) >= 8
                               and most_visited_count >= _cycling_min)
-                is_small_area = (len(self._visited_positions) >= 15
+                is_small_area = (len(self._visited_positions) >= _MIN_POSITIONS_FOR_SMALL_AREA
                                  and x_range <= _small_x and y_range <= _small_y)
-                is_thrashing = (len(self._visited_positions) >= 15
+                is_thrashing = (len(self._visited_positions) >= _MIN_POSITIONS_FOR_SMALL_AREA
                                 and x_range > _thrash_x and y_range <= _thrash_y)
 
                 # Record dead-end zone when cycling detected (per-map)
@@ -1019,8 +1048,8 @@ class GameAgent:
         if turns_since_refresh >= self._display_refresh_interval or self._last_display_refresh_turn == 0:
             self._cached_dex_caught = sum(bin(self.pyboy.memory[ADDR_POKEDEX_OWNED + i]).count("1") for i in range(19))
             self._cached_dex_seen = sum(bin(self.pyboy.memory[ADDR_POKEDEX_SEEN + i]).count("1") for i in range(19))
-            pt_hours = (self.pyboy.memory[0xDA40] << 8) | self.pyboy.memory[0xDA41]
-            pt_mins = self.pyboy.memory[0xDA42]
+            pt_hours = (self.pyboy.memory[ADDR_PLAY_TIME_HOURS] << 8) | self.pyboy.memory[ADDR_PLAY_TIME_HOURS + 1]
+            pt_mins = self.pyboy.memory[ADDR_PLAY_TIME_MINS]
             self._cached_play_time = f"{pt_hours}:{pt_mins:02d}"
             self._last_display_refresh_turn = self.game_state.turn_count
 
@@ -1301,6 +1330,67 @@ class GameAgent:
                 dirs.append(match.group(1))
         return dirs
 
+    @staticmethod
+    def _normalize_action_inputs(inputs: str) -> tuple[str, list[str]]:
+        """Normalize an input string to directional frame caps.
+
+        Mirrors the input executor caps:
+        - Max 128 frames per single directional token.
+        - Max 256 total directional frames per turn.
+
+        Returns:
+            (normalized_input_string, adjustment_notes)
+        """
+        max_single_dir = 128
+        max_total_dir = 256
+        total_dir_frames = 0
+        normalized_tokens: list[str] = []
+        notes: list[str] = []
+
+        for raw_token in inputs.split():
+            token = raw_token.strip()
+            if not token:
+                continue
+            match = re.fullmatch(r"([A-Za-z]+)(\d+)?", token)
+            if not match:
+                normalized_tokens.append(token)
+                continue
+
+            buttons = match.group(1).upper()
+            has_duration = match.group(2) is not None
+            duration = int(match.group(2)) if has_duration else 8
+
+            if len(buttons) == 1 and buttons in {"U", "D", "L", "R"}:
+                original_duration = duration
+                if duration > max_single_dir:
+                    duration = max_single_dir
+                remaining = max_total_dir - total_dir_frames
+                if remaining <= 0:
+                    notes.append(
+                        f"skipped {buttons}{original_duration} "
+                        f"(direction cap {max_total_dir}f reached)"
+                    )
+                    continue
+                if duration > remaining:
+                    duration = remaining
+                if duration <= 0:
+                    continue
+                if duration != original_duration:
+                    notes.append(
+                        f"trimmed {buttons}{original_duration}\u2192{buttons}{duration}"
+                    )
+                total_dir_frames += duration
+                normalized_tokens.append(f"{buttons}{duration}")
+                continue
+
+            # Non-directional token: preserve as uppercase with original duration.
+            if has_duration:
+                normalized_tokens.append(f"{buttons}{match.group(2)}")
+            else:
+                normalized_tokens.append(buttons)
+
+        return " ".join(normalized_tokens), notes
+
     def process_tool_results(self, message_content):
         """Process tool results from AI response.
 
@@ -1319,8 +1409,8 @@ class GameAgent:
 
             if tool_name == "send_inputs":
                 raw_inputs = tool_input["inputs"]
-                queued_inputs = raw_inputs
-                directions = self._extract_direction_tokens(raw_inputs)
+                queued_inputs, queue_notes = self._normalize_action_inputs(raw_inputs)
+                directions = self._extract_direction_tokens(queued_inputs)
                 opposites = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
 
                 if directions:
@@ -1335,6 +1425,15 @@ class GameAgent:
                     # Non-movement action resets reversal tracking
                     self._consecutive_reversals = 0
 
+                if queue_notes:
+                    note_summary = "; ".join(queue_notes[:3])
+                    if len(queue_notes) > 3:
+                        note_summary += f" (+{len(queue_notes) - 3} more)"
+                    logging.info(
+                        f"ACTION NORMALIZED: raw=\"{raw_inputs}\" "
+                        f"queued=\"{queued_inputs}\" notes=\"{note_summary}\""
+                    )
+
                 # Queue for main-thread execution
                 pending_actions.append(queued_inputs)
                 logging.info(f"Queued input for later execution: {queued_inputs} (queue size: {len(pending_actions)})")
@@ -1346,7 +1445,16 @@ class GameAgent:
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": [{"type": "text", "text": "Input queued for execution"}]
+                    "content": [{"type": "text", "text": (
+                        "Input queued for execution"
+                        if not queue_notes
+                        else (
+                            "Input queued for execution "
+                            f"(normalized: {'; '.join(queue_notes[:3])}"
+                            + (f" (+{len(queue_notes) - 3} more)" if len(queue_notes) > 3 else "")
+                            + ")"
+                        )
+                    )}]
                 })
             elif tool_name == "run_from_battle":
                 # run_from_battle generates a button sequence — queue it like send_inputs
@@ -1361,16 +1469,28 @@ class GameAgent:
                         })
                     else:
                         # Result text IS the button sequence
-                        pending_actions.append(result_text)
-                        logging.info(f"Queued run_from_battle: {result_text} (queue size: {len(pending_actions)})")
-                        self.display.update(last_action=f"RUN: {result_text}")
-                        self._action_history.append((self.game_state.turn_count, result_text))
+                        queued_run, run_notes = self._normalize_action_inputs(result_text)
+                        if run_notes:
+                            note_summary = "; ".join(run_notes[:3])
+                            if len(run_notes) > 3:
+                                note_summary += f" (+{len(run_notes) - 3} more)"
+                            logging.info(
+                                f"ACTION NORMALIZED (run_from_battle): raw=\"{result_text}\" "
+                                f"queued=\"{queued_run}\" notes=\"{note_summary}\""
+                            )
+                        pending_actions.append(queued_run)
+                        logging.info(f"Queued run_from_battle: {queued_run} (queue size: {len(pending_actions)})")
+                        self.display.update(last_action=f"RUN: {queued_run}")
+                        self._action_history.append((self.game_state.turn_count, queued_run))
                         if len(self._action_history) > self._max_action_history:
                             self._action_history.pop(0)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
-                            "content": [{"type": "text", "text": f"RUN inputs sent this turn: {result_text}. If still in battle next turn, call run_from_battle again."}]
+                            "content": [{"type": "text", "text": (
+                                f"RUN inputs sent this turn: {queued_run}. "
+                                "If still in battle next turn, call run_from_battle again."
+                            )}]
                         })
                 except Exception as e:
                     error_msg = f"ERROR executing run_from_battle: {str(e)}"
@@ -1584,19 +1704,50 @@ class GameAgent:
                 actions = self.process_tool_results(message_content)
 
                 # NAV compliance: compare model's action to NAV suggestion
-                from claude_player.agent.nav_planner import last_nav_suggestion as _nav_sug
+                _nav_result = self._context_builder._last_nav_result
+                _nav_sug = _nav_result.nav_suggestion if _nav_result else ""
+                _nav_forced = False
                 if _nav_sug and actions and not self._in_battle:
+                    self._stats_nav_suggested += 1
                     _model_action = actions[0] if actions else ""
                     # Extract first directional token from each for comparison
                     _nav_first = re.match(r'[UDLR]\d+', _nav_sug)
                     _act_first = re.match(r'[UDLR]\d+', _model_action)
                     _followed = (_nav_first and _act_first
                                  and _nav_first.group()[0] == _act_first.group()[0])
-                    if not _followed:
+                    if _followed:
+                        self._stats_nav_followed += 1
+                        self._nav_noncompliance_streak = 0
+                    else:
+                        self._nav_noncompliance_streak += 1
                         logging.info(
                             f"NAV COMPLIANCE: followed=false"
                             f" model=\"{_model_action}\" nav=\"{_nav_sug}\""
+                            f" streak={self._nav_noncompliance_streak}"
                         )
+                        # Guardrail: repeated NAV divergence while stuck on a map
+                        # burns many turns. Force one NAV step to break loops.
+                        if (
+                            self._nav_noncompliance_streak >= 3
+                            and (self._stuck_count >= 1 or self._turns_on_map >= 8)
+                        ):
+                            forced_action, force_notes = self._normalize_action_inputs(_nav_sug)
+                            if forced_action:
+                                actions[0] = forced_action
+                                self._stats_nav_forced += 1
+                                self._nav_noncompliance_streak = 0
+                                _nav_forced = True
+                                note_suffix = (
+                                    f" notes=\"{'; '.join(force_notes[:3])}\""
+                                    if force_notes else ""
+                                )
+                                logging.warning(
+                                    f"NAV GUARD: forced nav action=\"{forced_action}\""
+                                    f" model=\"{_model_action}\" after repeated divergence"
+                                    f"{note_suffix}"
+                                )
+                elif not self._in_battle:
+                    self._nav_noncompliance_streak = 0
 
                 # Detect no-action turns (model used tools but forgot send_inputs)
                 no_action = False
@@ -1666,8 +1817,10 @@ class GameAgent:
                     _flags += " battle=true"
                 if no_action:
                     _flags += " NO_ACTION"
+                if _nav_forced:
+                    _flags += " nav_forced=true"
                 # Gather stuck + NAV diagnostics for TURN_SUMMARY
-                from claude_player.agent.nav_planner import last_nav_method as _nav_method
+                _nav_method = _nav_result.nav_method if _nav_result else ""
                 _stuck_str = f" stuck={self._stuck_count}" if self._stuck_count > 0 else ""
                 _map_turns_str = f" map_turns={self._turns_on_map}" if self._turns_on_map > 1 else ""
                 _nav_str = f" nav={_nav_method}" if _nav_method else ""
@@ -1700,6 +1853,10 @@ class GameAgent:
                     _n_turns = _cur_turn - self._stats_last_turn
                     _avg_dur = self._stats_total_duration / _n_turns if _n_turns else 0
                     _cache_pct = (self._stats_cache_read / self._stats_cache_total_input * 100) if self._stats_cache_total_input else 0
+                    _nav_follow_pct = (
+                        self._stats_nav_followed / self._stats_nav_suggested * 100
+                        if self._stats_nav_suggested > 0 else 0
+                    )
                     _tiles = sum(len(self._world_map.tiles.get(m, {})) for m in self._stats_maps_visited)
                     logging.info(
                         f"STATS: t={self._stats_last_turn + 1}-{_cur_turn}"
@@ -1708,6 +1865,9 @@ class GameAgent:
                         f" thinking_only={self._stats_thinking_only}"
                         f" (wasted=${self._stats_thinking_only_cost:.2f})"
                         f" no_action={self._stats_no_action}"
+                        f" nav_follow={_nav_follow_pct:.0f}%"
+                        f"({self._stats_nav_followed}/{self._stats_nav_suggested})"
+                        f" nav_forced={self._stats_nav_forced}"
                         f" thinking_tok={self._stats_thinking_tokens}"
                         f" avg_dur={_avg_dur:.1f}s"
                         f" cache={_cache_pct:.0f}%"
@@ -1719,6 +1879,9 @@ class GameAgent:
                     self._stats_cost = 0.0
                     self._stats_thinking_only = 0
                     self._stats_no_action = 0
+                    self._stats_nav_suggested = 0
+                    self._stats_nav_followed = 0
+                    self._stats_nav_forced = 0
                     self._stats_last_turn = _cur_turn
                     self._stats_thinking_tokens = 0
                     self._stats_total_duration = 0.0

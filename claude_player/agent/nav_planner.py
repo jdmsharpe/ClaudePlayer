@@ -2,12 +2,12 @@
 
 Extracted from game_agent.py to isolate the NAV pipeline into a focused,
 independently testable module.  The main entry point is compute_nav(),
-which takes pure data and returns an updated spatial_text string.
+which takes pure data and returns a NavResult.
 """
 
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from claude_player.utils.warp_overrides import WARP_DEST_NAME_OVERRIDES
 from claude_player.utils.world_map import WorldMap
@@ -15,11 +15,13 @@ from claude_player.utils.world_map import WorldMap
 # Pre-compute lowercased override names for fast validation
 _OVERRIDE_NAMES_LOWER = {v.lower() for v in WARP_DEST_NAME_OVERRIDES.values()}
 
-# Last NAV method used — set by compute_nav(), read by game_agent for TURN_SUMMARY
-last_nav_method: str = ""
 
-# Last NAV suggestion buttons — for compliance logging in game_agent
-last_nav_suggestion: str = ""
+class NavResult(NamedTuple):
+    """Result from compute_nav()."""
+    spatial_text: str    # Updated spatial text (may include NAV hint)
+    nav_method: str      # Which NAV stage resolved: "graph", "compass", "explore", etc.
+    nav_suggestion: str  # Button sequence for compliance logging
+
 
 # Track consecutive "exhausted" results to trigger frontier earlier.
 # When graph routing repeatedly falls back to exhausted warps, the agent
@@ -158,11 +160,11 @@ def compute_nav(
         strategic_goal_text: Fallback goal string for map-graph BFS matching.
 
     Returns:
-        The spatial_text string, potentially with a NAV hint injected.
+        NavResult with updated spatial_text, nav_method, and nav_suggestion.
     """
-    global last_nav_method, last_nav_suggestion, _consecutive_exhausted
-    last_nav_method = ""
-    last_nav_suggestion = ""
+    global _consecutive_exhausted
+    nav_method = ""
+    nav_suggestion = ""
     dead_end_zones = world_map.dead_ends.get(map_id, [])
     wm_nav = None
 
@@ -193,10 +195,12 @@ def compute_nav(
                     f"NAV(explore): map {int(fr*100)}% unexplored — "
                     f"explore first ({total_dist} tiles): {buttons}"
                 )
-                last_nav_method = "explore"
+                nav_method = "explore"
                 _consecutive_exhausted = 0  # reset stale counter
                 logging.info(f"NAV frontier-first (ratio={fr:.2f}): {wm_nav}")
-                return _inject_nav_hint(spatial_text, wm_nav)
+                result_text = _inject_nav_hint(spatial_text, wm_nav)
+                _btn = re.search(r':\s*([UDLRW][\dUDLRW ]+?)(?:\s*[—(+]|$)', wm_nav)
+                return NavResult(result_text, nav_method, _btn.group(1).strip() if _btn else "")
 
     # ── Step 1: Map graph lookup ──
     # Find target map by longest substring match in goal text.
@@ -278,11 +282,11 @@ def compute_nav(
             if wm_nav:
                 # Detect if this was a cached route or exhausted-warp fallback
                 if "cached" in wm_nav:
-                    last_nav_method = "cache"
+                    nav_method = "cache"
                 elif getattr(world_map, "_used_exhausted_warp", False):
-                    last_nav_method = "exhausted"
+                    nav_method = "exhausted"
                 else:
-                    last_nav_method = "graph"
+                    nav_method = "graph"
                 logging.info(f"NAV result: {wm_nav}")
                 break
             # A* couldn't reach this hop — exclude, cache failure, and retry
@@ -293,7 +297,7 @@ def compute_nav(
     # ── Track consecutive exhausted results ──
     # When graph routing repeatedly falls back to exhausted warps,
     # the agent is cycling through bad warps.  Force frontier exploration.
-    if last_nav_method == "exhausted":
+    if nav_method == "exhausted":
         _consecutive_exhausted += 1
         if _consecutive_exhausted >= 2:
             logging.info(
@@ -301,16 +305,11 @@ def compute_nav(
                 f"overriding to frontier exploration"
             )
             wm_nav = None  # discard the exhausted-warp result
-            last_nav_method = ""
-    elif last_nav_method in ("graph", "cache", "frontier", "explore"):
+            nav_method = ""
+    elif nav_method in ("graph", "cache", "frontier", "explore"):
         _consecutive_exhausted = 0  # reset on successful non-exhausted nav
 
     # ── Step 2a: Frontier-first when graph routing was tried but failed ──
-    # If the map graph FOUND a target but A* couldn't reach any hop's warp
-    # (common in partially-explored caves), prefer pushing into unexplored
-    # territory over compass fallback — compass often routes backward to the
-    # previous floor (e.g. B1F → 1F instead of B1F → B2F → Route 4).
-    # Also triggers when consecutive exhausted warps were detected above.
     if not wm_nav and target_map_id is not None and (exclude_maps or _consecutive_exhausted >= 2):
         dead_end_tiles: set = set()
         if dead_end_zones:
@@ -332,7 +331,7 @@ def compute_nav(
                     f"NAV(map): to unexplored frontier ({total_dist} tiles): "
                     f"{buttons} — re-evaluate after executing"
                 )
-                last_nav_method = "frontier"
+                nav_method = "frontier"
                 logging.info(f"NAV frontier fallback (graph failed): {wm_nav}")
 
     # ── Step 2b: COMPASS fallback (no graph data or frontier empty) ──
@@ -357,19 +356,18 @@ def compute_nav(
             variance=variance,
         )
         if wm_nav:
-            last_nav_method = "compass"
+            nav_method = "compass"
             logging.info(f"NAV result: {wm_nav}")
         else:
-            last_nav_method = "none"
+            nav_method = "none"
             logging.info("NAV result: None (no path found)")
 
     # ── Step 3: Inject into spatial text ──
     if wm_nav:
         spatial_text = _inject_nav_hint(spatial_text, wm_nav)
         # Extract button sequence for compliance logging
-        # Format: "... (N tiles): U16 L32 D8 — re-evaluate..." or "... : U16 L32"
         _btn_match = re.search(r':\s*([UDLRW][\dUDLRW ]+?)(?:\s*[—(+]|$)', wm_nav)
         if _btn_match:
-            last_nav_suggestion = _btn_match.group(1).strip()
+            nav_suggestion = _btn_match.group(1).strip()
 
-    return spatial_text
+    return NavResult(spatial_text, nav_method, nav_suggestion)

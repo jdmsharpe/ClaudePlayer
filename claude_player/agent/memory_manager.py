@@ -12,6 +12,7 @@ Update triggers (section → when):
 """
 
 import logging
+import json
 import re
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -189,6 +190,8 @@ class MemoryManager:
         self.update_count = 0
         self._last_update_map_id: Optional[int] = None
         self._maps_since_last_update: List[Tuple[int, str]] = []  # (map_id, map_name)
+        self._max_history_text_chars = 600
+        self._max_tool_text_chars = 260
 
     def update_memory(self, chat_history: List[Dict[str, Any]],
                       current_map_id: Optional[int] = None,
@@ -214,21 +217,35 @@ class MemoryManager:
         # Read current KB state for the sections we're updating
         current_kb = self._read_current_state(sections_to_update, current_map_id)
 
-        # Trim chat history: 2x MEMORY_INTERVAL messages (each turn ≈ 2 msgs)
+        # Compact history first (strip screenshots / trim verbose blocks), then
+        # keep a bounded recent window for the KB subagent.
+        compact_history = self._compact_history(chat_history)
         memory_interval = self.config.MEMORY.get("MEMORY_INTERVAL", 20) if self.config else 20
-        history_window = memory_interval * 2
-        recent = chat_history[-history_window:] if len(chat_history) > history_window else chat_history[:]
+        history_window = max(12, memory_interval)
+        recent = (
+            compact_history[-history_window:]
+            if len(compact_history) > history_window
+            else compact_history[:]
+        )
         while recent:
             first = recent[0]
             if first["role"] == "assistant":
                 recent.pop(0)
                 continue
+            if self._is_tool_result_only(first):
+                recent.pop(0)
+                continue
             if first["role"] == "user" and isinstance(first.get("content"), list):
-                if any(isinstance(c, dict) and c.get("type") == "tool_result"
-                       for c in first["content"]):
+                if any(isinstance(c, dict) and c.get("type") == "tool_result" for c in first["content"]):
                     recent.pop(0)
                     continue
             break
+        logging.info(
+            "KB HISTORY: raw=%d compact=%d window=%d",
+            len(chat_history),
+            len(compact_history),
+            len(recent),
+        )
 
         # Build the request
         messages = list(recent)
@@ -320,9 +337,7 @@ class MemoryManager:
                     f"| cost=${m_cost:.4f}"
                 )
 
-            raw_output = ""
-            for block in content["text_blocks"]:
-                raw_output += block.text
+            raw_output = "".join(block.text for block in content["text_blocks"])
 
             # Parse XML-tagged sections from subagent output
             updated = self._parse_and_write(raw_output, current_map_id)
@@ -401,6 +416,110 @@ class MemoryManager:
         return "\n\n".join(parts)
 
     @staticmethod
+    def _clip_text(text: str, max_chars: int) -> str:
+        """Normalize and clip text for compact history prompts."""
+        if not text:
+            return ""
+        compact = " ".join(text.split())
+        if len(compact) <= max_chars:
+            return compact
+        return compact[: max_chars - 3] + "..."
+
+    def _summarize_tool_result(self, block: Dict[str, Any]) -> str:
+        """Convert verbose tool_result payloads to a short text summary."""
+        payload = block.get("content")
+        texts: List[str] = []
+        if isinstance(payload, str):
+            texts.append(payload)
+        elif isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, str):
+                    texts.append(item)
+                elif isinstance(item, dict):
+                    if isinstance(item.get("text"), str):
+                        texts.append(item["text"])
+                    elif isinstance(item.get("content"), str):
+                        texts.append(item["content"])
+        summary = " ".join(t for t in texts if t)
+        return self._clip_text(summary, self._max_tool_text_chars)
+
+    def _compact_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Drop image-heavy blocks and keep concise, text-only message content."""
+        role = message.get("role")
+        if role not in ("user", "assistant"):
+            return None
+
+        content = message.get("content")
+        out_blocks: List[Dict[str, str]] = []
+        if isinstance(content, str):
+            clipped = self._clip_text(content, self._max_history_text_chars)
+            if clipped:
+                out_blocks.append({"type": "text", "text": clipped})
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "image":
+                    continue
+                if btype == "text":
+                    clipped = self._clip_text(
+                        str(block.get("text", "")),
+                        self._max_history_text_chars,
+                    )
+                    if clipped:
+                        out_blocks.append({"type": "text", "text": clipped})
+                    continue
+                if btype == "tool_use":
+                    name = str(block.get("name", "tool"))
+                    raw_input = block.get("input", {})
+                    try:
+                        input_text = json.dumps(raw_input, separators=(",", ":"), ensure_ascii=True)
+                    except Exception:
+                        input_text = str(raw_input)
+                    tool_line = self._clip_text(
+                        f"TOOL_USE {name}: {input_text}",
+                        self._max_tool_text_chars,
+                    )
+                    if tool_line:
+                        out_blocks.append({"type": "text", "text": tool_line})
+                    continue
+                if btype == "tool_result":
+                    result_text = self._summarize_tool_result(block)
+                    if result_text:
+                        out_blocks.append({"type": "text", "text": f"TOOL_RESULT: {result_text}"})
+                    continue
+
+        if not out_blocks:
+            return None
+        return {"role": role, "content": out_blocks}
+
+    def _compact_history(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Create a text-only compact history for KB updates."""
+        compact: List[Dict[str, Any]] = []
+        for message in chat_history:
+            cmsg = self._compact_message(message)
+            if cmsg:
+                compact.append(cmsg)
+        return compact
+
+    @staticmethod
+    def _is_tool_result_only(message: Dict[str, Any]) -> bool:
+        """True when message only contains tool result summary text."""
+        if message.get("role") != "user":
+            return False
+        content = message.get("content")
+        if not isinstance(content, list) or not content:
+            return False
+        text_blocks = [
+            c for c in content
+            if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str)
+        ]
+        if len(text_blocks) != len(content):
+            return False
+        return all(c["text"].lstrip().startswith("TOOL_RESULT:") for c in text_blocks)
+
+    @staticmethod
     def _sanitize_strategy(content: str) -> str:
         """Strip ephemeral state from strategy content that becomes stale.
 
@@ -417,6 +536,26 @@ class MemoryManager:
                 "currently fighting", "current battle",
             )):
                 logging.debug(f"KB: stripped ephemeral strategy line: {line.strip()}")
+                continue
+            # Strip stale coordinate snapshots and exact HP/PP/cursor state.
+            has_coord_pair = bool(re.search(r"\(\s*\d+\s*,\s*\d+\s*\)", line))
+            has_xy_coord = bool(re.search(r"\b[xy]\s*[:=]\s*\d+\b", line_lower))
+            has_position_snapshot = (
+                ("position" in line_lower or "coordinate" in line_lower)
+                and bool(re.search(r"\d", line_lower))
+            )
+            has_hp_numbers = bool(re.search(r"\b\d+\s*/\s*\d+\s*hp\b|\bhp\s*[:=]?\s*\d+\b", line_lower))
+            has_pp_numbers = bool(re.search(r"\b\d+\s*/\s*\d+\s*pp\b|\bpp\s*[:=]?\s*\d+\b|\b\d+\s*pp\b", line_lower))
+            has_cursor_snapshot = "cursor" in line_lower and bool(re.search(r"\d", line_lower))
+            if (
+                has_coord_pair
+                or has_xy_coord
+                or has_position_snapshot
+                or has_hp_numbers
+                or has_pp_numbers
+                or has_cursor_snapshot
+            ):
+                logging.debug(f"KB: stripped stale numeric strategy line: {line.strip()}")
                 continue
             cleaned.append(line)
         return "\n".join(cleaned).strip()

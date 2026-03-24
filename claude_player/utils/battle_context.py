@@ -738,6 +738,11 @@ def _generate_battle_tip(
     status_cures = items.get("status_cures", {})
     best_hp_item = items.get("best_hp_item")  # (name, heals, bag_slot) or None
     n_items = items.get("item_count", 20)      # total bag items — used to reset cursor to slot 1
+    offensive_pp = sum(
+        m.get("pp", 0)
+        for m in player.get("moves", [])
+        if m.get("power", 0) > 0
+    )
 
     # Sleep/Freeze: player cannot act — suggest cure item if available, else press A.
     if pstatus.startswith("SLP"):
@@ -857,6 +862,15 @@ def _generate_battle_tip(
         if hp_pct <= 20 and menu_type in ("main", "fight"):
             return (f"HP critical ({hp_pct}%) — RUN from this wild battle! "
                     f"Use the run_from_battle tool (handles menu navigation and retries automatically).")
+        # PP pressure in wilds: preserve remaining offense unless this is a
+        # meaningful threat. Prevents burning key PP on weak cave encounters.
+        if (menu_type in ("main", "fight")
+                and offensive_pp <= 8
+                and player.get("level", 0) >= enemy.get("level", 0) + 3):
+            return (
+                f"PP LOW ({offensive_pp} total offensive PP) — RUN from this wild battle "
+                f"to conserve moves. Use the run_from_battle tool."
+            )
 
     # Find the strongest usable damage move, weighted by Gen 1 damage mechanics
     etypes = enemy_types or []
@@ -932,8 +946,16 @@ def _generate_battle_tip(
 
         # Annotate with TRAIN tag when party has underleveled members
         train_tag = ""
-        if (battle_type == 1 and min_party_level is not None
-                and min_party_level < enemy.get("level", 99)):
+        if (
+            battle_type == 1
+            and min_party_level is not None
+            and min_party_level < enemy.get("level", 99)
+            # Don't push "TRAIN" when the active battler massively outlevels
+            # the encounter (e.g., Lv32 vs Lv9 cave wilds).
+            and player.get("level", 0) <= enemy.get("level", 0) + 2
+            # Skip TRAIN nudges when offense PP is already scarce.
+            and offensive_pp >= 12
+        ):
             train_tag = f"TRAIN: Team needs XP (min Lv{min_party_level} vs enemy Lv{enemy['level']}) — FIGHT! "
 
         pp_tag = f", {best_move['pp']}/{best_move['base_pp']}PP"

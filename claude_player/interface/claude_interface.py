@@ -185,7 +185,7 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
                 logging.info(f"  Prompt caching: {isinstance(system_prompt, list)}")
                 self._logged_config = True
 
-            # system_prompt: plain string (memory manager) or list of content blocks (main agent with caching)
+            # system_prompt: list of content blocks with optional cache_control
             system_value = system_prompt
 
             # Create API request params
@@ -213,13 +213,17 @@ Both may be slightly stale — trust SPATIAL/BATTLE/PARTY context (real-time RAM
                 else:
                     request_params["thinking"] = {"type": "adaptive"}
 
-            with self.client.messages.stream(**request_params) as stream:
-                if on_stream_event is None:
-                    return stream.get_final_message()
+            if on_stream_event is None:
+                # Non-streaming path (KB subagent): use create() directly
+                # for proper prompt cache stats reporting.  The streaming
+                # get_final_message() may not surface cache_read/create
+                # token counts in all SDK versions.
+                return self.client.messages.create(**request_params)
 
-                # Event-by-event iteration for live token streaming.
-                # try/finally guarantees stream_end fires even on API errors,
-                # so the browser's _streaming flag never gets stuck true.
+            # Event-by-event iteration for live token streaming.
+            # try/finally guarantees stream_end fires even on API errors,
+            # so the browser's _streaming flag never gets stuck true.
+            with self.client.messages.stream(**request_params) as stream:
                 on_stream_event("stream_start", "")
                 try:
                     for event in stream:

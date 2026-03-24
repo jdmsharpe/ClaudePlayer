@@ -224,10 +224,15 @@ _ITEM_SPRITE_ID = 0x3D  # SPRITE_POKE_BALL
 # Listed separately from NPCs in the spatial context output.
 _OBJECT_SPRITE_IDS = {0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x45}
 
-def _extract_visible_tilemap(pyboy: PyBoy) -> Tuple[List[List[int]], Tuple[int, int]]:
+def _extract_visible_tilemap(
+    pyboy: PyBoy,
+) -> Tuple[List[List[int]], Tuple[int, int], List[List[int]]]:
     """Extract the 20x18 visible tile region from the 32x32 background tilemap.
 
-    Returns (visible, (scx_tile, scy_tile)) where visible is [y][x] indexed.
+    Returns (visible, (scx_tile, scy_tile), bg_full) where:
+        visible: [y][x] indexed visible grid
+        (scx_tile, scy_tile): scroll offset in tiles
+        bg_full: the full 32x32 VRAM background (reusable by _extract_terrain_data)
     """
     (scx_px, scy_px), _ = pyboy.screen.get_tilemap_position()
     scx = scx_px // 8
@@ -244,7 +249,7 @@ def _extract_visible_tilemap(pyboy: PyBoy) -> Tuple[List[List[int]], Tuple[int, 
             row.append(bg[map_y][map_x])
         visible.append(row)
 
-    return visible, (scx, scy)
+    return visible, (scx, scy), bg
 
 
 def _build_tile_legend(visible: List[List[int]]) -> Dict[int, str]:
@@ -280,6 +285,7 @@ def _extract_collision_data(pyboy: PyBoy) -> Optional[List[List[int]]]:
 
 def _extract_terrain_data(
     pyboy: PyBoy,
+    vram_cache: Optional[Tuple[List[List[int]], int, int]] = None,
 ) -> Tuple[Optional[List[List[str]]], Set[Tuple[Tuple[int, int], Tuple[int, int]]]]:
     """Classify visible tiles into terrain types for grid rendering.
 
@@ -337,10 +343,13 @@ def _extract_terrain_data(
         need_vram = tileset_type > 0  # outdoor tileset: ledges, water, grass possible
         metatile_ids: List[List[int]] = []
         if need_vram:
-            (scx_px, scy_px), _ = pyboy.screen.get_tilemap_position()
-            scx = scx_px // 8
-            scy = scy_px // 8
-            bg = pyboy.tilemap_background[:, :]
+            if vram_cache is not None:
+                bg, scx, scy = vram_cache
+            else:
+                (scx_px, scy_px), _ = pyboy.screen.get_tilemap_position()
+                scx = scx_px // 8
+                scy = scy_px // 8
+                bg = pyboy.tilemap_background[:, :]
             for my in range(grid_h):
                 row_v: List[int] = []
                 for mx in range(grid_w):
@@ -426,24 +435,46 @@ def _extract_terrain_data(
                                 pair_blocked.add(((nx, ny), (mx, my)))
                             else:
                                 # North/south transition (dy == 1: here=north, there=south)
-                                # Metatile sub-tile sampling makes some N/S transitions
-                                # passable: upper (0x05) NORTH of lower (0x20/etc) →
-                                # game checks bottom sub-tile of upper metatile vs top
-                                # sub-tile of lower metatile (often same-level → no pair
-                                # match → passable).  Lower NORTH of upper → blocked.
-                                here_is_lower = raw_here in _CAVE_LOWER_TILES
-                                there_is_lower = raw_there in _CAVE_LOWER_TILES
-                                if not here_is_lower and there_is_lower:
-                                    # Upper NORTH, lower SOUTH → passable
+                                # The game's CheckForTilePairCollisions checks the
+                                # sub-tiles at the metatile BOUNDARY, not the
+                                # representative tile:
+                                #   south move: bottom row of here vs top row of there
+                                #   north move: top row of here vs bottom row of there
+                                # Stair metatiles have mixed sub-tiles (e.g. upper
+                                # platform at bottom, lower transition at top), so the
+                                # representative (bottom-left) can falsely indicate a
+                                # collision when the actual boundary sub-tiles are
+                                # same-level and passable.
+                                #
+                                # Sub-tile layout per metatile (wmap_subtiles indices):
+                                #   [0]=top-left  [1]=top-right
+                                #   [2]=bot-left  [3]=bot-right
+                                here_subs = wmap_subtiles[my][mx]
+                                there_subs = wmap_subtiles[ny][nx]
+                                boundary_pairs = [
+                                    frozenset({here_subs[2], there_subs[0]}),  # BL↔TL
+                                    frozenset({here_subs[3], there_subs[1]}),  # BR↔TR
+                                ]
+                                if not any(bp in pair_set for bp in boundary_pairs):
+                                    # Boundary sub-tiles don't form a collision pair.
+                                    # This is a stair transition — passable in both
+                                    # directions regardless of representative tiles.
                                     pass
-                                elif here_is_lower and not there_is_lower:
-                                    # Lower NORTH, upper SOUTH → blocked
-                                    pair_blocked.add(((mx, my), (nx, ny)))
-                                    pair_blocked.add(((nx, ny), (mx, my)))
                                 else:
-                                    # Same level or unknown → blocked (safety)
-                                    pair_blocked.add(((mx, my), (nx, ny)))
-                                    pair_blocked.add(((nx, ny), (mx, my)))
+                                    # Boundary sub-tiles collide — apply direction rule
+                                    here_is_lower = raw_here in _CAVE_LOWER_TILES
+                                    there_is_lower = raw_there in _CAVE_LOWER_TILES
+                                    if not here_is_lower and there_is_lower:
+                                        # Upper NORTH, lower SOUTH → passable
+                                        pass
+                                    elif here_is_lower and not there_is_lower:
+                                        # Lower NORTH, upper SOUTH → blocked
+                                        pair_blocked.add(((mx, my), (nx, ny)))
+                                        pair_blocked.add(((nx, ny), (mx, my)))
+                                    else:
+                                        # Same level or unknown → blocked (safety)
+                                        pair_blocked.add(((mx, my), (nx, ny)))
+                                        pair_blocked.add(((nx, ny), (mx, my)))
 
         # ── Post-process: collapse elevation shelf tiles ──
         # In caves, wall-floor boundary metatiles have bottom walk-tiles
@@ -1699,11 +1730,15 @@ def extract_spatial_context(
         {"text": str, "visible_tilemap": list, "player_pos": tuple|None}
     """
     try:
-        visible, _ = _extract_visible_tilemap(pyboy)
+        visible, (scx_tile, scy_tile), bg_full = _extract_visible_tilemap(pyboy)
         tile_to_char = _build_tile_legend(visible)
         sprites = _extract_sprites(pyboy)
         collision = _extract_collision_data(pyboy)
-        terrain, pair_blocked = _extract_terrain_data(pyboy)
+        # Pass VRAM background from _extract_visible_tilemap to avoid re-reading
+        # the 32x32 tilemap from the emulator a second time.
+        terrain, pair_blocked = _extract_terrain_data(
+            pyboy, vram_cache=(bg_full, scx_tile, scy_tile),
+        )
         cut_tree_pos = _extract_cut_tree_positions(pyboy)
         warp_data = _extract_warp_data(pyboy)
         npc_data = _extract_npc_data(pyboy, map_number=warp_data["map_number"] if warp_data else None)

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from claude_player.agent.knowledge_base import KnowledgeBase
-from claude_player.agent.nav_planner import compute_nav
+from claude_player.agent.nav_planner import compute_nav, NavResult
 from claude_player.utils.world_map import WorldMap
 
 
@@ -18,8 +18,7 @@ class TurnContextBuilder:
     """Builds the user_content list sent to Claude each turn.
 
     Assembles screenshot, spatial/battle context, party, bag, stuck warnings,
-    and KB location notes into the user message content blocks.  Party and bag
-    are injected every turn for always-current state.
+    and KB location notes into the user message content blocks.
 
     The Knowledge Base is injected in two layers:
     - System prompt (cached): party + strategy + lessons via KnowledgeBase.build_cached_block()
@@ -29,6 +28,12 @@ class TurnContextBuilder:
         knowledge_base: Categorized KB instance for persistent agent memory.
     """
 
+    _LOCATION_REFRESH_TURNS = 6
+    _PARTY_REFRESH_OVERWORLD = 4
+    _PARTY_REFRESH_BATTLE = 8
+    _BAG_REFRESH_OVERWORLD = 10
+    _BAG_REFRESH_BATTLE = 99999  # Effectively "change-only" in battle.
+
     def __init__(
         self,
         knowledge_base: KnowledgeBase,
@@ -37,6 +42,13 @@ class TurnContextBuilder:
         self.kb = knowledge_base
         self._grid_in_prompt = grid_in_prompt
         self._cross_map_loop_logged = False  # dedup: WARNING once, then DEBUG
+        self._last_location_map_id: Optional[int] = None
+        self._last_location_turn: int = 0
+        self._last_party_inject_turn: int = 0
+        self._last_bag_inject_turn: int = 0
+        self._last_party_signature: Optional[Tuple[Any, ...]] = None
+        self._last_bag_snapshot: Optional[Tuple[Any, ...]] = None
+        self._last_nav_result: Optional[NavResult] = None
 
     def build(
         self,
@@ -65,6 +77,7 @@ class TurnContextBuilder:
         menu_data = captured_state.get("menu_data")
         party_data = captured_state.get("party_data")
         bag_data = captured_state.get("bag_data")
+        turn_count = int(getattr(game_state, "turn_count", 0) or 0)
 
         user_content: List[Dict[str, Any]] = [screenshot]
 
@@ -73,12 +86,13 @@ class TurnContextBuilder:
         if last_action_feedback and not in_battle:
             user_content.append({"type": "text", "text": last_action_feedback})
 
-        # ── Per-turn location notes from Knowledge Base ──
-        # Injected as user message (not cached) since it changes on map transition.
+        # ── Map-aware location notes from Knowledge Base ──
+        # Injected as user message (not cached); refreshed on map changes and
+        # periodic cadence while in overworld.
         # Core KB sections (party/strategy/lessons) are in the cached system prompt.
-        if spatial_data:
+        if spatial_data and not in_battle:
             map_id = spatial_data.get("map_number")
-            if map_id is not None:
+            if map_id is not None and self._should_inject_location_notes(map_id, turn_count):
                 location_block = self.kb.build_location_block(map_id)
                 if location_block:
                     user_content.append({"type": "text", "text": location_block})
@@ -104,13 +118,25 @@ class TurnContextBuilder:
         if text_data and text_data.get("text"):
             user_content.append({"type": "text", "text": text_data["text"]})
 
-        # ── Party injection (every turn — always current) ──
+        # ── Party injection (change-aware + cadence refresh) ──
         if party_data and party_data.get("text"):
-            user_content.append({"type": "text", "text": party_data["text"]})
+            party_signature = self._party_signature(party_data)
+            if self._should_inject_party_full(party_signature, turn_count, in_battle):
+                user_content.append({"type": "text", "text": party_data["text"]})
+            else:
+                compact_party = self._build_compact_party_status(party_data)
+                if compact_party:
+                    user_content.append({"type": "text", "text": compact_party})
 
-        # ── Bag injection (every turn — always current) ──
+        # ── Bag injection (change-aware + sparse refresh) ──
         if bag_data and bag_data.get("text"):
-            user_content.append({"type": "text", "text": bag_data["text"]})
+            bag_snapshot = bag_data.get("snapshot")
+            if self._should_inject_bag_full(bag_snapshot, turn_count, in_battle):
+                user_content.append({"type": "text", "text": bag_data["text"]})
+            elif in_battle:
+                compact_bag = self._build_compact_bag_status(bag_data)
+                if compact_bag:
+                    user_content.append({"type": "text", "text": compact_bag})
 
         # ── Critical HP warning ──
         self._maybe_inject_critical_hp(
@@ -165,6 +191,108 @@ class TurnContextBuilder:
         return self.kb.build_cached_block(turn_count, memory_turn)
 
     # ── Private helpers ──────────────────────────────────────────────
+
+    def _should_inject_location_notes(self, map_id: int, turn_count: int) -> bool:
+        """Inject location notes on map transition or periodic refresh."""
+        map_changed = self._last_location_map_id != map_id
+        due = (turn_count - self._last_location_turn) >= self._LOCATION_REFRESH_TURNS
+        if map_changed or due:
+            self._last_location_map_id = map_id
+            self._last_location_turn = turn_count
+            return True
+        return False
+
+    @staticmethod
+    def _party_signature(party_data: Dict[str, Any]) -> Tuple[Any, ...]:
+        """Build a coarse signature for change-aware party injection."""
+        party = party_data.get("party") or []
+        health = party_data.get("health") or {}
+        mons = tuple(
+            (
+                mon.get("name"),
+                mon.get("level"),
+                mon.get("status"),
+            )
+            for mon in party
+        )
+        hp_bucket = int(health.get("total_hp_pct", 0)) // 10
+        return (
+            mons,
+            hp_bucket,
+            health.get("alive", 0),
+            health.get("fainted", 0),
+            health.get("status_count", 0),
+            bool(health.get("low_pp")),
+            health.get("recommendation", ""),
+        )
+
+    def _should_inject_party_full(
+        self,
+        party_signature: Tuple[Any, ...],
+        turn_count: int,
+        in_battle: bool,
+    ) -> bool:
+        """Inject full party block when changed or refresh cadence is due."""
+        refresh = self._PARTY_REFRESH_BATTLE if in_battle else self._PARTY_REFRESH_OVERWORLD
+        changed = party_signature != self._last_party_signature
+        due = (turn_count - self._last_party_inject_turn) >= refresh
+        if changed or due:
+            self._last_party_signature = party_signature
+            self._last_party_inject_turn = turn_count
+            return True
+        return False
+
+    def _should_inject_bag_full(
+        self,
+        bag_snapshot: Optional[Tuple[Any, ...]],
+        turn_count: int,
+        in_battle: bool,
+    ) -> bool:
+        """Inject full bag block when changed or refresh cadence is due."""
+        refresh = self._BAG_REFRESH_BATTLE if in_battle else self._BAG_REFRESH_OVERWORLD
+        changed = bag_snapshot != self._last_bag_snapshot
+        due = (turn_count - self._last_bag_inject_turn) >= refresh
+        if changed or due:
+            self._last_bag_snapshot = bag_snapshot
+            self._last_bag_inject_turn = turn_count
+            return True
+        return False
+
+    @staticmethod
+    def _build_compact_party_status(party_data: Dict[str, Any]) -> str:
+        """Cheap fallback when full party block is skipped."""
+        health = party_data.get("health") or {}
+        if not health:
+            return ""
+        alive = int(health.get("alive", 0) or 0)
+        fainted = int(health.get("fainted", 0) or 0)
+        parts = [
+            f"PARTY SNAPSHOT: {alive}/{alive + fainted} alive",
+            f"Team HP:{health.get('total_hp_pct', '?')}%",
+        ]
+        status_count = int(health.get("status_count", 0) or 0)
+        if status_count > 0:
+            parts.append(f"{status_count} status")
+        if health.get("low_pp"):
+            parts.append("LOW PP")
+        recommendation = health.get("recommendation")
+        if recommendation:
+            parts.append(f"HEAL: {recommendation}")
+        return " | ".join(parts)
+
+    @staticmethod
+    def _build_compact_bag_status(bag_data: Dict[str, Any]) -> str:
+        """Cheap fallback for battle turns when full bag block is skipped."""
+        assessment = bag_data.get("assessment") or {}
+        if not assessment:
+            return ""
+        return (
+            "INVENTORY SNAPSHOT: "
+            f"${assessment.get('money', 0)}"
+            f" | Balls:{assessment.get('pokeballs', 0)}"
+            f" | Medicine:{assessment.get('healing_items', 0)}"
+            f" | Badges:{assessment.get('badge_count', 0)}/8"
+        )
 
     def _build_spatial_text(
         self,
@@ -247,7 +375,7 @@ class TurnContextBuilder:
             nav_goal = tactical or strategic or ""
             # Escalate pathfinding variance when stuck: 1→1, 2→2, 3+→3
             nav_variance = min(3, max(0, stuck_count))
-            spatial_text = compute_nav(
+            nav_result = compute_nav(
                 world_map, map_id, player_pos,
                 goal_text=nav_goal,
                 spatial_text=spatial_text,
@@ -256,7 +384,9 @@ class TurnContextBuilder:
                 current_turn=game_state.turn_count,
                 variance=nav_variance,
             )
-            pass  # NAV hint included in spatial_text for the model to use
+            spatial_text = nav_result.spatial_text
+            # Store nav result on the builder so game_agent can read it
+            self._last_nav_result = nav_result
         return spatial_text
 
     @staticmethod

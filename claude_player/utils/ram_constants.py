@@ -66,6 +66,12 @@ ADDR_MENU_TOP_Y     = 0xCC24   # wTopMenuItemY (screen tile row)
 ADDR_MENU_TOP_X     = 0xCC25   # wTopMenuItemX (screen tile col)
 
 # ---------------------------------------------------------------------------
+# Play time (display-only)
+# ---------------------------------------------------------------------------
+ADDR_PLAY_TIME_HOURS = 0xDA40   # wPlayTimeHours: 2 bytes big-endian
+ADDR_PLAY_TIME_MINS  = 0xDA42   # wPlayTimeMinutes: 1 byte
+
+# ---------------------------------------------------------------------------
 # HRAM (0xFF80-0xFFFE — accessed via LDH instructions)
 # ---------------------------------------------------------------------------
 ADDR_TILE_PLAYER_ON  = 0xFF93  # hTilePlayerStandingOn: metatile block ID under player
